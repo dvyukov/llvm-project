@@ -15,7 +15,7 @@
 #include "sanitizer_platform.h"
 
 #ifndef SANITIZER_DEBUG
-# define SANITIZER_DEBUG 0
+# define SANITIZER_DEBUG 0 //!!!
 #endif
 
 #define SANITIZER_STRINGIFY_(S) #S
@@ -408,6 +408,15 @@ inline void Trap() {
     enable_fp = GET_CURRENT_FRAME();      \
     (void)enable_fp;                      \
   } while (0)
+
+enum class Tid : u32 {};
+
+constexpr Tid kInvalidTid = static_cast<Tid>(-1);
+constexpr Tid kMainTid = static_cast<Tid>(0);
+
+enum class StackID : u32 {};
+
+const StackID kInvalidStackID = static_cast<StackID>(0);
 
 }  // namespace __sanitizer
 

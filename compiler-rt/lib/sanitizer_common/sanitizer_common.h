@@ -287,8 +287,6 @@ void InitializeCoverage(bool enabled, const char *coverage_dir);
 uptr GetTlsSize();
 
 // Other
-void SleepForSeconds(int seconds);
-void SleepForMillis(int millis);
 u64 NanoTime();
 u64 MonotonicNanoTime();
 int Atexit(void (*function)(void));
@@ -337,14 +335,14 @@ typedef void (*UnwindSignalStackCallbackType)(const SignalContext &sig,
                                               const void *callback_context,
                                               BufferedStackTrace *stack);
 // Print deadly signal report and die.
-void HandleDeadlySignal(void *siginfo, void *context, u32 tid,
+void HandleDeadlySignal(void *siginfo, void *context, Tid tid,
                         UnwindSignalStackCallbackType unwind,
                         const void *unwind_context);
 
 // Part of HandleDeadlySignal, exposed for asan.
 void StartReportDeadlySignal();
 // Part of HandleDeadlySignal, exposed for asan.
-void ReportDeadlySignal(const SignalContext &sig, u32 tid,
+void ReportDeadlySignal(const SignalContext &sig, Tid tid,
                         UnwindSignalStackCallbackType unwind,
                         const void *unwind_context);
 
@@ -477,7 +475,7 @@ inline int ToLower(int c) {
 // A low-level vector based on mmap. May incur a significant memory overhead for
 // small vectors.
 // WARNING: The current implementation supports only POD types.
-template<typename T>
+template<typename T, typename Index = uptr>
 class InternalMmapVectorNoCtor {
  public:
   using value_type = T;
@@ -488,13 +486,13 @@ class InternalMmapVectorNoCtor {
     reserve(initial_capacity);
   }
   void Destroy() { UnmapOrDie(data_, capacity_bytes_); }
-  T &operator[](uptr i) {
+  T &operator[](Index i) {
     CHECK_LT(i, size_);
-    return data_[i];
+    return data_[static_cast<uptr>(i)];
   }
-  const T &operator[](uptr i) const {
+  const T &operator[](Index i) const {
     CHECK_LT(i, size_);
-    return data_[i];
+    return data_[static_cast<uptr>(i)];
   }
   void push_back(const T &element) {
     CHECK_LE(size_, capacity());
@@ -588,8 +586,8 @@ bool operator!=(const InternalMmapVectorNoCtor<T> &lhs,
   return !(lhs == rhs);
 }
 
-template<typename T>
-class InternalMmapVector : public InternalMmapVectorNoCtor<T> {
+template<typename T, typename Index = uptr>
+class InternalMmapVector : public InternalMmapVectorNoCtor<T, Index> {
  public:
   InternalMmapVector() { InternalMmapVectorNoCtor<T>::Initialize(0); }
   explicit InternalMmapVector(uptr cnt) {

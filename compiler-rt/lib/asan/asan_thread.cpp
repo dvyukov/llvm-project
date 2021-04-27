@@ -46,7 +46,7 @@ static ThreadRegistry *asan_thread_registry;
 static BlockingMutex mu_for_thread_context(LINKER_INITIALIZED);
 static LowLevelAllocator allocator_for_thread_context;
 
-static ThreadContextBase *GetAsanThreadContext(u32 tid) {
+static ThreadContextBase *GetAsanThreadContext(Tid tid) {
   BlockingMutexLock lock(&mu_for_thread_context);
   return new(allocator_for_thread_context) AsanThreadContext(tid);
 }
@@ -61,13 +61,13 @@ ThreadRegistry &asanThreadRegistry() {
     // be called. It would be wrong to reuse AsanThreadContext for another
     // thread before all TSD destructors will be called for it.
     asan_thread_registry = new(thread_registry_placeholder) ThreadRegistry(
-        GetAsanThreadContext, kMaxNumberOfThreads, kMaxNumberOfThreads);
+        GetAsanThreadContext);
     initialized = true;
   }
   return *asan_thread_registry;
 }
 
-AsanThreadContext *GetThreadContextByTidLocked(u32 tid) {
+AsanThreadContext *GetThreadContextByTidLocked(Tid tid) {
   return static_cast<AsanThreadContext *>(
       asanThreadRegistry().GetThreadLocked(tid));
 }
@@ -75,7 +75,7 @@ AsanThreadContext *GetThreadContextByTidLocked(u32 tid) {
 // AsanThread implementation.
 
 AsanThread *AsanThread::Create(thread_callback_t start_routine, void *arg,
-                               u32 parent_tid, StackTrace *stack,
+                               Tid parent_tid, StackTrace *stack,
                                bool detached) {
   uptr PageSize = GetPageSizeCached();
   uptr size = RoundUpTo(sizeof(AsanThread), PageSize);
@@ -97,7 +97,7 @@ void AsanThread::TSDDtor(void *tsd) {
 }
 
 void AsanThread::Destroy() {
-  int tid = this->tid();
+  Tid tid = this->tid();
   VReport(1, "T%d exited\n", tid);
 
   bool was_running =
@@ -228,7 +228,7 @@ FakeStack *AsanThread::AsyncSignalSafeLazyInitFakeStack() {
 }
 
 void AsanThread::Init(const InitOptions *options) {
-  DCHECK_NE(tid(), ThreadRegistry::kUnknownTid);
+  DCHECK_NE(tid(), kInvalidTid);
   next_stack_top_ = next_stack_bottom_ = 0;
   atomic_store(&stack_switching_, false, memory_order_release);
   CHECK_EQ(this->stack_size(), 0U);
@@ -291,7 +291,7 @@ thread_return_t AsanThread::ThreadStart(tid_t os_id) {
 
 AsanThread *CreateMainThread() {
   AsanThread *main_thread = AsanThread::Create(
-      /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ 0,
+      /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ kMainTid,
       /* stack */ nullptr, /* detached */ true);
   SetCurrentThread(main_thread);
   main_thread->ThreadStart(internal_getpid());
@@ -305,7 +305,7 @@ void AsanThread::SetThreadStackAndTls(const InitOptions *options) {
   DCHECK_EQ(options, nullptr);
   uptr tls_size = 0;
   uptr stack_size = 0;
-  GetThreadStackAndTls(tid() == 0, &stack_bottom_, &stack_size, &tls_begin_,
+  GetThreadStackAndTls(tid() == kMainTid, &stack_bottom_, &stack_size, &tls_begin_,
                        &tls_size);
   stack_top_ = RoundDownTo(stack_bottom_ + stack_size, SHADOW_GRANULARITY);
   tls_end_ = tls_begin_ + tls_size;
@@ -431,7 +431,7 @@ AsanThread *GetCurrentThread() {
       // address. We are not entirely sure that we have correct main thread
       // limits, so only do this magic on Android, and only if the found thread
       // is the main thread.
-      AsanThreadContext *tctx = GetThreadContextByTidLocked(0);
+      AsanThreadContext *tctx = GetThreadContextByTidLocked(kMainTid);
       if (tctx && ThreadStackContainsAddress(tctx, &context)) {
         SetCurrentThread(tctx->thread);
         return tctx->thread;
@@ -452,7 +452,7 @@ void SetCurrentThread(AsanThread *t) {
   CHECK_EQ(t->context(), AsanTSDGet());
 }
 
-u32 GetCurrentTidOrInvalid() {
+Tid GetCurrentTidOrInvalid() {
   AsanThread *t = GetCurrentThread();
   return t ? t->tid() : kInvalidTid;
 }
@@ -468,7 +468,7 @@ AsanThread *FindThreadByStackAddress(uptr addr) {
 void EnsureMainThreadIDIsCorrect() {
   AsanThreadContext *context =
       reinterpret_cast<AsanThreadContext *>(AsanTSDGet());
-  if (context && (context->tid == 0))
+  if (context && (context->tid == kMainTid))
     context->os_id = GetTid();
 }
 

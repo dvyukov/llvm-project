@@ -374,7 +374,7 @@ static u32 ChainOrigin(u32 id, StackTrace *stack, bool from_init = false) {
     PRINT_CALLER_STACK_TRACE
   }
 
-  Origin o = Origin::FromRawId(id);
+  Origin o(id);
   stack->tag = StackTrace::TAG_UNKNOWN;
   Origin chained = Origin::CreateChainedOrigin(o, stack);
   return chained.raw_id();
@@ -825,7 +825,7 @@ extern "C" SANITIZER_INTERFACE_ATTRIBUTE void dfsan_print_origin_trace(
 
   Printf("  %sTaint value 0x%x (at %p) origin tracking (%s)%s\n", d.Origin(),
          label, addr, description ? description : "", d.Default());
-  Origin o = Origin::FromRawId(origin);
+  Origin o(origin);
   bool found = false;
   while (o.isChainedOrigin()) {
     StackTrace stack;
@@ -858,7 +858,7 @@ dfsan_get_init_origin(const void *addr) {
 
   const dfsan_origin origin = *__dfsan::origin_for(addr);
 
-  Origin o = Origin::FromRawId(origin);
+  Origin o(origin);
   dfsan_origin origin_id = o.raw_id();
   while (o.isChainedOrigin()) {
     StackTrace stack;

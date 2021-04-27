@@ -23,7 +23,7 @@ MemprofThreadIdAndName::MemprofThreadIdAndName(MemprofThreadContext *t) {
   Init(t->tid, t->name);
 }
 
-MemprofThreadIdAndName::MemprofThreadIdAndName(u32 tid) {
+MemprofThreadIdAndName::MemprofThreadIdAndName(Tid tid) {
   if (tid == kInvalidTid) {
     Init(tid, "");
   } else {
@@ -33,7 +33,7 @@ MemprofThreadIdAndName::MemprofThreadIdAndName(u32 tid) {
   }
 }
 
-void MemprofThreadIdAndName::Init(u32 tid, const char *tname) {
+void MemprofThreadIdAndName::Init(Tid tid, const char *tname) {
   int len = internal_snprintf(name, sizeof(name), "T%d", tid);
   CHECK(((unsigned int)len) < sizeof(name));
   if (tname[0] != '\0')
@@ -44,7 +44,7 @@ void DescribeThread(MemprofThreadContext *context) {
   CHECK(context);
   memprofThreadRegistry().CheckLocked();
   // No need to announce the main thread.
-  if (context->tid == 0 || context->announced) {
+  if (context->tid == kMainTid || context->announced) {
     return;
   }
   context->announced = true;

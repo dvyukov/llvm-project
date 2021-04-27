@@ -209,6 +209,8 @@ struct SizeClassAllocator32LocalCache {
   void InitCache(PerClass *c) {
     if (LIKELY(c->max_count))
       return;
+    CHECK_GT(c, &per_class_[0]);
+    CHECK_LT(c, &per_class_[kNumClasses]);
     const uptr batch_class_id = SizeClassMap::ClassID(sizeof(TransferBatch));
     for (uptr i = 1; i < kNumClasses; i++) {
       PerClass *c = &per_class_[i];
@@ -228,7 +230,7 @@ struct SizeClassAllocator32LocalCache {
               batch_class_id : 0;
       }
     }
-    DCHECK_NE(c->max_count, 0UL);
+    CHECK_NE(c->max_count, 0UL);
   }
 
   NOINLINE bool Refill(PerClass *c, SizeClassAllocator *allocator,

@@ -168,6 +168,7 @@ SRCS="$SRCS $ADD_SRCS"
 
 rm -f $DIR/gotsan.cpp
 for F in $SRCS; do
+	echo "#line 1 \"$F\"" >> $DIR/gotsan.cpp
 	cat $F >> $DIR/gotsan.cpp
 done
 

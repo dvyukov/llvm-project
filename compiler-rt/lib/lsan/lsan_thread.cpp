@@ -25,21 +25,17 @@ namespace __lsan {
 
 static ThreadRegistry *thread_registry;
 
-static ThreadContextBase *CreateThreadContext(u32 tid) {
+static ThreadContextBase *CreateThreadContext(Tid tid) {
   void *mem = MmapOrDie(sizeof(ThreadContext), "ThreadContext");
   return new (mem) ThreadContext(tid);
 }
 
-static const uptr kMaxThreads = 1 << 13;
-static const uptr kThreadQuarantineSize = 64;
-
 void InitializeThreadRegistry() {
   static ALIGNED(64) char thread_registry_placeholder[sizeof(ThreadRegistry)];
-  thread_registry = new (thread_registry_placeholder)
-      ThreadRegistry(CreateThreadContext, kMaxThreads, kThreadQuarantineSize);
+  thread_registry = new (thread_registry_placeholder) ThreadRegistry(CreateThreadContext);
 }
 
-ThreadContextLsanBase::ThreadContextLsanBase(int tid)
+ThreadContextLsanBase::ThreadContextLsanBase(Tid tid)
     : ThreadContextBase(tid) {}
 
 void ThreadContextLsanBase::OnFinished() {
@@ -47,11 +43,11 @@ void ThreadContextLsanBase::OnFinished() {
   DTLS_Destroy();
 }
 
-u32 ThreadCreate(u32 parent_tid, uptr user_id, bool detached, void *arg) {
+Tid ThreadCreate(Tid parent_tid, uptr user_id, bool detached, void *arg) {
   return thread_registry->CreateThread(user_id, detached, parent_tid, arg);
 }
 
-void ThreadContextLsanBase::ThreadStart(u32 tid, tid_t os_id,
+void ThreadContextLsanBase::ThreadStart(Tid tid, tid_t os_id,
                                         ThreadType thread_type, void *arg) {
   thread_registry->StartThread(tid, os_id, thread_type, arg);
   SetCurrentThread(tid);
@@ -79,22 +75,22 @@ static bool FindThreadByUid(ThreadContextBase *tctx, void *arg) {
   return false;
 }
 
-u32 ThreadTid(uptr uid) {
+Tid ThreadTid(uptr uid) {
   return thread_registry->FindThread(FindThreadByUid, (void *)uid);
 }
 
-void ThreadDetach(u32 tid) {
+void ThreadDetach(Tid tid) {
   CHECK_NE(tid, kInvalidTid);
   thread_registry->DetachThread(tid, /* arg */ nullptr);
 }
 
-void ThreadJoin(u32 tid) {
+void ThreadJoin(Tid tid) {
   CHECK_NE(tid, kInvalidTid);
   thread_registry->JoinThread(tid, /* arg */ nullptr);
 }
 
 void EnsureMainThreadIDIsCorrect() {
-  if (GetCurrentThread() == 0)
+  if (GetCurrentThread() == kMainTid)
     CurrentThreadContext()->os_id = GetTid();
 }
 

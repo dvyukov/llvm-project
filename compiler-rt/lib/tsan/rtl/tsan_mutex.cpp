@@ -43,6 +43,7 @@ static MutexType CanLockTab[MutexTypeCount][MutexTypeCount] = {
   /*12 MutexTypeFired*/       {MutexTypeLeaf},
   /*13 MutexTypeRacy*/        {MutexTypeLeaf},
   /*14 MutexTypeGlobalProc*/  {},
+  /*15 MutexTypeTraceAlloc*/  {MutexTypeLeaf},
 };
 
 static bool CanLockAdj[MutexTypeCount][MutexTypeCount];
@@ -165,14 +166,15 @@ void InternalDeadlockDetector::Unlock(MutexType t) {
 }
 
 void InternalDeadlockDetector::CheckNoLocks() {
-  for (int i = 0; i != MutexTypeCount; i++) {
+  for (int i = MutexTypeInvalid + 1; i != MutexTypeCount; i++)
     CHECK_EQ(locked_[i], 0);
-  }
 }
 #endif
 
-void CheckNoLocks(ThreadState *thr) {
+void DebugCheckNoLocks() {
 #if SANITIZER_DEBUG && !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  DCHECK(!thr->need_epoch_increment);
   thr->internal_deadlock_detector.CheckNoLocks();
 #endif
 }

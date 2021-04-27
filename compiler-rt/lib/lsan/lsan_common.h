@@ -66,8 +66,6 @@ enum ChunkTag {
   kIgnored = 3
 };
 
-const u32 kInvalidTid = (u32) -1;
-
 struct Flags {
 #define LSAN_FLAG(Type, Name, DefaultValue, Description) Type Name;
 #include "lsan_flags.inc"
@@ -87,7 +85,7 @@ struct Leak {
   u32 id;
   uptr hit_count;
   uptr total_size;
-  u32 stack_trace_id;
+  StackID stack_trace_id;
   bool is_directly_leaked;
   bool is_suppressed;
 };
@@ -102,7 +100,7 @@ struct LeakedObject {
 class LeakReport {
  public:
   LeakReport() {}
-  void AddLeakedChunk(uptr chunk, u32 stack_trace_id, uptr leaked_size,
+  void AddLeakedChunk(uptr chunk, StackID stack_trace_id, uptr leaked_size,
                       ChunkTag tag);
   void ReportTopLeaks(uptr max_leaks);
   void PrintSummary();
@@ -265,7 +263,7 @@ class LsanMetadata {
   ChunkTag tag() const;
   void set_tag(ChunkTag value);
   uptr requested_size() const;
-  u32 stack_trace_id() const;
+  StackID stack_trace_id() const;
  private:
   void *metadata_;
 };

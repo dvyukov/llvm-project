@@ -251,7 +251,7 @@ ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
   Initialize(thr);
   if (!thr_->is_inited) return;
   if (!thr_->ignore_interceptors) FuncEntry(thr, pc);
-  DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
+  //DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
   ignoring_ =
       !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
                                 libignore()->IsIgnored(pc, &in_ignored_lib_));
@@ -264,7 +264,7 @@ ScopedInterceptor::~ScopedInterceptor() {
   if (!thr_->ignore_interceptors) {
     ProcessPendingSignals(thr_);
     FuncExit(thr_);
-    CheckNoLocks(thr_);
+    CheckNoLocks();
   }
 }
 
@@ -321,10 +321,12 @@ struct BlockingCall {
       : thr(thr)
       , ctx(SigCtx(thr)) {
     for (;;) {
+      SlotDetach(thr);
       atomic_store(&ctx->in_blocking_func, 1, memory_order_relaxed);
       if (atomic_load(&ctx->have_pending_signals, memory_order_relaxed) == 0)
         break;
       atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+      SlotAttach(thr);
       ProcessPendingSignals(thr);
     }
     // When we are in a "blocking call", we process signals asynchronously
@@ -338,6 +340,7 @@ struct BlockingCall {
   ~BlockingCall() {
     thr->ignore_interceptors--;
     atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+    SlotAttach(thr);
   }
 
   ThreadState *thr;
@@ -928,7 +931,7 @@ static void thread_finalize(void *v) {
 struct ThreadParam {
   void* (*callback)(void *arg);
   void *param;
-  atomic_uintptr_t tid;
+  atomic_uint32_t tid;
 };
 
 extern "C" void *__tsan_thread_start_func(void *arg) {
@@ -954,7 +957,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
       internal_sched_yield();
     Processor *proc = ProcCreate();
     ProcWire(proc, thr);
-    ThreadStart(thr, tid, GetTid(), ThreadType::Regular);
+    ThreadStart(thr, static_cast<Tid>(tid), GetTid(), ThreadType::Regular);
     atomic_store(&p->tid, 0, memory_order_release);
   }
   void *res = callback(param);
@@ -1004,7 +1007,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     ThreadIgnoreEnd(thr, pc);
   }
   if (res == 0) {
-    int tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
+    Tid tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
     CHECK_NE(tid, 0);
     // Synchronization on p.tid serves two purposes:
     // 1. ThreadCreate must finish before the new thread starts.
@@ -1013,7 +1016,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     // 2. ThreadStart must finish before this thread continues.
     //    Otherwise, this thread can call pthread_detach and reset thr->sync
     //    before the new thread got a chance to acquire from it in ThreadStart.
-    atomic_store(&p.tid, tid, memory_order_release);
+    atomic_store(&p.tid, static_cast<int>(tid), memory_order_release);
     while (atomic_load(&p.tid, memory_order_acquire) != 0)
       internal_sched_yield();
   }
@@ -1024,7 +1027,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
 
 TSAN_INTERCEPTOR(int, pthread_join, void *th, void **ret) {
   SCOPED_INTERCEPTOR_RAW(pthread_join, th, ret);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_join)(th, ret);
   ThreadIgnoreEnd(thr, pc);
@@ -1038,7 +1041,7 @@ DEFINE_REAL_PTHREAD_FUNCTIONS
 
 TSAN_INTERCEPTOR(int, pthread_detach, void *th) {
   SCOPED_INTERCEPTOR_RAW(pthread_detach, th);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   int res = REAL(pthread_detach)(th);
   if (res == 0) {
     ThreadDetach(thr, pc, tid);
@@ -1059,7 +1062,7 @@ TSAN_INTERCEPTOR(void, pthread_exit, void *retval) {
 #if SANITIZER_LINUX
 TSAN_INTERCEPTOR(int, pthread_tryjoin_np, void *th, void **ret) {
   SCOPED_INTERCEPTOR_RAW(pthread_tryjoin_np, th, ret);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = REAL(pthread_tryjoin_np)(th, ret);
   ThreadIgnoreEnd(thr, pc);
@@ -1073,7 +1076,7 @@ TSAN_INTERCEPTOR(int, pthread_tryjoin_np, void *th, void **ret) {
 TSAN_INTERCEPTOR(int, pthread_timedjoin_np, void *th, void **ret,
                  const struct timespec *abstime) {
   SCOPED_INTERCEPTOR_RAW(pthread_timedjoin_np, th, ret, abstime);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_timedjoin_np)(th, ret, abstime);
   ThreadIgnoreEnd(thr, pc);
@@ -1133,6 +1136,7 @@ struct CondMutexUnlockCtx {
   void *m;
   void *c;
   const Fn &fn;
+  bool in_ignored_lib;
 
   int Cancel() const { return fn(); }
   void Unlock() const;
@@ -1148,6 +1152,8 @@ void CondMutexUnlockCtx<Fn>::Unlock() const {
   ThreadSignalContext *ctx = SigCtx(thr);
   CHECK_EQ(atomic_load(&ctx->in_blocking_func, memory_order_relaxed), 1);
   atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+  thr->in_ignored_lib = in_ignored_lib;
+  SlotAttach(thr);
   MutexPostLock(thr, pc, (uptr)m, MutexFlagDoPreLockOnPostLock);
   // Undo BlockingCall ctor effects.
   thr->ignore_interceptors--;
@@ -1173,13 +1179,17 @@ int cond_wait(ThreadState *thr, uptr pc, ScopedInterceptor *si, const Fn &fn,
   {
     // Enable signal delivery while the thread is blocked.
     BlockingCall bc(thr);
-    CondMutexUnlockCtx<Fn> arg = {si, thr, pc, m, c, fn};
+    CondMutexUnlockCtx<Fn> arg = {si, thr, pc, m, c, fn, thr->in_ignored_lib};
+    // pthread_cond_wait may call pthread_once before calling the cancel callback,
+    // we need to ignore it because we don't have tid slot attached and can't process synchronization.
+    thr->in_ignored_lib = true;
     res = call_pthread_cancel_with_cleanup(
         [](void *arg) -> int {
           return ((const CondMutexUnlockCtx<Fn> *)arg)->Cancel();
         },
         [](void *arg) { ((const CondMutexUnlockCtx<Fn> *)arg)->Unlock(); },
         &arg);
+    thr->in_ignored_lib = arg.in_ignored_lib;
   }
   if (res == errno_EOWNERDEAD) MutexRepair(thr, pc, (uptr)m);
   MutexPostLock(thr, pc, (uptr)m, MutexFlagDoPreLockOnPostLock);
@@ -1298,7 +1308,7 @@ TSAN_INTERCEPTOR(int, pthread_mutex_trylock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_mutex_timedlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_mutex_timedlock, m, abstime);
-  int res = REAL(pthread_mutex_timedlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_mutex_timedlock)(m, abstime);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m, MutexFlagTryLock);
   }
@@ -1328,7 +1338,7 @@ TSAN_INTERCEPTOR(int, pthread_spin_destroy, void *m) {
 TSAN_INTERCEPTOR(int, pthread_spin_lock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_spin_lock, m);
   MutexPreLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_spin_lock)(m);
+  int res = BLOCK_REAL(pthread_spin_lock)(m);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m);
   }
@@ -1373,7 +1383,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_destroy, void *m) {
 TSAN_INTERCEPTOR(int, pthread_rwlock_rdlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_rdlock, m);
   MutexPreReadLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_rwlock_rdlock)(m);
+  int res = BLOCK_REAL(pthread_rwlock_rdlock)(m);
   if (res == 0) {
     MutexPostReadLock(thr, pc, (uptr)m);
   }
@@ -1392,7 +1402,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_tryrdlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_rwlock_timedrdlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_timedrdlock, m, abstime);
-  int res = REAL(pthread_rwlock_timedrdlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_rwlock_timedrdlock)(m, abstime);
   if (res == 0) {
     MutexPostReadLock(thr, pc, (uptr)m);
   }
@@ -1403,7 +1413,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_timedrdlock, void *m, void *abstime) {
 TSAN_INTERCEPTOR(int, pthread_rwlock_wrlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_wrlock, m);
   MutexPreLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_rwlock_wrlock)(m);
+  int res = BLOCK_REAL(pthread_rwlock_wrlock)(m);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m);
   }
@@ -1422,7 +1432,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_trywrlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_rwlock_timedwrlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_timedwrlock, m, abstime);
-  int res = REAL(pthread_rwlock_timedwrlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_rwlock_timedwrlock)(m, abstime);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m, MutexFlagTryLock);
   }
@@ -1456,7 +1466,7 @@ TSAN_INTERCEPTOR(int, pthread_barrier_wait, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_wait, b);
   Release(thr, pc, (uptr)b);
   MemoryRead(thr, pc, (uptr)b, kSizeLog1);
-  int res = REAL(pthread_barrier_wait)(b);
+  int res = BLOCK_REAL(pthread_barrier_wait)(b);
   MemoryRead(thr, pc, (uptr)b, kSizeLog1);
   if (res == 0 || res == PTHREAD_BARRIER_SERIAL_THREAD) {
     Acquire(thr, pc, (uptr)b);
@@ -1941,7 +1951,7 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   int ignore_sync = thr->ignore_sync;
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_reads_and_writes = 0;
-    thr->fast_state.ClearIgnoreBit();
+    thr->ignore_enabled_ = false;
     thr->ignore_interceptors = 0;
     thr->ignore_sync = 0;
   }
@@ -1962,7 +1972,7 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_reads_and_writes = ignore_reads_and_writes;
     if (ignore_reads_and_writes)
-      thr->fast_state.SetIgnoreBit();
+      thr->ignore_enabled_ = true;
     thr->ignore_interceptors = ignore_interceptors;
     thr->ignore_sync = ignore_sync;
   }
@@ -1978,7 +1988,7 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
     // StackTrace::GetNestInstructionPc(pc) is used because return address is
     // expected, OutputReport() will undo this.
     ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
-    ThreadRegistryLock l(ctx->thread_registry);
+    ThreadRegistryLock l(&ctx->thread_registry);
     ScopedReport rep(ReportTypeErrnoInSignal);
     if (!IsFiredSuppression(ctx, ReportTypeErrnoInSignal, stack)) {
       rep.AddStack(stack, true);
@@ -1989,6 +1999,8 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
 }
 
 void ProcessPendingSignals(ThreadState *thr) {
+  //!!! how this will work with Go?
+  CheckReset(thr);
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sctx == 0 ||
       atomic_load(&sctx->have_pending_signals, memory_order_relaxed) == 0)
@@ -2040,7 +2052,9 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
     atomic_fetch_add(&thr->in_signal_handler, 1, memory_order_relaxed);
     if (sctx && atomic_load(&sctx->in_blocking_func, memory_order_relaxed)) {
       atomic_store(&sctx->in_blocking_func, 0, memory_order_relaxed);
+      SlotAttach(thr);
       CallUserSignalHandler(thr, sync, true, sigact, sig, info, ctx);
+      SlotDetach(thr);
       atomic_store(&sctx->in_blocking_func, 1, memory_order_relaxed);
     } else {
       // Be very conservative with when we do acquire in this case.
@@ -2193,7 +2207,7 @@ struct dl_iterate_phdr_data {
 };
 
 static bool IsAppNotRodata(uptr addr) {
-  return IsAppMem(addr) && *(u64*)MemToShadow(addr) != kShadowRodata;
+  return IsAppMem(addr) && *(RawShadow*)MemToShadow(addr) != kShadowRodata;
 }
 
 static int dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,
@@ -2333,7 +2347,7 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
   ThreadSetName(((TsanInterceptorContext *) ctx)->thr, name)
 
 #define COMMON_INTERCEPTOR_SET_PTHREAD_NAME(ctx, thread, name) \
-  __tsan::ctx->thread_registry->SetThreadNameByUserId(thread, name)
+  __tsan::ctx->thread_registry.SetThreadNameByUserId(thread, name)
 
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
 
@@ -2534,6 +2548,33 @@ static void syscall_post_fork(uptr pc, int pid) {
     ForkParentAfter(thr, pc);
   }
 }
+
+static void syscall_pre_block(ThreadState* thr, uptr pc) {
+  ThreadSignalContext *ctx = SigCtx(thr);
+    for (;;) {
+      SlotDetach(thr);
+      atomic_store(&ctx->in_blocking_func, 1, memory_order_relaxed);
+      if (atomic_load(&ctx->have_pending_signals, memory_order_relaxed) == 0)
+        break;
+      atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+      SlotAttach(thr);
+      ProcessPendingSignals(thr);
+    }
+    // When we are in a "blocking call", we process signals asynchronously
+    // (right when they arrive). In this context we do not expect to be
+    // executing any user/runtime code. The known interceptor sequence when
+    // this is not true is: pthread_join -> munmap(stack). It's fine
+    // to ignore munmap in this case -- we handle stack shadow separately.
+    thr->ignore_interceptors++;
+}
+
+static void syscall_post_block(ThreadState* thr, uptr pc) {
+  ThreadSignalContext *ctx = SigCtx(thr);
+    thr->ignore_interceptors--;
+    atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+    SlotAttach(thr);
+}
+
 #endif
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) \
@@ -2571,6 +2612,9 @@ static void syscall_post_fork(uptr pc, int pid) {
 
 #define COMMON_SYSCALL_POST_FORK(res) \
   syscall_post_fork(GET_CALLER_PC(), res)
+
+#define COMMON_SYSCALL_PRE_BLOCK() syscall_pre_block(cur_thread(), GET_CALLER_PC())
+#define COMMON_SYSCALL_POST_BLOCK() syscall_post_block(cur_thread(), GET_CALLER_PC())
 
 #include "sanitizer_common/sanitizer_common_syscalls.inc"
 #include "sanitizer_common/sanitizer_syscalls_netbsd.inc"
@@ -2893,6 +2937,7 @@ void __tsan_testonly_barrier_init(u64 *barrier, u32 count) {
 
 extern "C" SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_testonly_barrier_wait(u64 *barrier) {
+  DPrintf("#%d: barrier_wait\n", cur_thread()->tid);
   unsigned old = __atomic_fetch_add(barrier, 1 << 8, __ATOMIC_RELAXED);
   unsigned old_epoch = (old >> 8) / (old & 0xff);
   for (;;) {

@@ -109,8 +109,9 @@ SymbolizedStack *SymbolizeCode(uptr addr) {
 ReportLocation *SymbolizeData(uptr addr) {
   DataInfo info;
   if (!Symbolizer::GetOrInit()->SymbolizeData(addr, &info))
-    return 0;
-  ReportLocation *ent = ReportLocation::New(ReportLocationGlobal);
+    return nullptr;
+  auto ent = New<ReportLocation>();
+  ent->type = ReportLocationGlobal;
   internal_memcpy(&ent->global, &info, sizeof(info));
   return ent;
 }

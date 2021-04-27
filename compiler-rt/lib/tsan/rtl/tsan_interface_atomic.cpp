@@ -232,7 +232,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
   T v = NoTsanAtomicLoad(a, mo);
   SyncVar *s = ctx->metamap.GetIfExistsAndLock((uptr)a, false);
   if (s) {
-    AcquireImpl(thr, pc, &s->clock);
+    AcquireImpl(thr, pc, s->clock);
     // Re-read under sync mutex because we need a consistent snapshot
     // of the value and the clock we acquire.
     v = NoTsanAtomicLoad(a, mo);
@@ -269,12 +269,10 @@ static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
   }
   __sync_synchronize();
   SyncVar *s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, true);
-  thr->fast_state.IncrementEpoch();
-  // Can't increment epoch w/o writing to the trace as well.
-  TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
   ReleaseStoreImpl(thr, pc, &s->clock);
   NoTsanAtomicStore(a, v, mo);
   s->mtx.Unlock();
+  IncrementEpoch(thr, pc);
 }
 
 template<typename T, T (*F)(volatile T *v, T op)>
@@ -283,19 +281,18 @@ static T AtomicRMW(ThreadState *thr, uptr pc, volatile T *a, T v, morder mo) {
   SyncVar *s = 0;
   if (mo != mo_relaxed) {
     s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, true);
-    thr->fast_state.IncrementEpoch();
-    // Can't increment epoch w/o writing to the trace as well.
-    TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
     if (IsAcqRelOrder(mo))
-      AcquireReleaseImpl(thr, pc, &s->clock);
+      ReleaseAcquireImpl(thr, pc, &s->clock);
     else if (IsReleaseOrder(mo))
       ReleaseImpl(thr, pc, &s->clock);
     else if (IsAcquireOrder(mo))
-      AcquireImpl(thr, pc, &s->clock);
+      AcquireImpl(thr, pc, s->clock);
   }
   v = F(a, v);
   if (s)
     s->mtx.Unlock();
+  if (IsReleaseOrder(mo))
+    IncrementEpoch(thr, pc);
   return v;
 }
 
@@ -408,15 +405,12 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   bool write_lock = mo != mo_acquire && mo != mo_consume;
   if (mo != mo_relaxed) {
     s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, write_lock);
-    thr->fast_state.IncrementEpoch();
-    // Can't increment epoch w/o writing to the trace as well.
-    TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
     if (IsAcqRelOrder(mo))
-      AcquireReleaseImpl(thr, pc, &s->clock);
+      ReleaseAcquireImpl(thr, pc, &s->clock);
     else if (IsReleaseOrder(mo))
       ReleaseImpl(thr, pc, &s->clock);
     else if (IsAcquireOrder(mo))
-      AcquireImpl(thr, pc, &s->clock);
+      AcquireImpl(thr, pc, s->clock);
   }
   T cc = *c;
   T pr = func_cas(a, cc, v);
@@ -426,6 +420,8 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
     else
       s->mtx.ReadUnlock();
   }
+  if (IsReleaseOrder(mo))
+    IncrementEpoch(thr, pc);
   if (pr == cc)
     return true;
   *c = pr;
@@ -497,6 +493,7 @@ class ScopedAtomic {
   ~ScopedAtomic() {
     ProcessPendingSignals(thr_);
     FuncExit(thr_);
+    CheckNoLocks();
   }
  private:
   ThreadState *thr_;

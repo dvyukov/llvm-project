@@ -34,6 +34,7 @@ enum MutexType {
   MutexTypeFired,
   MutexTypeRacy,
   MutexTypeGlobalProc,
+  MutexTypeTraceAlloc,
 
   // This must be the last.
   MutexTypeCount
@@ -80,10 +81,15 @@ class InternalDeadlockDetector {
 };
 
 void InitializeMutex();
+void DebugCheckNoLocks();
 
-// Checks that the current thread does not hold any runtime locks
+// Checks if the current thread hold any runtime locks
 // (e.g. when returning from an interceptor).
-void CheckNoLocks(ThreadState *thr);
+ALWAYS_INLINE void CheckNoLocks() {
+#if SANITIZER_DEBUG && !SANITIZER_GO
+  DebugCheckNoLocks();
+#endif
+}
 
 }  // namespace __tsan
 

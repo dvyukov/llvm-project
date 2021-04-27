@@ -50,7 +50,7 @@ static VectorOfGlobals *dynamic_init_globals;
 
 // We want to remember where a certain range of globals was registered.
 struct GlobalRegistrationSite {
-  u32 stack_id;
+  StackID stack_id;
   Global *g_first, *g_last;
 };
 typedef InternalMmapVector<GlobalRegistrationSite> GlobalRegistrationSiteVector;
@@ -94,7 +94,7 @@ static void ReportGlobal(const Global &g, const char *prefix) {
   }
 }
 
-static u32 FindRegistrationSite(const Global *g) {
+static StackID FindRegistrationSite(const Global *g) {
   mu_for_globals.CheckLocked();
   CHECK(global_registration_site_vector);
   for (uptr i = 0, n = global_registration_site_vector->size(); i < n; i++) {
@@ -102,10 +102,10 @@ static u32 FindRegistrationSite(const Global *g) {
     if (g >= grs.g_first && g <= grs.g_last)
       return grs.stack_id;
   }
-  return 0;
+  return kInvalidStackID;
 }
 
-int GetGlobalsForAddress(uptr addr, Global *globals, u32 *reg_sites,
+int GetGlobalsForAddress(uptr addr, Global *globals, StackID *reg_sites,
                          int max_globals) {
   if (!flags()->report_globals) return 0;
   BlockingMutexLock lock(&mu_for_globals);
@@ -358,7 +358,7 @@ void __asan_unregister_elf_globals(uptr *flag, void *start, void *stop) {
 void __asan_register_globals(__asan_global *globals, uptr n) {
   if (!flags()->report_globals) return;
   GET_STACK_TRACE_MALLOC;
-  u32 stack_id = StackDepotPut(stack);
+  StackID stack_id = StackDepotPut(stack);
   BlockingMutexLock lock(&mu_for_globals);
   if (!global_registration_site_vector) {
     global_registration_site_vector =

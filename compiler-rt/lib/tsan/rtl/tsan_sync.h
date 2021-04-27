@@ -50,38 +50,20 @@ enum MutexFlags {
 struct SyncVar {
   SyncVar();
 
-  static const int kInvalidTid = -1;
-
   uptr addr;  // overwritten by DenseSlabAlloc freelist
   Mutex mtx;
-  u64 uid;  // Globally unique id.
-  u32 creation_stack_id;
-  int owner_tid;  // Set only by exclusive owners.
-  u64 last_lock;
+  StackID creation_stack_id;
+  Tid owner_tid;  // Set only by exclusive owners.
+  u32 last_lock;
   int recursion;
   atomic_uint32_t flags;
   u32 next;  // in MetaMap
   DDMutex dd;
-  SyncClock read_clock;  // Used for rw mutexes only.
-  // The clock is placed last, so that it is situated on a different cache line
-  // with the mtx. This reduces contention for hot sync objects.
-  SyncClock clock;
+  VectorClock* read_clock;  // Used for rw mutexes only.
+  VectorClock* clock;
 
-  void Init(ThreadState *thr, uptr pc, uptr addr, u64 uid);
-  void Reset(Processor *proc);
-
-  u64 GetId() const {
-    // 48 lsb is addr, then 14 bits is low part of uid, then 2 zero bits.
-    return GetLsb((u64)addr | (uid << 48), 60);
-  }
-  bool CheckId(u64 uid) const {
-    CHECK_EQ(uid, GetLsb(uid, 14));
-    return GetLsb(this->uid, 14) == uid;
-  }
-  static uptr SplitId(u64 id, u64 *uid) {
-    *uid = id >> 48;
-    return (uptr)GetLsb(id, 48);
-  }
+  void Init(ThreadState *thr, uptr pc, uptr addr);
+  void Reset();
 
   bool IsFlagSet(u32 f) const {
     return atomic_load_relaxed(&flags) & f;
@@ -116,6 +98,7 @@ class MetaMap {
   uptr FreeBlock(Processor *proc, uptr p);
   bool FreeRange(Processor *proc, uptr p, uptr sz);
   void ResetRange(Processor *proc, uptr p, uptr sz);
+  void Reset();
   MBlock* GetBlock(uptr p);
 
   SyncVar* GetOrCreateAndLock(ThreadState *thr, uptr pc,
@@ -134,7 +117,6 @@ class MetaMap {
   typedef DenseSlabAlloc<SyncVar, 1<<16, 1<<10> SyncAlloc;
   BlockAlloc block_alloc_;
   SyncAlloc sync_alloc_;
-  atomic_uint64_t uid_gen_;
 
   SyncVar* GetAndLock(ThreadState *thr, uptr pc, uptr addr, bool write_lock,
                       bool create);
