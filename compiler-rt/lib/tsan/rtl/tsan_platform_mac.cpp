@@ -112,9 +112,6 @@ void cur_thread_finalize() {
 }
 #endif
 
-void FlushShadowMemory() {
-}
-
 static void RegionMemUsage(uptr start, uptr end, uptr *res, uptr *dirty) {
   vm_address_t address = start;
   vm_address_t end_address = end;
@@ -139,7 +136,10 @@ static void RegionMemUsage(uptr start, uptr end, uptr *res, uptr *dirty) {
   *dirty = dirty_pages * GetPageSizeCached();
 }
 
-void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
+void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
+  uptr nthread, nlive;
+  ctx->thread_registry.GetNumberOfThreads(&nthread, &nlive);
+
   uptr shadow_res, shadow_dirty;
   uptr meta_res, meta_dirty;
   uptr trace_res, trace_dirty;
@@ -188,7 +188,7 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
     nthread, nlive);
 }
 
-#if !SANITIZER_GO
+#  if !SANITIZER_GO
 void InitializeShadowMemoryPlatform() { }
 
 // On OS X, GCD worker threads are created without a call to pthread_create. We

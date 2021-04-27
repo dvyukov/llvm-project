@@ -241,48 +241,25 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   return ctx;
 }
 
-ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
-                                     uptr pc)
-    : thr_(thr), in_ignored_lib_(false), ignoring_(false) {
-  LazyInitialize(thr);
-  if (!thr_->is_inited) return;
-  if (!thr_->ignore_interceptors) FuncEntry(thr, pc);
-  DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
-  ignoring_ =
-      !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
-                                libignore()->IsIgnored(pc, &in_ignored_lib_));
-  EnableIgnores();
-}
-
-ScopedInterceptor::~ScopedInterceptor() {
-  if (!thr_->is_inited) return;
-  DisableIgnores();
-  if (!thr_->ignore_interceptors) {
-    ProcessPendingSignals(thr_);
-    FuncExit(thr_);
-    CheckedMutex::CheckNoLocks();
+NOINLINE
+void ScopedInterceptor::EnableIgnoresImpl() {
+  ThreadIgnoreBegin(thr_, 0);
+  if (flags()->ignore_noninstrumented_modules)
+    thr_->suppress_reports++;
+  if (in_ignored_lib_) {
+    DCHECK(!thr_->in_ignored_lib);
+    thr_->in_ignored_lib = true;
   }
 }
 
-void ScopedInterceptor::EnableIgnores() {
-  if (ignoring_) {
-    ThreadIgnoreBegin(thr_, 0);
-    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports++;
-    if (in_ignored_lib_) {
-      DCHECK(!thr_->in_ignored_lib);
-      thr_->in_ignored_lib = true;
-    }
-  }
-}
-
-void ScopedInterceptor::DisableIgnores() {
-  if (ignoring_) {
-    ThreadIgnoreEnd(thr_);
-    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports--;
-    if (in_ignored_lib_) {
-      DCHECK(thr_->in_ignored_lib);
-      thr_->in_ignored_lib = false;
-    }
+NOINLINE
+void ScopedInterceptor::DisableIgnoresImpl() {
+  ThreadIgnoreEnd(thr_);
+  if (flags()->ignore_noninstrumented_modules)
+    thr_->suppress_reports--;
+  if (in_ignored_lib_) {
+    DCHECK(thr_->in_ignored_lib);
+    thr_->in_ignored_lib = false;
   }
 }
 
@@ -1943,9 +1920,27 @@ TSAN_INTERCEPTOR(int, pthread_sigmask, int how, const __sanitizer_sigset_t *set,
 
 namespace __tsan {
 
-static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
-                                  int sig, __sanitizer_siginfo *info,
-                                  void *uctx) {
+void ReportErrnoSpoiling(ThreadState *thr, uptr pc) {
+  if (!ShouldReport(thr, ReportTypeErrnoInSignal))
+    return;
+  VarSizeStackTrace stack;
+  // StackTrace::GetNestInstructionPc(pc) is used because return address is
+  // expected, OutputReport() will undo this.
+  ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
+  ReportDesc rep;
+  {
+    ReportScope report_scope(thr);
+    rep.typ = ReportTypeErrnoInSignal;
+    if (IsFiredSuppression(ctx, rep.typ, stack))
+      return;
+    rep.AddStack(stack, true);
+  }
+  OutputReport(thr, &rep);
+}
+
+void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire, int sig,
+                           __sanitizer_siginfo *info, void *uctx) {
+  CHECK(thr->slot);
   __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
@@ -1996,19 +1991,8 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // because in async signal processing case (when handler is called directly
   // from rtl_generic_sighandler) we have not yet received the reraised
   // signal; and it looks too fragile to intercept all ways to reraise a signal.
-  if (ShouldReport(thr, ReportTypeErrnoInSignal) && !sync && sig != SIGTERM &&
-      errno != 99) {
-    VarSizeStackTrace stack;
-    // StackTrace::GetNestInstructionPc(pc) is used because return address is
-    // expected, OutputReport() will undo this.
-    ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
-    ThreadRegistryLock l(&ctx->thread_registry);
-    ScopedReport rep(ReportTypeErrnoInSignal);
-    if (!IsFiredSuppression(ctx, ReportTypeErrnoInSignal, stack)) {
-      rep.AddStack(stack, true);
-      OutputReport(thr, rep);
-    }
-  }
+  if (errno != 99 && !sync && sig != SIGTERM)
+    ReportErrnoSpoiling(thr, pc);
   errno = saved_errno;
 }
 
@@ -2209,7 +2193,7 @@ struct dl_iterate_phdr_data {
 };
 
 static bool IsAppNotRodata(uptr addr) {
-  return IsAppMem(addr) && *MemToShadow(addr) != kShadowRodata;
+  return IsAppMem(addr) && *MemToShadow(addr) != Shadow::kRodata;
 }
 
 static int dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,

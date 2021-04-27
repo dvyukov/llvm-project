@@ -125,24 +125,18 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   DCHECK_NE(size, 0);
 
   // Assuming it's not running concurrently with threads that do
-  // memory accesses and mutex operations (stop-the-world phase).
+  // memory accesses and mutex operations to the Java heap (stop-the-world
+  // phase).
   ctx->metamap.MoveMemory(src, dst, size);
 
-  // Move shadow.
-  RawShadow *s = MemToShadow(src);
+  // Clear the destination range.
+  // We used to move shadow from src to dst, but the trace format does not
+  // support that anymore as it contains addresses of accesses.
   RawShadow *d = MemToShadow(dst);
-  RawShadow *send = MemToShadow(src + size);
-  uptr inc = 1;
-  if (dst > src) {
-    s = MemToShadow(src + size) - 1;
-    d = MemToShadow(dst + size) - 1;
-    send = MemToShadow(src) - 1;
-    inc = -1;
-  }
-  for (; s != send; s += inc, d += inc) {
-    *d = *s;
-    *s = 0;
-  }
+  RawShadow *dend = MemToShadow(dst + size);
+  //!!! optimize using vector instructions (we need the same in
+  //! MemoryResetRange)
+  for (; d != dend; d++) *d = Shadow::kEmpty;
 }
 
 jptr __tsan_java_find(jptr *from_ptr, jptr to) {

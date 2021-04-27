@@ -26,7 +26,8 @@ void __tsan_init() {
 }
 
 void __tsan_flush_memory() {
-  FlushShadowMemory();
+  //!!! use global reset
+  // FlushShadowMemory();
 }
 
 void __tsan_read16(void *addr) {

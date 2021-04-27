@@ -10,10 +10,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <stdlib.h>
+
+#include "sanitizer_common/sanitizer_common.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "tsan_rtl.h"
 #include "tsan_symbolize.h"
-#include "sanitizer_common/sanitizer_common.h"
-#include <stdlib.h>
 
 namespace __tsan {
 
@@ -88,34 +90,32 @@ struct SymbolizeDataContext {
   uptr res;
 };
 
-ReportLocation *SymbolizeData(uptr addr) {
+bool SymbolizeData(uptr addr, ReportLocation *loc) {
   SymbolizeDataContext cbctx;
   internal_memset(&cbctx, 0, sizeof(cbctx));
   cbctx.addr = addr;
   go_runtime_cb(CallbackSymbolizeData, &cbctx);
   if (!cbctx.res)
-    return 0;
+    return false;
   if (cbctx.heap) {
-    MBlock *b = ctx->metamap.GetBlock(cbctx.start);
+    MBlock *b = ctx->metamap.GetBlock(
+        cbctx.start);  //!!! check if this has right locks held/ScopedRuntime
     if (!b)
-      return 0;
-    auto *loc = New<ReportLocation>();
+      return false;
     loc->type = ReportLocationHeap;
     loc->heap_chunk_start = cbctx.start;
     loc->heap_chunk_size = b->siz;
     loc->tid = b->tid;
-    loc->stack = SymbolizeStackId(b->stk);
-    return loc;
-  } else {
-    auto *loc = New<ReportLocation>();
-    loc->type = ReportLocationGlobal;
-    loc->global.name = internal_strdup(cbctx.name ? cbctx.name : "??");
-    loc->global.file = internal_strdup(cbctx.file ? cbctx.file : "??");
-    loc->global.line = cbctx.line;
-    loc->global.start = cbctx.start;
-    loc->global.size = cbctx.size;
-    return loc;
+    loc->stack.stack = StackDepotGet(b->stk);
+    return true;
   }
+  loc->type = ReportLocationGlobal;
+  loc->global.name = internal_strdup(cbctx.name ? cbctx.name : "??");
+  loc->global.file = internal_strdup(cbctx.file ? cbctx.file : "??");
+  loc->global.line = cbctx.line;
+  loc->global.start = cbctx.start;
+  loc->global.size = cbctx.size;
+  return true;
 }
 
 static ThreadState *main_thr;
@@ -283,7 +283,7 @@ void __tsan_go_ignore_sync_begin(ThreadState *thr) {
 void __tsan_go_ignore_sync_end(ThreadState *thr) { ThreadIgnoreSyncEnd(thr); }
 
 void __tsan_report_count(u64 *pn) {
-  Lock lock(&ctx->report_mtx);
+  ScopedErrorReportLock rl;
   *pn = ctx->nreported;
 }
 

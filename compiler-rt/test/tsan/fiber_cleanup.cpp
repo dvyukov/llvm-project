@@ -50,6 +50,7 @@ int main() {
   for (size_t i = 0; i < num_warmup; i++) {
     fiber_iteration();
   }
+  count_memory_mappings();
 
   long memory_mappings_before = count_memory_mappings();
   fiber_iteration();
@@ -61,7 +62,8 @@ int main() {
   if (memory_mappings_before == memory_mappings_after) {
     fprintf(stderr, "PASS\n");
   } else {
-    fprintf(stderr, "FAILED\n");
+    fprintf(stderr, "FAILED (mappings %lu -> %lu)\n", memory_mappings_before,
+            memory_mappings_after);
   }
 
   return 0;

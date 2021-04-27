@@ -25,7 +25,6 @@ append_list_if(COMPILER_RT_HAS_WGLOBAL_CONSTRUCTORS_FLAG -Wglobal-constructors
                TSAN_RTL_CFLAGS)
 
 set(TSAN_SOURCES
-  rtl/tsan_clock.cpp
   rtl/tsan_debugging.cpp
   rtl/tsan_external.cpp
   rtl/tsan_fd.cpp
@@ -81,7 +80,6 @@ if(COMPILER_RT_INTERCEPT_LIBDISPATCH)
 endif()
 
 set(TSAN_HEADERS
-  rtl/tsan_clock.h
   rtl/tsan_defs.h
   rtl/tsan_dense_alloc.h
   rtl/tsan_fd.h
@@ -100,12 +98,12 @@ set(TSAN_HEADERS
   rtl/tsan_ppc_regs.h
   rtl/tsan_report.h
   rtl/tsan_rtl.h
+  rtl/tsan_shadow.h
   rtl/tsan_stack_trace.h
   rtl/tsan_suppressions.h
   rtl/tsan_symbolize.h
   rtl/tsan_sync.h
   rtl/tsan_trace.h
-  rtl/tsan_update_shadow_word.inc
   rtl/tsan_vector_clock.h
   )
 
