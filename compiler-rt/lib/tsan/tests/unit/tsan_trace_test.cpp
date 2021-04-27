@@ -18,8 +18,6 @@
 
 namespace __tsan {
 
-using namespace v3;
-
 // We need to run all trace tests in a new thread,
 // so that the thread trace is empty initially.
 static void run_in_thread(void *(*f)(void *), void *arg = nullptr) {
@@ -51,12 +49,12 @@ TEST(Trace, MAYBE_RestoreAccess) {
       ThreadState *thr = cur_thread();
       TraceFunc(thr, 0x1000);
       TraceFunc(thr, 0x1001);
-      TraceMutexLock(thr, v3::EventType::kLock, 0x4000, 0x5000, 0x6000);
-      TraceMutexLock(thr, v3::EventType::kLock, 0x4001, 0x5001, 0x6001);
+      TraceMutexLock(thr, EventType::kLock, 0x4000, 0x5000, 0x6000);
+      TraceMutexLock(thr, EventType::kLock, 0x4001, 0x5001, 0x6001);
       TraceMutexUnlock(thr, 0x5000);
       TraceFunc(thr);
       CHECK(TryTraceMemoryAccess(thr, 0x2001, 0x3001, 8, kAccessRead));
-      TraceMutexLock(thr, v3::EventType::kRLock, 0x4002, 0x5002, 0x6002);
+      TraceMutexLock(thr, EventType::kRLock, 0x4002, 0x5002, 0x6002);
       TraceFunc(thr, 0x1002);
       CHECK(TryTraceMemoryAccess(thr, 0x2000, 0x3000, 8, kAccessRead));
       // This is the access we want to find.
@@ -65,13 +63,15 @@ TEST(Trace, MAYBE_RestoreAccess) {
       CHECK(TryTraceMemoryAccess(thr, 0x2002, 0x3000, 8, kAccessRead));
       Lock lock1(&ctx->slot_mtx);
       ThreadRegistryLock lock2(&ctx->thread_registry);
+      Tid tid = kInvalidTid;
       VarSizeStackTrace stk;
       MutexSet mset;
       uptr tag = kExternalTagNone;
       bool res =
-          RestoreStack(thr->tid, v3::EventType::kAccessExt, thr->sid,
-                       thr->epoch, 0x3000, 8, kAccessRead, &stk, &mset, &tag);
+          RestoreStack(EventType::kAccessExt, thr->fast_state.sid(),
+                       thr->fast_state.epoch(), 0x3000, 8, kAccessRead, &tid, &stk, &mset, &tag);
       CHECK(res);
+      CHECK_EQ(tid, thr->tid);
       CHECK_EQ(stk.size, 3);
       CHECK_EQ(stk.trace[0], 0x1000);
       CHECK_EQ(stk.trace[1], 0x1002);
@@ -123,12 +123,13 @@ TEST(Trace, MAYBE_MemoryAccessSize) {
       }
       Lock lock1(&ctx->slot_mtx);
       ThreadRegistryLock lock2(&ctx->thread_registry);
+      Tid tid = kInvalidTid;
       VarSizeStackTrace stk;
       MutexSet mset;
       uptr tag = kExternalTagNone;
-      bool res = RestoreStack(thr->tid, v3::EventType::kAccessExt, thr->sid,
-                              thr->epoch, 0x3000 + params->offset, params->size,
-                              kAccessRead, &stk, &mset, &tag);
+      bool res = RestoreStack(EventType::kAccessExt, thr->fast_state.sid(),
+                       thr->fast_state.epoch(), 0x3000 + params->offset, params->size,
+                              kAccessRead, &tid, &stk, &mset, &tag);
       CHECK_EQ(res, params->res);
       if (params->res) {
         CHECK_EQ(stk.size, 2);
@@ -156,16 +157,17 @@ TEST(Trace, MAYBE_RestoreMutexLock) {
       // Check of restoration of a mutex lock event.
       ThreadState *thr = cur_thread();
       TraceFunc(thr, 0x1000);
-      TraceMutexLock(thr, v3::EventType::kLock, 0x4000, 0x5000, 0x6000);
-      TraceMutexLock(thr, v3::EventType::kRLock, 0x4001, 0x5001, 0x6001);
-      TraceMutexLock(thr, v3::EventType::kRLock, 0x4002, 0x5001, 0x6002);
+      TraceMutexLock(thr, EventType::kLock, 0x4000, 0x5000, 0x6000);
+      TraceMutexLock(thr, EventType::kRLock, 0x4001, 0x5001, 0x6001);
+      TraceMutexLock(thr, EventType::kRLock, 0x4002, 0x5001, 0x6002);
       Lock lock1(&ctx->slot_mtx);
       ThreadRegistryLock lock2(&ctx->thread_registry);
+      Tid tid = kInvalidTid;
       VarSizeStackTrace stk;
       MutexSet mset;
       uptr tag = kExternalTagNone;
-      bool res = RestoreStack(thr->tid, v3::EventType::kLock, thr->sid,
-                              thr->epoch, 0x5001, 0, 0, &stk, &mset, &tag);
+      bool res = RestoreStack(EventType::kLock, thr->fast_state.sid(),
+                       thr->fast_state.epoch(), 0x5001, 0, 0, &tid, &stk, &mset, &tag);
       CHECK(res);
       CHECK_EQ(stk.size, 2);
       CHECK_EQ(stk.trace[0], 0x1000);
@@ -188,28 +190,32 @@ TEST(Trace, MAYBE_MultiPart) {
     static void *Func(void *arg) {
       // Check replay of a trace with multiple parts.
       ThreadState *thr = cur_thread();
-      TraceFunc(thr, 0x1000);
-      TraceFunc(thr, 0x2000);
-      TraceMutexLock(thr, v3::EventType::kLock, 0x4000, 0x5000, 0x6000);
-      const uptr kEvents = 3 * sizeof(TracePart) / sizeof(v3::Event);
+      FuncEntry(thr, 0x1000);
+      FuncEntry(thr, 0x2000);
+      MutexPreLock(thr, 0x4000, 0x5000, 0);
+      MutexPostLock(thr, 0x4000, 0x5000, 0);
+      const uptr kEvents = 3 * sizeof(TracePart) / sizeof(Event);
       for (uptr i = 0; i < kEvents; i++) {
-        TraceFunc(thr, 0x3000);
-        TraceMutexLock(thr, v3::EventType::kLock, 0x4002, 0x5002, 0x6002);
-        TraceMutexUnlock(thr, 0x5002);
-        TraceFunc(thr);
+        FuncEntry(thr, 0x3000);
+        MutexPreLock(thr, 0x4002, 0x5002, 0);
+        MutexPostLock(thr, 0x4002, 0x5002, 0);
+        MutexUnlock(thr, 0x4003, 0x5002, 0);
+        FuncExit(thr);
       }
-      TraceFunc(thr, 0x4000);
-      TraceMutexLock(thr, v3::EventType::kRLock, 0x4001, 0x5001, 0x6001);
+      FuncEntry(thr, 0x4000);
+      TraceMutexLock(thr, EventType::kRLock, 0x4001, 0x5001, 0x6001);
       CHECK(TryTraceMemoryAccess(thr, 0x2002, 0x3000, 8, kAccessRead));
       Lock lock1(&ctx->slot_mtx);
       ThreadRegistryLock lock2(&ctx->thread_registry);
+      Tid tid = kInvalidTid;
       VarSizeStackTrace stk;
       MutexSet mset;
       uptr tag = kExternalTagNone;
       bool res =
-          RestoreStack(thr->tid, v3::EventType::kAccessExt, thr->sid,
-                       thr->epoch, 0x3000, 8, kAccessRead, &stk, &mset, &tag);
+          RestoreStack(EventType::kAccessExt, thr->fast_state.sid(),
+                       thr->fast_state.epoch(), 0x3000, 8, kAccessRead, &tid, &stk, &mset, &tag);
       CHECK(res);
+      CHECK_EQ(tid, thr->tid);
       CHECK_EQ(stk.size, 4);
       CHECK_EQ(stk.trace[0], 0x1000);
       CHECK_EQ(stk.trace[1], 0x2000);
@@ -217,10 +223,8 @@ TEST(Trace, MAYBE_MultiPart) {
       CHECK_EQ(stk.trace[3], 0x2002);
       CHECK_EQ(mset.Size(), 2);
       CHECK_EQ(mset.Get(0).addr, 0x5000);
-      CHECK_EQ(mset.Get(0).stack_id, 0x6000);
       CHECK_EQ(mset.Get(0).write, true);
       CHECK_EQ(mset.Get(1).addr, 0x5001);
-      CHECK_EQ(mset.Get(1).stack_id, 0x6001);
       CHECK_EQ(mset.Get(1).write, false);
       return nullptr;
     }

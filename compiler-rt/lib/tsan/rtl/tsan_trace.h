@@ -19,57 +19,6 @@
 
 namespace __tsan {
 
-const int kTracePartSizeBits = 13;
-const int kTracePartSize = 1 << kTracePartSizeBits;
-const int kTraceParts = 2 * 1024 * 1024 / kTracePartSize;
-const int kTraceSize = kTracePartSize * kTraceParts;
-
-// Must fit into 3 bits.
-enum EventType {
-  EventTypeMop,
-  EventTypeFuncEnter,
-  EventTypeFuncExit,
-  EventTypeLock,
-  EventTypeUnlock,
-  EventTypeRLock,
-  EventTypeRUnlock
-};
-
-// Represents a thread event (from most significant bit):
-// u64 typ  : 3;   // EventType.
-// u64 addr : 61;  // Associated pc.
-typedef u64 Event;
-
-const uptr kEventPCBits = 61;
-
-struct TraceHeader {
-#if !SANITIZER_GO
-  BufferedStackTrace stack0;  // Start stack for the trace.
-#else
-  VarSizeStackTrace stack0;
-#endif
-  u64        epoch0;  // Start epoch for the trace.
-  MutexSet   mset0;
-
-  TraceHeader() : stack0(), epoch0() {}
-};
-
-struct Trace {
-  Mutex mtx;
-#if !SANITIZER_GO
-  // Must be last to catch overflow as paging fault.
-  // Go shadow stack is dynamically allocated.
-  uptr shadow_stack[kShadowStackSize];
-#endif
-  // Must be the last field, because we unmap the unused part in
-  // CreateThreadContext.
-  TraceHeader headers[kTraceParts];
-
-  Trace() : mtx(MutexTypeTrace) {}
-};
-
-namespace v3 {
-
 enum class EventType : u64 {
   kAccessExt,
   kAccessRange,
@@ -188,6 +137,7 @@ struct Trace;
 struct TraceHeader {
   Trace* trace = nullptr;  // back-pointer to Trace containing this part
   INode trace_parts;       // in Trace::parts
+  INode global;       // in Contex::trace_part_recycle
 };
 
 struct TracePart : TraceHeader {
@@ -209,13 +159,13 @@ static_assert(sizeof(TracePart) == TracePart::kByteSize, "bad TracePart size");
 struct Trace {
   Mutex mtx;
   IList<TraceHeader, &TraceHeader::trace_parts, TracePart> parts;
+  TracePart* local_head;  // first node non-queued into ctx->trace_part_recycle
   Event* final_pos =
       nullptr;  // final position in the last part for finished threads
+  uptr parts_allocated = 0;
 
   Trace() : mtx(MutexTypeTrace) {}
 };
-
-}  // namespace v3
 
 }  // namespace __tsan
 

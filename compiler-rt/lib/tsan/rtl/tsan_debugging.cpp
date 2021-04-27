@@ -42,6 +42,8 @@ static const char *ReportTypeDescription(ReportType typ) {
 
 static const char *ReportLocationTypeDescription(ReportLocationType typ) {
   switch (typ) {
+    case ReportLocationInvalid:
+      break;
     case ReportLocationGlobal: return "global";
     case ReportLocationHeap: return "heap";
     case ReportLocationStack: return "stack";
@@ -52,14 +54,9 @@ static const char *ReportLocationTypeDescription(ReportLocationType typ) {
   UNREACHABLE("missing case");
 }
 
-static void CopyTrace(SymbolizedStack *first_frame, void **trace,
-                      uptr trace_size) {
-  uptr i = 0;
-  for (SymbolizedStack *frame = first_frame; frame != nullptr;
-       frame = frame->next) {
-    trace[i++] = (void *)frame->info.address;
-    if (i >= trace_size) break;
-  }
+static void CopyTrace(StackTrace stack, void **trace, uptr trace_size) {
+  for (uptr i = 0; i < Min<uptr>(stack.size, trace_size); i++)
+    trace[i] = (void *)stack.trace[i];
 }
 
 // Meant to be called by the debugger.
@@ -83,7 +80,8 @@ int __tsan_get_report_data(void *report, const char **description, int *count,
   *mutex_count = rep->mutexes.Size();
   *thread_count = rep->threads.Size();
   *unique_tid_count = rep->unique_tids.Size();
-  if (rep->sleep) CopyTrace(rep->sleep->frames, sleep_trace, trace_size);
+  if (rep->sleep)
+    CopyTrace(rep->sleep->stack, sleep_trace, trace_size);
   return 1;
 }
 
@@ -99,9 +97,8 @@ int __tsan_get_report_stack(void *report, uptr idx, void **trace,
                             uptr trace_size) {
   const ReportDesc *rep = (ReportDesc *)report;
   CHECK_LT(idx, rep->stacks.Size());
-  ReportStack *stack = rep->stacks[idx];
-  if (stack) CopyTrace(stack->frames, trace, trace_size);
-  return stack ? 1 : 0;
+  CopyTrace(rep->stacks[idx]->stack, trace, trace_size);
+  return 1;
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
@@ -116,7 +113,7 @@ int __tsan_get_report_mop(void *report, uptr idx, int *tid, void **addr,
   *size = mop->size;
   *write = mop->write ? 1 : 0;
   *atomic = mop->atomic ? 1 : 0;
-  if (mop->stack) CopyTrace(mop->stack->frames, trace, trace_size);
+  CopyTrace(mop->stack.stack, trace, trace_size);
   return 1;
 }
 
@@ -135,7 +132,7 @@ int __tsan_get_report_loc(void *report, uptr idx, const char **type,
   *tid = loc->tid;
   *fd = loc->fd;
   *suppressable = loc->suppressable;
-  if (loc->stack) CopyTrace(loc->stack->frames, trace, trace_size);
+  CopyTrace(loc->stack.stack, trace, trace_size);
   return 1;
 }
 
@@ -157,8 +154,8 @@ int __tsan_get_report_mutex(void *report, uptr idx, uptr *mutex_id, void **addr,
   ReportMutex *mutex = rep->mutexes[idx];
   *mutex_id = mutex->id;
   *addr = (void *)mutex->addr;
-  *destroyed = mutex->destroyed;
-  if (mutex->stack) CopyTrace(mutex->stack->frames, trace, trace_size);
+  *destroyed = false;
+  CopyTrace(mutex->stack.stack, trace, trace_size);
   return 1;
 }
 
@@ -174,7 +171,7 @@ int __tsan_get_report_thread(void *report, uptr idx, int *tid, tid_t *os_id,
   *running = thread->running;
   *name = thread->name;
   *parent_tid = thread->parent_tid;
-  if (thread->stack) CopyTrace(thread->stack->frames, trace, trace_size);
+  CopyTrace(thread->stack.stack, trace, trace_size);
   return 1;
 }
 

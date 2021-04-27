@@ -148,10 +148,13 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   ObtainCurrentStack(thr, pc, &stack);
   if (IsFiredSuppression(ctx, ReportTypeSignalUnsafe, stack))
     return;
-  ThreadRegistryLock l(&ctx->thread_registry);
-  ScopedReport rep(ReportTypeSignalUnsafe);
-  rep.AddStack(stack, true);
-  OutputReport(thr, rep);
+  ReportDesc rep;
+  {
+    ReportScope report_scope(thr);
+    rep.typ = ReportTypeSignalUnsafe;
+    rep.AddStack(stack, true);
+  }
+  OutputReport(thr, &rep);
 }
 
 
@@ -166,7 +169,12 @@ void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
     GET_STACK_TRACE_FATAL(thr, pc);
     ReportAllocationSizeTooBig(sz, malloc_limit, &stack);
   }
-  void *p = allocator()->Allocate(&thr->proc()->alloc_cache, sz, align);
+  void *p;
+  {
+    p = allocator()->Allocate(&thr->proc()->alloc_cache, sz, align);
+    if (p && ctx && ctx->initialized)
+      OnUserAlloc(thr, pc, (uptr)p, sz, true);
+  }
   if (UNLIKELY(!p)) {
     SetAllocatorOutOfMemory();
     if (AllocatorMayReturnNull())
@@ -174,8 +182,6 @@ void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
     GET_STACK_TRACE_FATAL(thr, pc);
     ReportOutOfMemory(sz, &stack);
   }
-  if (ctx && ctx->initialized)
-    OnUserAlloc(thr, pc, (uptr)p, sz, true);
   if (signal)
     SignalUnsafeCall(thr, pc);
   return p;
@@ -220,7 +226,9 @@ void *user_reallocarray(ThreadState *thr, uptr pc, void *p, uptr size, uptr n) {
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
   DPrintf("#%d: alloc(%zu) = 0x%zx\n", thr->tid, sz, p);
   ctx->metamap.AllocBlock(thr, pc, p, sz);
-  if (write && thr->ignore_reads_and_writes == 0)
+  //!!! find a better check for thread inited thr->trace_pos
+  if (write && !thr->ignore_reads_and_writes &&
+      atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeImitateWrite(thr, pc, (uptr)p, sz);
   else
     MemoryResetRange(thr, pc, (uptr)p, sz);
@@ -228,9 +236,17 @@ void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
 
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
   CHECK_NE(p, (void*)0);
+  if (thr->is_dead)
+    return;  //!!! we are leaking mblock, next alloc of this block will get
+             //! already installed MBlock, what will happen?
+  if (!thr->slot)
+    return;  //!!! free is called from blocking func interceptor, e.g.
+             //! pthread_join -> _dl_deallocate_tls
   uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
   DPrintf("#%d: free(0x%zx, %zu)\n", thr->tid, p, sz);
-  if (write && thr->ignore_reads_and_writes == 0)
+  //!!! find a better check for thread inited thr->trace_pos
+  if (write && !thr->ignore_reads_and_writes &&
+      atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeFreed(thr, pc, (uptr)p, sz);
 }
 
@@ -393,8 +409,6 @@ uptr __sanitizer_get_allocated_size(const void *p) {
 
 void __tsan_on_thread_idle() {
   ThreadState *thr = cur_thread();
-  thr->clock.ResetCached(&thr->proc()->clock_cache);
-  thr->last_sleep_clock.ResetCached(&thr->proc()->clock_cache);
   allocator()->SwallowCache(&thr->proc()->alloc_cache);
   internal_allocator()->SwallowCache(&thr->proc()->internal_alloc_cache);
   ctx->metamap.OnProcIdle(thr->proc());

@@ -260,7 +260,6 @@ ScopedInterceptor::~ScopedInterceptor() {
   if (!thr_->ignore_interceptors) {
     ProcessPendingSignals(thr_);
     FuncExit(thr_);
-    CheckedMutex::CheckNoLocks();
   }
 }
 
@@ -1958,17 +1957,21 @@ static void ReportErrnoSpoiling(ThreadState *thr, uptr pc) {
   // StackTrace::GetNestInstructionPc(pc) is used because return address is
   // expected, OutputReport() will undo this.
   ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
-  ThreadRegistryLock l(&ctx->thread_registry);
-  ScopedReport rep(ReportTypeErrnoInSignal);
-  if (!IsFiredSuppression(ctx, ReportTypeErrnoInSignal, stack)) {
+  ReportDesc rep;
+  {
+    ReportScope report_scope(thr);
+    rep.typ = ReportTypeErrnoInSignal;
+    if (IsFiredSuppression(ctx, rep.typ, stack))
+      return;
     rep.AddStack(stack, true);
-    OutputReport(thr, rep);
   }
+  OutputReport(thr, &rep);
 }
 
 static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
                                   int sig, __sanitizer_siginfo *info,
                                   void *uctx) {
+  CHECK(thr->slot);
   __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
@@ -2061,8 +2064,7 @@ static bool is_sync_signal(ThreadSignalContext *sctx, int sig) {
 }
 
 void sighandler(int sig, __sanitizer_siginfo *info, void *ctx) {
-  cur_thread_init();
-  ThreadState *thr = cur_thread();
+  ThreadState *thr = cur_thread_init();
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sig < 0 || sig >= kSigCount) {
     VPrintf(1, "ThreadSanitizer: ignoring signal %d\n", sig);

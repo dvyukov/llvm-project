@@ -133,7 +133,9 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   // support that anymore as it contains addresses of accesses.
   RawShadow *d = MemToShadow(dst);
   RawShadow *dend = MemToShadow(dst + size);
-  internal_memset(d, 0, (dend - d) * sizeof(*d));
+  //!!! optimize using vector instructions (we need the same in
+  //! MemoryResetRange)
+  for (; d != dend; d++) *d = kShadowEmpty;
 }
 
 jptr __tsan_java_find(jptr *from_ptr, jptr to) {

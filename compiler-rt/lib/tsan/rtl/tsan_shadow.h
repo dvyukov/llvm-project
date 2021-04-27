@@ -10,223 +10,187 @@
 #define TSAN_SHADOW_H
 
 #include "tsan_defs.h"
-#include "tsan_trace.h"
 
 namespace __tsan {
 
-// FastState (from most significant bit):
-//   ignore          : 1
-//   tid             : kTidBits
-//   unused          : -
-//   history_size    : 3
-//   epoch           : kClkBits
 class FastState {
  public:
-  FastState(u64 tid, u64 epoch) {
-    x_ = tid << kTidShift;
-    x_ |= epoch;
-    DCHECK_EQ(tid, this->tid());
-    DCHECK_EQ(epoch, this->epoch());
-    DCHECK_EQ(GetIgnoreBit(), false);
+  FastState() { Reset(); }
+
+  void Reset() {
+    part_.unused0_ = 0;
+    part_.sid_ = kFreeSid;
+    part_.epoch_ = static_cast<u16>(kEpochLast);
+    part_.unused1_ = 0;
+    part_.ignore_accesses_ = false;
   }
 
-  explicit FastState(u64 x) : x_(x) {}
+  void SetSid(Sid sid) { part_.sid_ = sid; }
 
-  u64 raw() const { return x_; }
+  Sid sid() const { return part_.sid_; }
 
-  u64 tid() const {
-    u64 res = (x_ & ~kIgnoreBit) >> kTidShift;
-    return res;
-  }
+  Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
 
-  u64 TidWithIgnore() const {
-    u64 res = x_ >> kTidShift;
-    return res;
-  }
+  void SetEpoch(Epoch epoch) { part_.epoch_ = static_cast<u16>(epoch); }
 
-  u64 epoch() const {
-    u64 res = x_ & ((1ull << kClkBits) - 1);
-    return res;
-  }
-
-  void IncrementEpoch() {
-    u64 old_epoch = epoch();
-    x_ += 1;
-    DCHECK_EQ(old_epoch + 1, epoch());
-    (void)old_epoch;
-  }
-
-  void SetIgnoreBit() { x_ |= kIgnoreBit; }
-  void ClearIgnoreBit() { x_ &= ~kIgnoreBit; }
-  bool GetIgnoreBit() const { return (s64)x_ < 0; }
-
-  void SetHistorySize(int hs) {
-    CHECK_GE(hs, 0);
-    CHECK_LE(hs, 7);
-    x_ = (x_ & ~(kHistoryMask << kHistoryShift)) | (u64(hs) << kHistoryShift);
-  }
-
-  ALWAYS_INLINE
-  int GetHistorySize() const {
-    return (int)((x_ >> kHistoryShift) & kHistoryMask);
-  }
-
-  void ClearHistorySize() { SetHistorySize(0); }
-
-  ALWAYS_INLINE
-  u64 GetTracePos() const {
-    const int hs = GetHistorySize();
-    // When hs == 0, the trace consists of 2 parts.
-    const u64 mask = (1ull << (kTracePartSizeBits + hs + 1)) - 1;
-    return epoch() & mask;
-  }
+  void SetIgnoreBit() { part_.ignore_accesses_ = 1; }
+  void ClearIgnoreBit() { part_.ignore_accesses_ = 0; }
+  bool GetIgnoreBit() const { return (s32)raw_ < 0; }
 
  private:
   friend class Shadow;
-  static const int kTidShift = 64 - kTidBits - 1;
-  static const u64 kIgnoreBit = 1ull << 63;
-  static const u64 kFreedBit = 1ull << 63;
-  static const u64 kHistoryShift = kClkBits;
-  static const u64 kHistoryMask = 7;
-  u64 x_;
+  struct Parts {
+    u8 unused0_;
+    Sid sid_;
+    u16 epoch_ : kEpochBits;
+    u16 unused1_ : 1;
+    u16 ignore_accesses_ : 1;
+  };
+  union {
+    Parts part_;
+    u32 raw_;
+  };
 };
 
-// Shadow (from most significant bit):
-//   freed           : 1
-//   tid             : kTidBits
-//   is_atomic       : 1
-//   is_read         : 1
-//   size_log        : 2
-//   addr0           : 3
-//   epoch           : kClkBits
-class Shadow : public FastState {
+static_assert(sizeof(FastState) == kShadowSize, "bad FastState size");
+
+constexpr RawShadow kShadowEmpty = static_cast<RawShadow>(0);
+// .rodata shadow marker, see MapRodata and ContainsSameAccessFast.
+constexpr RawShadow kShadowRodata = static_cast<RawShadow>(0x40000000);
+
+class Shadow {
  public:
-  explicit Shadow(u64 x) : FastState(x) {}
-
-  explicit Shadow(const FastState &s) : FastState(s.x_) { ClearHistorySize(); }
-
-  void SetAddr0AndSizeLog(u64 addr0, unsigned kAccessSizeLog) {
-    DCHECK_EQ((x_ >> kClkBits) & 31, 0);
-    DCHECK_LE(addr0, 7);
-    DCHECK_LE(kAccessSizeLog, 3);
-    x_ |= ((kAccessSizeLog << 3) | addr0) << kClkBits;
-    DCHECK_EQ(kAccessSizeLog, size_log());
-    DCHECK_EQ(addr0, this->addr0());
+  Shadow(FastState state, u32 addr, u32 size, AccessType typ) {
+    raw_ = state.raw_;
+    SetAccess(addr, size, typ);
   }
 
-  void SetWrite(unsigned kAccessIsWrite) {
-    DCHECK_EQ(x_ & kReadBit, 0);
-    if (!kAccessIsWrite)
-      x_ |= kReadBit;
-    DCHECK_EQ(kAccessIsWrite, IsWrite());
+  explicit Shadow(RawShadow x = kShadowEmpty) { raw_ = static_cast<u32>(x); }
+
+  RawShadow raw() const { return static_cast<RawShadow>(raw_); }
+
+  Sid sid() const { return part_.sid_; }
+
+  void SetSid(Sid sid) { part_.sid_ = sid; }
+
+  Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
+
+  void SetEpoch(Epoch epoch) {
+    part_.epoch_ = static_cast<u16>(epoch);
+    DCHECK_EQ(part_.epoch_, static_cast<u16>(epoch));
   }
 
-  void SetAtomic(bool kIsAtomic) {
-    DCHECK(!IsAtomic());
-    if (kIsAtomic)
-      x_ |= kAtomicBit;
-    DCHECK_EQ(IsAtomic(), kIsAtomic);
+  void SetAccess(u32 addr, u32 size, AccessType typ) {
+    SetAccess(addr, size, typ & kAccessRead, typ & kAccessAtomic);
   }
 
-  bool IsAtomic() const { return x_ & kAtomicBit; }
+  bool IsAtomic() const { return part_.is_atomic_; }
 
-  bool IsZero() const { return x_ == 0; }
+  bool IsZero() const { return raw_ == 0; }
 
-  static inline bool TidsAreEqual(const Shadow s1, const Shadow s2) {
-    u64 shifted_xor = (s1.x_ ^ s2.x_) >> kTidShift;
-    DCHECK_EQ(shifted_xor == 0, s1.TidWithIgnore() == s2.TidWithIgnore());
-    return shifted_xor == 0;
+  static ALWAYS_INLINE bool SidsAreEqual(const Shadow s1, const Shadow s2) {
+    return s1.part_.sid_ == s2.part_.sid_;
   }
 
-  static ALWAYS_INLINE bool Addr0AndSizeAreEqual(const Shadow s1,
-                                                 const Shadow s2) {
-    u64 masked_xor = ((s1.x_ ^ s2.x_) >> kClkBits) & 31;
-    return masked_xor == 0;
+  static ALWAYS_INLINE bool AddrSizeEqual(const Shadow cur, const Shadow old) {
+    return cur.part_.access_ == old.part_.access_;
   }
 
-  static ALWAYS_INLINE bool TwoRangesIntersect(Shadow s1, Shadow s2,
-                                               unsigned kS2AccessSize) {
-    bool res = false;
-    u64 diff = s1.addr0() - s2.addr0();
-    if ((s64)diff < 0) {  // s1.addr0 < s2.addr0
-      // if (s1.addr0() + size1) > s2.addr0()) return true;
-      if (s1.size() > -diff)
-        res = true;
-    } else {
-      // if (s2.addr0() + kS2AccessSize > s1.addr0()) return true;
-      if (kS2AccessSize > diff)
-        res = true;
-    }
-    DCHECK_EQ(res, TwoRangesIntersectSlow(s1, s2));
-    DCHECK_EQ(res, TwoRangesIntersectSlow(s2, s1));
-    return res;
+  static ALWAYS_INLINE bool TwoRangesIntersect(Shadow cur, Shadow old) {
+    return cur.part_.access_ & old.part_.access_;
   }
 
-  u64 ALWAYS_INLINE addr0() const { return (x_ >> kClkBits) & 7; }
-  u64 ALWAYS_INLINE size() const { return 1ull << size_log(); }
+  ALWAYS_INLINE u8 access() const { return part_.access_; }
+  u32 ALWAYS_INLINE addr0() const {
+    DCHECK(part_.access_);
+    return __builtin_ffs(part_.access_) - 1;
+  }
+  u32 ALWAYS_INLINE size() const {
+    DCHECK(part_.access_);
+    return part_.access_ == kFreeAccess ? kShadowCell
+                                        : __builtin_popcount(part_.access_);
+  }
   bool ALWAYS_INLINE IsWrite() const { return !IsRead(); }
-  bool ALWAYS_INLINE IsRead() const { return x_ & kReadBit; }
+  bool ALWAYS_INLINE IsRead() const { return part_.is_read_; }
 
-  // The idea behind the freed bit is as follows.
-  // When the memory is freed (or otherwise unaccessible) we write to the shadow
-  // values with tid/epoch related to the free and the freed bit set.
-  // During memory accesses processing the freed bit is considered
-  // as msb of tid. So any access races with shadow with freed bit set
-  // (it is as if write from a thread with which we never synchronized before).
-  // This allows us to detect accesses to freed memory w/o additional
-  // overheads in memory access processing and at the same time restore
-  // tid/epoch of free.
-  void MarkAsFreed() { x_ |= kFreedBit; }
-
-  bool IsFreed() const { return x_ & kFreedBit; }
-
-  bool GetFreedAndReset() {
-    bool res = x_ & kFreedBit;
-    x_ &= ~kFreedBit;
+  ALWAYS_INLINE
+  bool IsBothReadsOrAtomic(bool kIsWrite, bool kIsAtomic) const {
+    bool res = raw_ & ((u32(kIsAtomic) << 31) | (u32(kIsWrite ^ 1) << 30));
+    DCHECK_EQ(res, (!IsWrite() && !kIsWrite) || (IsAtomic() && kIsAtomic));
     return res;
   }
 
-  bool ALWAYS_INLINE IsBothReadsOrAtomic(bool kIsWrite, bool kIsAtomic) const {
-    bool v = x_ & ((u64(kIsWrite ^ 1) << kReadShift) |
-                   (u64(kIsAtomic) << kAtomicShift));
-    DCHECK_EQ(v, (!IsWrite() && !kIsWrite) || (IsAtomic() && kIsAtomic));
-    return v;
+  ALWAYS_INLINE bool IsRWWeakerOrEqual(Shadow cur, bool kIsWrite,
+                                       bool kIsAtomic) const {
+    DCHECK_EQ(raw_ & 0x3f, cur.raw_ & 0x3f);
+    bool res = (raw_ & 0xc0000000) >=
+               (((u32)kIsAtomic << 31) | ((kIsWrite ^ 1) << 30));
+    DCHECK_EQ(res, (IsAtomic() > kIsAtomic) ||
+                       (IsAtomic() == kIsAtomic && !IsWrite() >= !kIsWrite));
+    return res;
   }
 
-  bool ALWAYS_INLINE IsRWNotWeaker(bool kIsWrite, bool kIsAtomic) const {
-    bool v = ((x_ >> kReadShift) & 3) <= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
-    DCHECK_EQ(v, (IsAtomic() < kIsAtomic) ||
-                     (IsAtomic() == kIsAtomic && !IsWrite() <= !kIsWrite));
-    return v;
+  ALWAYS_INLINE bool IsFree() const { return part_.access_ == kFreeAccess; }
+
+  //!!! Need to write (kFreeSid, access:0xff, non-atomic write, epoch:0),
+  // (real sid, access:0x81, real epoch) (note: access must not pass
+  // "same access" check).
+  static RawShadow FreedMarker() {
+    Shadow s;
+    //!!! Strictly saying we don't need to reserve whole kFreeSid,
+    // we could reserve just the kEpochLast for kFreeSid.
+    s.SetSid(kFreeSid);
+    s.SetEpoch(kEpochLast);
+    s.SetAccess(0, 8, false, false);
+    return s.raw();
   }
 
-  bool ALWAYS_INLINE IsRWWeakerOrEqual(bool kIsWrite, bool kIsAtomic) const {
-    bool v = ((x_ >> kReadShift) & 3) >= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
-    DCHECK_EQ(v, (IsAtomic() > kIsAtomic) ||
-                     (IsAtomic() == kIsAtomic && !IsWrite() >= !kIsWrite));
-    return v;
+  static RawShadow Freed(Sid sid, Epoch epoch) {
+    Shadow s;
+    s.SetSid(sid);
+    s.SetEpoch(epoch);
+    s.part_.access_ = kFreeAccess;
+    return s.raw();
   }
 
  private:
-  static const u64 kReadShift = 5 + kClkBits;
-  static const u64 kReadBit = 1ull << kReadShift;
-  static const u64 kAtomicShift = 6 + kClkBits;
-  static const u64 kAtomicBit = 1ull << kAtomicShift;
+  struct Parts {
+    u8 access_;
+    Sid sid_;
+    u16 epoch_ : kEpochBits;
+    u16 is_read_ : 1;
+    u16 is_atomic_ : 1;
+  };
+  union {
+    Parts part_;
+    u32 raw_;
+  };
 
-  u64 size_log() const { return (x_ >> (3 + kClkBits)) & 3; }
+  static constexpr u8 kFreeAccess = 0x81;
 
-  static bool TwoRangesIntersectSlow(const Shadow s1, const Shadow s2) {
-    if (s1.addr0() == s2.addr0())
-      return true;
-    if (s1.addr0() < s2.addr0() && s1.addr0() + s1.size() > s2.addr0())
-      return true;
-    if (s2.addr0() < s1.addr0() && s2.addr0() + s2.size() > s1.addr0())
-      return true;
-    return false;
+  //!!! remove
+  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic) {
+    // DCHECK_EQ(raw_ & 0xff, 0);
+    DCHECK_GT(size, 0);
+    DCHECK_LE(size, 8);
+    Sid sid0 = part_.sid_;
+    (void)sid0;
+    u16 epoch0 = part_.epoch_;
+    (void)epoch0;
+    raw_ |= (isAtomic << 31) | (isRead << 30) |
+            ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
+    DCHECK_EQ(addr0(), addr & 0x7);
+    //!!! if FastState::ignore_accesses_ was set, then it overlaps with
+    //! is_atomic_
+    // and this check fails.
+    // DCHECK_EQ(IsAtomic(), isAtomic);
+    DCHECK_EQ(IsRead(), isRead);
+    DCHECK_EQ(sid(), sid0);
+    DCHECK_EQ(epoch(), epoch0);
   }
 };
 
-const RawShadow kShadowRodata = (RawShadow)-1;  // .rodata shadow marker
+static_assert(sizeof(Shadow) == kShadowSize, "bad Shadow size");
 
 }  // namespace __tsan
 
