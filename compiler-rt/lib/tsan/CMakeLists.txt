@@ -17,8 +17,9 @@ if(COMPILER_RT_TSAN_DEBUG_OUTPUT)
   list(APPEND TSAN_CFLAGS -DTSAN_DEBUG_OUTPUT=2)
 endif()
 
+list(APPEND TSAN_CFLAGS -Wno-nested-anon-types -Wno-c++17-extensions)
 set(TSAN_RTL_CFLAGS ${TSAN_CFLAGS})
-append_list_if(COMPILER_RT_HAS_MSSE3_FLAG -msse3 TSAN_RTL_CFLAGS)
+append_list_if(COMPILER_RT_HAS_MSSE4_2_FLAG -msse4.2 TSAN_RTL_CFLAGS)
 append_list_if(SANITIZER_LIMIT_FRAME_SIZE -Wframe-larger-than=530
                TSAN_RTL_CFLAGS)
 append_list_if(COMPILER_RT_HAS_WGLOBAL_CONSTRUCTORS_FLAG -Wglobal-constructors
@@ -100,12 +101,12 @@ set(TSAN_HEADERS
   rtl/tsan_ppc_regs.h
   rtl/tsan_report.h
   rtl/tsan_rtl.h
+  rtl/tsan_shadow.h
   rtl/tsan_stack_trace.h
   rtl/tsan_suppressions.h
   rtl/tsan_symbolize.h
   rtl/tsan_sync.h
   rtl/tsan_trace.h
-  rtl/tsan_update_shadow_word_inl.h
   )
 
 set(TSAN_RUNTIME_LIBRARIES)

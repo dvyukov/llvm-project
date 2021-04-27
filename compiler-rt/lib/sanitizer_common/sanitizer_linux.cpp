@@ -659,7 +659,12 @@ void FutexWake(atomic_uint32_t *p, u32 count) {
 #    endif
 }
 
-enum { MtxUnlocked = 0, MtxLocked = 1, MtxSleeping = 2 };
+/*
+enum MutexState {
+  MtxUnlocked = 0,
+  MtxLocked = 1,
+  MtxSleeping = 2
+};
 
 BlockingMutex::BlockingMutex() {
   internal_memset(this, 0, sizeof(*this));
@@ -674,7 +679,7 @@ void BlockingMutex::Lock() {
 #if SANITIZER_FREEBSD
     _umtx_op(m, UMTX_OP_WAIT_UINT, MtxSleeping, 0, 0);
 #elif SANITIZER_NETBSD
-    sched_yield(); /* No userspace futex-like synchronization */
+    sched_yield(); // No userspace futex-like synchronization.
 #else
     internal_syscall(SYSCALL(futex), (uptr)m, FUTEX_WAIT_PRIVATE, MtxSleeping,
                      0, 0, 0);
@@ -690,7 +695,7 @@ void BlockingMutex::Unlock() {
 #if SANITIZER_FREEBSD
     _umtx_op(m, UMTX_OP_WAKE, 1, 0, 0);
 #elif SANITIZER_NETBSD
-                   /* No userspace futex-like synchronization */
+    // No userspace futex-like synchronization.
 #else
     internal_syscall(SYSCALL(futex), (uptr)m, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
 #endif
@@ -698,9 +703,12 @@ void BlockingMutex::Unlock() {
 }
 
 void BlockingMutex::CheckLocked() const {
-  auto m = reinterpret_cast<atomic_uint32_t const *>(&opaque_storage_);
+  auto m = reinterpret_cast<atomic_uint32_t const*>(&opaque_storage_);
   CHECK_NE(MtxUnlocked, atomic_load(m, memory_order_relaxed));
 }
+
+*/
+
 #  endif  // !SANITIZER_SOLARIS
 
 // ----------------- sanitizer_linux.h

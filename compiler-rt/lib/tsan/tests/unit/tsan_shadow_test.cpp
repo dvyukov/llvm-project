@@ -15,36 +15,6 @@
 
 namespace __tsan {
 
-TEST(Shadow, FastState) {
-  Shadow s(FastState(11, 22));
-  EXPECT_EQ(s.tid(), (u64)11);
-  EXPECT_EQ(s.epoch(), (u64)22);
-  EXPECT_EQ(s.GetIgnoreBit(), false);
-  EXPECT_EQ(s.GetFreedAndReset(), false);
-  EXPECT_EQ(s.GetHistorySize(), 0);
-  EXPECT_EQ(s.addr0(), (u64)0);
-  EXPECT_EQ(s.size(), (u64)1);
-  EXPECT_EQ(s.IsWrite(), true);
-
-  s.IncrementEpoch();
-  EXPECT_EQ(s.epoch(), (u64)23);
-  s.IncrementEpoch();
-  EXPECT_EQ(s.epoch(), (u64)24);
-
-  s.SetIgnoreBit();
-  EXPECT_EQ(s.GetIgnoreBit(), true);
-  s.ClearIgnoreBit();
-  EXPECT_EQ(s.GetIgnoreBit(), false);
-
-  for (int i = 0; i < 8; i++) {
-    s.SetHistorySize(i);
-    EXPECT_EQ(s.GetHistorySize(), i);
-  }
-  s.SetHistorySize(2);
-  s.ClearHistorySize();
-  EXPECT_EQ(s.GetHistorySize(), 0);
-}
-
 TEST(Shadow, Mapping) {
   static int global;
   int stack;
@@ -64,7 +34,7 @@ TEST(Shadow, Celling) {
   u64 aligned_data[4];
   char *data = (char*)aligned_data;
   CHECK_EQ((uptr)data % kShadowSize, 0);
-  uptr s0 = MemToShadow((uptr)&data[0]);
+  uptr s0 = (uptr)MemToShadow((uptr)&data[0]);
   CHECK_EQ(s0 % kShadowSize, 0);
   for (unsigned i = 1; i < kShadowCell; i++)
     CHECK_EQ(s0, MemToShadow((uptr)&data[i]));
