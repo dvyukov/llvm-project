@@ -36,23 +36,63 @@ inline bool in_symbolizer() {
 }
 #endif
 
+ALWAYS_INLINE
+ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
+                                     uptr pc)
+    : thr_(thr), in_ignored_lib_(false), ignoring_(false) {
+  LazyInitialize(thr);
+  if (!thr_->is_inited)
+    return;
+  if (!thr_->ignore_interceptors)
+    FuncEntry(thr, pc);
+  DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
+  ignoring_ =
+      !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
+                                libignore()->IsIgnored(pc, &in_ignored_lib_));
+  EnableIgnores();
+}
+
+ALWAYS_INLINE
+ScopedInterceptor::~ScopedInterceptor() {
+  if (!thr_->is_inited)
+    return;
+  DisableIgnores();
+  if (!thr_->ignore_interceptors) {
+    ProcessPendingSignals(thr_);
+    FuncExit(thr_);
+  }
+}
+
+ALWAYS_INLINE
+ThreadState *cur_thread_init_maybe() {
+#if SANITIZER_LINUX
+  // On Linux we always have cur_thread initialized
+  // when we reach any interceptor. The main thread
+  // is initialized from .preinit_array, and other
+  // threads are initialized from _setjmp interceptor
+  // called from within pthread guts.
+  DCHECK(cur_thread());
+  return cur_thread();
+#else
+  return cur_thread_init();
+#endif
+}
+
 }  // namespace __tsan
 
-#define SCOPED_INTERCEPTOR_RAW(func, ...)      \
-  ThreadState *thr = cur_thread_init();        \
-  const uptr caller_pc = GET_CALLER_PC();      \
-  ScopedInterceptor si(thr, #func, caller_pc); \
-  const uptr pc = GET_CURRENT_PC();            \
-  (void)pc;
+#define SCOPED_INTERCEPTOR_RAW(func, ...)            \
+  ThreadState *thr = cur_thread_init_maybe();        \
+  ScopedInterceptor si(thr, #func, GET_CALLER_PC()); \
+  UNUSED const uptr pc = GET_CURRENT_PC();
 
-#define SCOPED_TSAN_INTERCEPTOR(func, ...)                                \
-  SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__);                              \
-  if (REAL(func) == 0) {                                                  \
-    Report("FATAL: ThreadSanitizer: failed to intercept %s\n", #func);    \
-    Die();                                                                \
-  }                                                                       \
-  if (!thr->is_inited || thr->ignore_interceptors || thr->in_ignored_lib) \
-    return REAL(func)(__VA_ARGS__);
+#define SCOPED_TSAN_INTERCEPTOR(func, ...)                    \
+  DCHECK(REAL(func));                                         \
+  ThreadState *thr = cur_thread_init_maybe();                 \
+  if (UNLIKELY(!thr->is_inited || thr->ignore_interceptors || \
+               thr->in_ignored_lib))                          \
+    return REAL(func)(__VA_ARGS__);                           \
+  ScopedInterceptor si(thr, #func, GET_CALLER_PC());          \
+  UNUSED const uptr pc = GET_CURRENT_PC();
 
 #define SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START() \
     si.DisableIgnores();

@@ -58,6 +58,8 @@ int main() {
 
   // Is there a better way to detect a resource  leak in the
   // ThreadState object? (i.e. a mmap not being freed)
+  fprintf(stderr, "mappings %lu -> %lu\n", memory_mappings_before,
+          memory_mappings_after);
   if (memory_mappings_before == memory_mappings_after) {
     fprintf(stderr, "PASS\n");
   } else {

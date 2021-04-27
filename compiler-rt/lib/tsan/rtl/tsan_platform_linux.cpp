@@ -94,7 +94,6 @@ enum {
   MemMeta,
   MemFile,
   MemMmap,
-  MemTrace,
   MemHeap,
   MemOther,
   MemCount,
@@ -113,8 +112,6 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
     mem[file ? MemFile : MemMmap] += rss;
   else if (p >= HeapMemBeg() && p < HeapMemEnd())
     mem[MemHeap] += rss;
-  else if (p >= TraceMemBeg() && p < TraceMemEnd())
-    mem[MemTrace] += rss;
   else
     mem[MemOther] += rss;
 }
@@ -127,38 +124,29 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime_ns) {
   StackDepotStats stacks = StackDepotGetStats();
   uptr nthread, nlive;
   ctx->thread_registry.GetNumberOfThreads(&nthread, &nlive);
+  uptr trace_mem;
+  {
+    Lock l(&ctx->slot_mtx);
+    trace_mem = ctx->trace_part_total_allocated * sizeof(TracePart);
+  }
   uptr internal_stats[AllocatorStatCount];
   internal_allocator()->GetStats(internal_stats);
   // All these are allocated from the common mmap region.
-  mem[MemMmap] -= meta.mem_block + meta.sync_obj + stacks.allocated +
-                  internal_stats[AllocatorStatMapped];
+  mem[MemMmap] -= meta.mem_block + meta.sync_obj + trace_mem +
+                  stacks.allocated + internal_stats[AllocatorStatMapped];
   if (s64(mem[MemMmap]) < 0)
     mem[MemMmap] = 0;
   internal_snprintf(
       buf, buf_size,
-      "%llus: RSS %zd MB: shadow:%zd meta:%zd file:%zd mmap:%zd"
-      " trace:%zd heap:%zd other:%zd intalloc:%zd memblocks:%zd syncobj:%zu"
-      " stacks=%zd[%zd] nthr=%zd/%zd\n",
-      uptime_ns / (1000 * 1000 * 1000), mem[MemTotal] >> 20,
+      "%llus [%zu]: RSS %zd MB: shadow:%zd meta:%zd file:%zd"
+      " mmap:%zd heap:%zd other:%zd intalloc:%zd memblocks:%zd syncobj:%zu"
+      " trace:%zu stacks=%zd threads=%zu/%zu\n",
+      uptime_ns / (1000 * 1000 * 1000), ctx->global_epoch, mem[MemTotal] >> 20,
       mem[MemShadow] >> 20, mem[MemMeta] >> 20, mem[MemFile] >> 20,
-      mem[MemMmap] >> 20, mem[MemTrace] >> 20, mem[MemHeap] >> 20,
-      mem[MemOther] >> 20, internal_stats[AllocatorStatMapped] >> 20,
-      meta.mem_block >> 20, meta.sync_obj >> 20, stacks.allocated >> 20,
-      stacks.n_uniq_ids, nlive, nthread);
-}
-
-#  if SANITIZER_LINUX
-void FlushShadowMemoryCallback(
-    const SuspendedThreadsList &suspended_threads_list,
-    void *argument) {
-  ReleaseMemoryPagesToOS(ShadowBeg(), ShadowEnd());
-}
-#endif
-
-void FlushShadowMemory() {
-#if SANITIZER_LINUX
-  StopTheWorld(FlushShadowMemoryCallback, 0);
-#endif
+      mem[MemMmap] >> 20, mem[MemHeap] >> 20, mem[MemOther] >> 20,
+      internal_stats[AllocatorStatMapped] >> 20, meta.mem_block >> 20,
+      meta.sync_obj >> 20, trace_mem >> 20, stacks.allocated >> 20, nlive,
+      nthread);
 }
 
 #if !SANITIZER_GO
@@ -509,7 +497,7 @@ ThreadState *cur_thread() {
       if (dead_thread_state == nullptr) {
         dead_thread_state = reinterpret_cast<ThreadState*>(
             MmapOrDie(sizeof(ThreadState), "ThreadState"));
-        dead_thread_state->fast_state.SetIgnoreBit();
+        dead_thread_state->ignore_enabled_ = true;
         dead_thread_state->ignore_interceptors = 1;
         dead_thread_state->is_dead = true;
         *const_cast<u32*>(&dead_thread_state->tid) = -1;

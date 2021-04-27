@@ -152,8 +152,8 @@ const int SA_SIGINFO = 4;
 const int SIG_SETMASK = 2;
 #endif
 
-#define COMMON_INTERCEPTOR_NOTHING_IS_INITIALIZED \
-  (!cur_thread_init()->is_inited)
+#define COMMON_INTERCEPTOR_NOTHING_IS_INITIALIZED false
+//  (!cur_thread_init()->is_inited)
 
 namespace __tsan {
 struct SignalDesc {
@@ -239,29 +239,6 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
     thr->signal_ctx = ctx;
   }
   return ctx;
-}
-
-ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
-                                     uptr pc)
-    : thr_(thr), in_ignored_lib_(false), ignoring_(false) {
-  LazyInitialize(thr);
-  if (!thr_->is_inited) return;
-  if (!thr_->ignore_interceptors) FuncEntry(thr, pc);
-  DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
-  ignoring_ =
-      !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
-                                libignore()->IsIgnored(pc, &in_ignored_lib_));
-  EnableIgnores();
-}
-
-ScopedInterceptor::~ScopedInterceptor() {
-  if (!thr_->is_inited) return;
-  DisableIgnores();
-  if (!thr_->ignore_interceptors) {
-    ProcessPendingSignals(thr_);
-    FuncExit(thr_);
-    CheckedMutex::CheckNoLocks();
-  }
 }
 
 NOINLINE
@@ -1965,6 +1942,7 @@ static void ReportErrnoSpoiling(ThreadState *thr, uptr pc) {
 static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
                                   int sig, __sanitizer_siginfo *info,
                                   void *uctx) {
+  CHECK(thr->slot);
   __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
