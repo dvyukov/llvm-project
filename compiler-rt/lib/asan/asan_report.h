@@ -30,7 +30,7 @@ struct StackVarDescr {
 
 // Returns the number of globals close to the provided address and copies
 // them to "globals" array.
-int GetGlobalsForAddress(uptr addr, __asan_global *globals, u32 *reg_sites,
+int GetGlobalsForAddress(uptr addr, __asan_global *globals, StackID *reg_sites,
                          int max_globals);
 
 const char *MaybeDemangleGlobalName(const char *name);
@@ -84,8 +84,8 @@ void ReportBadParamsToAnnotateContiguousContainer(uptr beg, uptr end,
                                                   uptr old_mid, uptr new_mid,
                                                   BufferedStackTrace *stack);
 
-void ReportODRViolation(const __asan_global *g1, u32 stack_id1,
-                        const __asan_global *g2, u32 stack_id2);
+void ReportODRViolation(const __asan_global *g1, StackID stack_id1,
+                        const __asan_global *g2, StackID stack_id2);
 
 // Mac-specific errors and warnings.
 void ReportMacMzReallocUnknown(uptr addr, uptr zone_ptr,

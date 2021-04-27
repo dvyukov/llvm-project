@@ -23,7 +23,7 @@ AsanThreadIdAndName::AsanThreadIdAndName(AsanThreadContext *t) {
   Init(t->tid, t->name);
 }
 
-AsanThreadIdAndName::AsanThreadIdAndName(u32 tid) {
+AsanThreadIdAndName::AsanThreadIdAndName(Tid tid) {
   if (tid == kInvalidTid) {
     Init(tid, "");
   } else {
@@ -33,7 +33,7 @@ AsanThreadIdAndName::AsanThreadIdAndName(u32 tid) {
   }
 }
 
-void AsanThreadIdAndName::Init(u32 tid, const char *tname) {
+void AsanThreadIdAndName::Init(Tid tid, const char *tname) {
   int len = internal_snprintf(name, sizeof(name), "T%d", tid);
   CHECK(((unsigned int)len) < sizeof(name));
   if (tname[0] != '\0')
@@ -170,8 +170,8 @@ bool GetHeapAddressInformation(uptr addr, uptr access_size,
   return true;
 }
 
-static StackTrace GetStackTraceFromId(u32 id) {
-  CHECK(id);
+static StackTrace GetStackTraceFromId(StackID id) {
+  CHECK_NE(id, kInvalidStackID);
   StackTrace res = StackDepotGet(id);
   CHECK(res.trace);
   return res;
@@ -326,7 +326,7 @@ void GlobalAddressDescription::Print(const char *bug_type) const {
     DescribeAddressRelativeToGlobal(addr, access_size, globals[i]);
     if (bug_type &&
         0 == internal_strcmp(bug_type, "initialization-order-fiasco") &&
-        reg_sites[i]) {
+        reg_sites[i] != kInvalidStackID) {
       Printf("  registered at:\n");
       StackDepotGet(reg_sites[i]).Print();
     }

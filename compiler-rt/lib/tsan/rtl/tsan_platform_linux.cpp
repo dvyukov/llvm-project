@@ -91,15 +91,14 @@ uptr vmaSize;
 #endif
 
 enum {
-  MemTotal  = 0,
-  MemShadow = 1,
-  MemMeta   = 2,
-  MemFile   = 3,
-  MemMmap   = 4,
-  MemTrace  = 5,
-  MemHeap   = 6,
-  MemOther  = 7,
-  MemCount  = 8,
+  MemTotal,
+  MemShadow,
+  MemMeta,
+  MemFile,
+  MemMmap,
+  MemHeap,
+  MemOther,
+  MemCount,
 };
 
 void FillProfileCallback(uptr p, uptr rss, bool file,
@@ -120,8 +119,6 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
   else if (p >= AppMemBeg() && p < AppMemEnd())
     mem[file ? MemFile : MemMmap] += rss;
 #endif
-  else if (p >= TraceMemBeg() && p < TraceMemEnd())
-    mem[MemTrace] += rss;
   else
     mem[MemOther] += rss;
 }
@@ -133,10 +130,10 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
   StackDepotStats *stacks = StackDepotGetStats();
   internal_snprintf(buf, buf_size,
       "RSS %zd MB: shadow:%zd meta:%zd file:%zd mmap:%zd"
-      " trace:%zd heap:%zd other:%zd stacks=%zd[%zd] nthr=%zd/%zd\n",
+      " heap:%zd other:%zd stacks=%zd[%zd] nthr=%zd/%zd\n",
       mem[MemTotal] >> 20, mem[MemShadow] >> 20, mem[MemMeta] >> 20,
-      mem[MemFile] >> 20, mem[MemMmap] >> 20, mem[MemTrace] >> 20,
-      mem[MemHeap] >> 20, mem[MemOther] >> 20,
+      mem[MemFile] >> 20, mem[MemMmap] >> 20, mem[MemHeap] >> 20,
+      mem[MemOther] >> 20,
       stacks->allocated >> 20, stacks->n_uniq_ids,
       nlive, nthread);
 }
@@ -178,12 +175,12 @@ static void MapRodata() {
   internal_unlink(name);  // Unlink it now, so that we can reuse the buffer.
   fd_t fd = openrv;
   // Fill the file with kShadowRodata.
-  const uptr kMarkerSize = 512 * 1024 / sizeof(u64);
-  InternalMmapVector<u64> marker(kMarkerSize);
+  const uptr kMarkerSize = 512 * 1024 / sizeof(RawShadow);
+  InternalMmapVector<RawShadow> marker(kMarkerSize);
   // volatile to prevent insertion of memset
-  for (volatile u64 *p = marker.data(); p < marker.data() + kMarkerSize; p++)
-    *p = kShadowRodata;
-  internal_write(fd, marker.data(), marker.size() * sizeof(u64));
+  for (volatile RawShadow *p = marker.data(); p < marker.data() + kMarkerSize; p++)
+    *p = Shadow::kShadowRodata;
+  internal_write(fd, marker.data(), marker.size() * sizeof(RawShadow));
   // Map the file into memory.
   uptr page = internal_mmap(0, GetPageSizeCached(), PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, fd, 0);
@@ -203,8 +200,8 @@ static void MapRodata() {
       char *shadow_start = (char *)MemToShadow(segment.start);
       char *shadow_end = (char *)MemToShadow(segment.end);
       for (char *p = shadow_start; p < shadow_end;
-           p += marker.size() * sizeof(u64)) {
-        internal_mmap(p, Min<uptr>(marker.size() * sizeof(u64), shadow_end - p),
+           p += marker.size() * sizeof(RawShadow)) {
+        internal_mmap(p, Min<uptr>(marker.size() * sizeof(RawShadow), shadow_end - p),
                       PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, 0);
       }
     }
@@ -494,7 +491,7 @@ ThreadState *cur_thread() {
       if (dead_thread_state == nullptr) {
         dead_thread_state = reinterpret_cast<ThreadState*>(
             MmapOrDie(sizeof(ThreadState), "ThreadState"));
-        dead_thread_state->fast_state.SetIgnoreBit();
+        dead_thread_state->ignore_enabled_ = true;
         dead_thread_state->ignore_interceptors = 1;
         dead_thread_state->is_dead = true;
         *const_cast<u32*>(&dead_thread_state->tid) = -1;

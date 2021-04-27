@@ -83,6 +83,14 @@
 # define COMMON_SYSCALL_POST_FORK(res) {}
 #endif
 
+#ifndef COMMON_SYSCALL_PRE_BLOCK
+# define COMMON_SYSCALL_PRE_BLOCK() {}
+#endif
+
+#ifndef COMMON_SYSCALL_POST_BLOCK
+# define COMMON_SYSCALL_POST_BLOCK() {}
+#endif
+
 // FIXME: do some kind of PRE_READ for all syscall arguments (int(s) and such).
 
 extern "C" {
@@ -2904,6 +2912,16 @@ POST_SYSCALL(sigaltstack)(long res, void *ss, void *oss) {
     }
   }
 }
+
+PRE_SYSCALL(futex)(u32 *addr, int op, u32 val, uptr val2) {
+  //!!! CHECK op
+  COMMON_SYSCALL_PRE_BLOCK();
+}
+
+POST_SYSCALL(futex)(long res, u32 *addr, int op, u32 val, uptr val2) {
+  COMMON_SYSCALL_POST_BLOCK();
+}
+
 }  // extern "C"
 
 #undef PRE_SYSCALL

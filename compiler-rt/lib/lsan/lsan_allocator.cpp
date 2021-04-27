@@ -291,7 +291,7 @@ uptr LsanMetadata::requested_size() const {
   return reinterpret_cast<ChunkMetadata *>(metadata_)->requested_size;
 }
 
-u32 LsanMetadata::stack_trace_id() const {
+StackID LsanMetadata::stack_trace_id() const {
   return reinterpret_cast<ChunkMetadata *>(metadata_)->stack_trace_id;
 }
 

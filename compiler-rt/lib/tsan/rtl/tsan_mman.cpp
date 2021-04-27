@@ -71,7 +71,7 @@ struct GlobalProc {
   Processor *proc;
 
   GlobalProc()
-      : mtx(MutexTypeGlobalProc, StatMtxGlobalProc)
+      : mtx(MutexTypeGlobalProc)
       , proc(ProcCreate()) {
   }
 };
@@ -151,7 +151,7 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   ObtainCurrentStack(thr, pc, &stack);
   if (IsFiredSuppression(ctx, ReportTypeSignalUnsafe, stack))
     return;
-  ThreadRegistryLock l(ctx->thread_registry);
+  ThreadRegistryLock l(&ctx->thread_registry);
   ScopedReport rep(ReportTypeSignalUnsafe);
   rep.AddStack(stack, true);
   OutputReport(thr, rep);
@@ -223,7 +223,8 @@ void *user_reallocarray(ThreadState *thr, uptr pc, void *p, uptr size, uptr n) {
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
   DPrintf("#%d: alloc(%zu) = %p\n", thr->tid, sz, p);
   ctx->metamap.AllocBlock(thr, pc, p, sz);
-  if (write && thr->ignore_reads_and_writes == 0)
+  //!!! find a better check for thread inited thr->trace_pos
+  if (write && thr->ignore_reads_and_writes == 0 && atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeImitateWrite(thr, pc, (uptr)p, sz);
   else
     MemoryResetRange(thr, pc, (uptr)p, sz);
@@ -232,14 +233,13 @@ void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
   CHECK_NE(p, (void*)0);
   uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
-  DPrintf("#%d: free(%p, %zu)\n", thr->tid, p, sz);
-  if (write && thr->ignore_reads_and_writes == 0)
+  DPrintf("#%d: free(%p, %zu) write=%d\n", thr->tid, p, sz, write);
+  //!!! find a better check for thread inited thr->trace_pos
+  if (write && thr->ignore_reads_and_writes == 0 && atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeFreed(thr, pc, (uptr)p, sz);
 }
 
 void *user_realloc(ThreadState *thr, uptr pc, void *p, uptr sz) {
-  // FIXME: Handle "shrinking" more efficiently,
-  // it seems that some software actually does this.
   if (!p)
     return SetErrnoOnNull(user_alloc_internal(thr, pc, sz));
   if (!sz) {
@@ -339,21 +339,15 @@ void invoke_free_hook(void *ptr) {
   RunFreeHooks(ptr);
 }
 
-void *internal_alloc(MBlockType typ, uptr sz) {
+void* Alloc(uptr sz) {
   ThreadState *thr = cur_thread();
-  if (thr->nomalloc) {
-    thr->nomalloc = 0;  // CHECK calls internal_malloc().
-    CHECK(0);
-  }
+  CHECK(!thr->nomalloc);
   return InternalAlloc(sz, &thr->proc()->internal_alloc_cache);
 }
 
-void internal_free(void *p) {
+void FreeImpl(void *p) {
   ThreadState *thr = cur_thread();
-  if (thr->nomalloc) {
-    thr->nomalloc = 0;  // CHECK calls internal_malloc().
-    CHECK(0);
-  }
+  CHECK(!thr->nomalloc);
   InternalFree(p, &thr->proc()->internal_alloc_cache);
 }
 
@@ -396,8 +390,6 @@ uptr __sanitizer_get_allocated_size(const void *p) {
 
 void __tsan_on_thread_idle() {
   ThreadState *thr = cur_thread();
-  thr->clock.ResetCached(&thr->proc()->clock_cache);
-  thr->last_sleep_clock.ResetCached(&thr->proc()->clock_cache);
   allocator()->SwallowCache(&thr->proc()->alloc_cache);
   internal_allocator()->SwallowCache(&thr->proc()->internal_alloc_cache);
   ctx->metamap.OnProcIdle(thr->proc());

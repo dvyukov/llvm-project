@@ -45,7 +45,8 @@ class TestData {
   }
 
   void Backoff() {
-    volatile T data[kSize] = {};
+    volatile T data[kSize];
+    internal_memset((void*)data, 0, sizeof(data));
     for (int i = 0; i < kSize; i++) {
       data[i]++;
       CHECK_EQ(data[i], 1);
@@ -93,7 +94,7 @@ static void *read_mutex_thread(void *param) {
 }
 
 TEST(Mutex, Write) {
-  Mutex mtx(MutexTypeAnnotations, StatMtxAnnotations);
+  Mutex mtx(MutexTypeAnnotations);
   TestData<Mutex> data(&mtx);
   pthread_t threads[kThreads];
   for (int i = 0; i < kThreads; i++)
@@ -103,7 +104,7 @@ TEST(Mutex, Write) {
 }
 
 TEST(Mutex, ReadWrite) {
-  Mutex mtx(MutexTypeAnnotations, StatMtxAnnotations);
+  Mutex mtx(MutexTypeAnnotations);
   TestData<Mutex> data(&mtx);
   pthread_t threads[kThreads];
   for (int i = 0; i < kThreads; i++)

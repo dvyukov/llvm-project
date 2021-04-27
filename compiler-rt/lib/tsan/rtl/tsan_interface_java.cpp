@@ -46,6 +46,7 @@ class ScopedJavaFunc {
   ~ScopedJavaFunc() {
     FuncExit(thr_);
     // FIXME(dvyukov): process pending signals.
+    CheckNoLocks();
   }
 
  private:
@@ -133,14 +134,14 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   ctx->metamap.MoveMemory(src, dst, size);
 
   // Move shadow.
-  u64 *s = (u64*)MemToShadow(src);
-  u64 *d = (u64*)MemToShadow(dst);
-  u64 *send = (u64*)MemToShadow(src + size);
+  RawShadow *s = (RawShadow*)MemToShadow(src);
+  RawShadow *d = (RawShadow*)MemToShadow(dst);
+  RawShadow *send = (RawShadow*)MemToShadow(src + size);
   uptr inc = 1;
   if (dst > src) {
-    s = (u64*)MemToShadow(src + size) - 1;
-    d = (u64*)MemToShadow(dst + size) - 1;
-    send = (u64*)MemToShadow(src) - 1;
+    s = (RawShadow*)MemToShadow(src + size) - 1;
+    d = (RawShadow*)MemToShadow(dst + size) - 1;
+    send = (RawShadow*)MemToShadow(src) - 1;
     inc = -1;
   }
   for (; s != send; s += inc, d += inc) {
@@ -169,7 +170,7 @@ jptr __tsan_java_find(jptr *from_ptr, jptr to) {
 void __tsan_java_finalize() {
   SCOPED_JAVA_FUNC(__tsan_java_finalize);
   DPrintf("#%d: java_mutex_finalize()\n", thr->tid);
-  AcquireGlobal(thr, 0);
+  AcquireGlobal(thr, pc);
 }
 
 void __tsan_java_mutex_lock(jptr addr) {

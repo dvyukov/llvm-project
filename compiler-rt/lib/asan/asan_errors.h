@@ -26,11 +26,11 @@ namespace __asan {
 
 struct ErrorBase {
   ScarinessScoreBase scariness;
-  u32 tid;
+  Tid tid;
 
   ErrorBase() = default;  // (*)
-  explicit ErrorBase(u32 tid_) : tid(tid_) {}
-  ErrorBase(u32 tid_, int initial_score, const char *reason) : tid(tid_) {
+  explicit ErrorBase(Tid tid_) : tid(tid_) {}
+  ErrorBase(Tid tid_, int initial_score, const char *reason) : tid(tid_) {
     scariness.Clear();
     scariness.Scare(initial_score, reason);
   }
@@ -40,7 +40,7 @@ struct ErrorDeadlySignal : ErrorBase {
   SignalContext signal;
 
   ErrorDeadlySignal() = default;  // (*)
-  ErrorDeadlySignal(u32 tid, const SignalContext &sig)
+  ErrorDeadlySignal(Tid tid, const SignalContext &sig)
       : ErrorBase(tid),
         signal(sig) {
     scariness.Clear();
@@ -69,7 +69,7 @@ struct ErrorDoubleFree : ErrorBase {
   HeapAddressDescription addr_description;
 
   ErrorDoubleFree() = default;  // (*)
-  ErrorDoubleFree(u32 tid, BufferedStackTrace *stack, uptr addr)
+  ErrorDoubleFree(Tid tid, BufferedStackTrace *stack, uptr addr)
       : ErrorBase(tid, 42, "double-free"),
         second_free_stack(stack) {
     CHECK_GT(second_free_stack->size, 0);
@@ -85,7 +85,7 @@ struct ErrorNewDeleteTypeMismatch : ErrorBase {
   uptr delete_alignment;
 
   ErrorNewDeleteTypeMismatch() = default;  // (*)
-  ErrorNewDeleteTypeMismatch(u32 tid, BufferedStackTrace *stack, uptr addr,
+  ErrorNewDeleteTypeMismatch(Tid tid, BufferedStackTrace *stack, uptr addr,
                              uptr delete_size_, uptr delete_alignment_)
       : ErrorBase(tid, 10, "new-delete-type-mismatch"),
         free_stack(stack),
@@ -101,7 +101,7 @@ struct ErrorFreeNotMalloced : ErrorBase {
   AddressDescription addr_description;
 
   ErrorFreeNotMalloced() = default;  // (*)
-  ErrorFreeNotMalloced(u32 tid, BufferedStackTrace *stack, uptr addr)
+  ErrorFreeNotMalloced(Tid tid, BufferedStackTrace *stack, uptr addr)
       : ErrorBase(tid, 40, "bad-free"),
         free_stack(stack),
         addr_description(addr, /*shouldLockThreadRegistry=*/false) {}
@@ -114,7 +114,7 @@ struct ErrorAllocTypeMismatch : ErrorBase {
   AddressDescription addr_description;
 
   ErrorAllocTypeMismatch() = default;  // (*)
-  ErrorAllocTypeMismatch(u32 tid, BufferedStackTrace *stack, uptr addr,
+  ErrorAllocTypeMismatch(Tid tid, BufferedStackTrace *stack, uptr addr,
                          AllocType alloc_type_, AllocType dealloc_type_)
       : ErrorBase(tid, 10, "alloc-dealloc-mismatch"),
         dealloc_stack(stack),
@@ -129,7 +129,7 @@ struct ErrorMallocUsableSizeNotOwned : ErrorBase {
   AddressDescription addr_description;
 
   ErrorMallocUsableSizeNotOwned() = default;  // (*)
-  ErrorMallocUsableSizeNotOwned(u32 tid, BufferedStackTrace *stack_, uptr addr)
+  ErrorMallocUsableSizeNotOwned(Tid tid, BufferedStackTrace *stack_, uptr addr)
       : ErrorBase(tid, 10, "bad-malloc_usable_size"),
         stack(stack_),
         addr_description(addr, /*shouldLockThreadRegistry=*/false) {}
@@ -141,7 +141,7 @@ struct ErrorSanitizerGetAllocatedSizeNotOwned : ErrorBase {
   AddressDescription addr_description;
 
   ErrorSanitizerGetAllocatedSizeNotOwned() = default;  // (*)
-  ErrorSanitizerGetAllocatedSizeNotOwned(u32 tid, BufferedStackTrace *stack_,
+  ErrorSanitizerGetAllocatedSizeNotOwned(Tid tid, BufferedStackTrace *stack_,
                                          uptr addr)
       : ErrorBase(tid, 10, "bad-__sanitizer_get_allocated_size"),
         stack(stack_),
@@ -155,7 +155,7 @@ struct ErrorCallocOverflow : ErrorBase {
   uptr size;
 
   ErrorCallocOverflow() = default;  // (*)
-  ErrorCallocOverflow(u32 tid, BufferedStackTrace *stack_, uptr count_,
+  ErrorCallocOverflow(Tid tid, BufferedStackTrace *stack_, uptr count_,
                       uptr size_)
       : ErrorBase(tid, 10, "calloc-overflow"),
         stack(stack_),
@@ -170,7 +170,7 @@ struct ErrorReallocArrayOverflow : ErrorBase {
   uptr size;
 
   ErrorReallocArrayOverflow() = default;  // (*)
-  ErrorReallocArrayOverflow(u32 tid, BufferedStackTrace *stack_, uptr count_,
+  ErrorReallocArrayOverflow(Tid tid, BufferedStackTrace *stack_, uptr count_,
                             uptr size_)
       : ErrorBase(tid, 10, "reallocarray-overflow"),
         stack(stack_),
@@ -184,7 +184,7 @@ struct ErrorPvallocOverflow : ErrorBase {
   uptr size;
 
   ErrorPvallocOverflow() = default;  // (*)
-  ErrorPvallocOverflow(u32 tid, BufferedStackTrace *stack_, uptr size_)
+  ErrorPvallocOverflow(Tid tid, BufferedStackTrace *stack_, uptr size_)
       : ErrorBase(tid, 10, "pvalloc-overflow"),
         stack(stack_),
         size(size_) {}
@@ -196,7 +196,7 @@ struct ErrorInvalidAllocationAlignment : ErrorBase {
   uptr alignment;
 
   ErrorInvalidAllocationAlignment() = default;  // (*)
-  ErrorInvalidAllocationAlignment(u32 tid, BufferedStackTrace *stack_,
+  ErrorInvalidAllocationAlignment(Tid tid, BufferedStackTrace *stack_,
                                   uptr alignment_)
       : ErrorBase(tid, 10, "invalid-allocation-alignment"),
         stack(stack_),
@@ -210,7 +210,7 @@ struct ErrorInvalidAlignedAllocAlignment : ErrorBase {
   uptr alignment;
 
   ErrorInvalidAlignedAllocAlignment() = default;  // (*)
-  ErrorInvalidAlignedAllocAlignment(u32 tid, BufferedStackTrace *stack_,
+  ErrorInvalidAlignedAllocAlignment(Tid tid, BufferedStackTrace *stack_,
                                     uptr size_, uptr alignment_)
       : ErrorBase(tid, 10, "invalid-aligned-alloc-alignment"),
         stack(stack_),
@@ -224,7 +224,7 @@ struct ErrorInvalidPosixMemalignAlignment : ErrorBase {
   uptr alignment;
 
   ErrorInvalidPosixMemalignAlignment() = default;  // (*)
-  ErrorInvalidPosixMemalignAlignment(u32 tid, BufferedStackTrace *stack_,
+  ErrorInvalidPosixMemalignAlignment(Tid tid, BufferedStackTrace *stack_,
                                      uptr alignment_)
       : ErrorBase(tid, 10, "invalid-posix-memalign-alignment"),
         stack(stack_),
@@ -239,7 +239,7 @@ struct ErrorAllocationSizeTooBig : ErrorBase {
   uptr max_size;
 
   ErrorAllocationSizeTooBig() = default;  // (*)
-  ErrorAllocationSizeTooBig(u32 tid, BufferedStackTrace *stack_,
+  ErrorAllocationSizeTooBig(Tid tid, BufferedStackTrace *stack_,
                             uptr user_size_, uptr total_size_, uptr max_size_)
       : ErrorBase(tid, 10, "allocation-size-too-big"),
         stack(stack_),
@@ -253,7 +253,7 @@ struct ErrorRssLimitExceeded : ErrorBase {
   const BufferedStackTrace *stack;
 
   ErrorRssLimitExceeded() = default;  // (*)
-  ErrorRssLimitExceeded(u32 tid, BufferedStackTrace *stack_)
+  ErrorRssLimitExceeded(Tid tid, BufferedStackTrace *stack_)
       : ErrorBase(tid, 10, "rss-limit-exceeded"),
         stack(stack_) {}
   void Print();
@@ -264,7 +264,7 @@ struct ErrorOutOfMemory : ErrorBase {
   uptr requested_size;
 
   ErrorOutOfMemory() = default;  // (*)
-  ErrorOutOfMemory(u32 tid, BufferedStackTrace *stack_, uptr requested_size_)
+  ErrorOutOfMemory(Tid tid, BufferedStackTrace *stack_, uptr requested_size_)
       : ErrorBase(tid, 10, "out-of-memory"),
         stack(stack_),
         requested_size(requested_size_) {}
@@ -279,7 +279,7 @@ struct ErrorStringFunctionMemoryRangesOverlap : ErrorBase {
   const char *function;
 
   ErrorStringFunctionMemoryRangesOverlap() = default;  // (*)
-  ErrorStringFunctionMemoryRangesOverlap(u32 tid, BufferedStackTrace *stack_,
+  ErrorStringFunctionMemoryRangesOverlap(Tid tid, BufferedStackTrace *stack_,
                                          uptr addr1, uptr length1_, uptr addr2,
                                          uptr length2_, const char *function_)
       : ErrorBase(tid),
@@ -303,7 +303,7 @@ struct ErrorStringFunctionSizeOverflow : ErrorBase {
   uptr size;
 
   ErrorStringFunctionSizeOverflow() = default;  // (*)
-  ErrorStringFunctionSizeOverflow(u32 tid, BufferedStackTrace *stack_,
+  ErrorStringFunctionSizeOverflow(Tid tid, BufferedStackTrace *stack_,
                                   uptr addr, uptr size_)
       : ErrorBase(tid, 10, "negative-size-param"),
         stack(stack_),
@@ -318,7 +318,7 @@ struct ErrorBadParamsToAnnotateContiguousContainer : ErrorBase {
 
   ErrorBadParamsToAnnotateContiguousContainer() = default;  // (*)
   // PS4: Do we want an AddressDescription for beg?
-  ErrorBadParamsToAnnotateContiguousContainer(u32 tid,
+  ErrorBadParamsToAnnotateContiguousContainer(Tid tid,
                                               BufferedStackTrace *stack_,
                                               uptr beg_, uptr end_,
                                               uptr old_mid_, uptr new_mid_)
@@ -333,11 +333,11 @@ struct ErrorBadParamsToAnnotateContiguousContainer : ErrorBase {
 
 struct ErrorODRViolation : ErrorBase {
   __asan_global global1, global2;
-  u32 stack_id1, stack_id2;
+  StackID stack_id1, stack_id2;
 
   ErrorODRViolation() = default;  // (*)
-  ErrorODRViolation(u32 tid, const __asan_global *g1, u32 stack_id1_,
-                    const __asan_global *g2, u32 stack_id2_)
+  ErrorODRViolation(Tid tid, const __asan_global *g1, StackID stack_id1_,
+                    const __asan_global *g2, StackID stack_id2_)
       : ErrorBase(tid, 10, "odr-violation"),
         global1(*g1),
         global2(*g2),
@@ -352,7 +352,7 @@ struct ErrorInvalidPointerPair : ErrorBase {
   AddressDescription addr2_description;
 
   ErrorInvalidPointerPair() = default;  // (*)
-  ErrorInvalidPointerPair(u32 tid, uptr pc_, uptr bp_, uptr sp_, uptr p1,
+  ErrorInvalidPointerPair(Tid tid, uptr pc_, uptr bp_, uptr sp_, uptr p1,
                           uptr p2)
       : ErrorBase(tid, 10, "invalid-pointer-pair"),
         pc(pc_),
@@ -372,7 +372,7 @@ struct ErrorGeneric : ErrorBase {
   u8 shadow_val;
 
   ErrorGeneric() = default;  // (*)
-  ErrorGeneric(u32 tid, uptr addr, uptr pc_, uptr bp_, uptr sp_, bool is_write_,
+  ErrorGeneric(Tid tid, uptr addr, uptr pc_, uptr bp_, uptr sp_, bool is_write_,
                uptr access_size_);
   void Print();
 };

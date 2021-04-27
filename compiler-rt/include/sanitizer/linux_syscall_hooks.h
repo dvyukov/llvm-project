@@ -1850,6 +1850,11 @@
 #define __sanitizer_syscall_post_sigaltstack(res, ss, oss)                     \
   __sanitizer_syscall_post_impl_sigaltstack(res, (long)ss, (long)oss)
 
+#define __sanitizer_syscall_pre_futex(addr, op, val, val2) \
+  __sanitizer_syscall_pre_impl_futex((long)addr, (long)op, (long)val, (long)val2)
+#define __sanitizer_syscall_post_futex(res, addr, op, val, val2) \
+  __sanitizer_syscall_post_impl_futex((long)res, (long)addr, (long)op, (long)val, (long)val2)
+
 // And now a few syscalls we don't handle yet.
 #define __sanitizer_syscall_pre_afs_syscall(...)
 #define __sanitizer_syscall_pre_arch_prctl(...)
@@ -1868,7 +1873,6 @@
 #define __sanitizer_syscall_pre_fchown32(...)
 #define __sanitizer_syscall_pre_ftime(...)
 #define __sanitizer_syscall_pre_ftruncate64(...)
-#define __sanitizer_syscall_pre_futex(...)
 #define __sanitizer_syscall_pre_getegid32(...)
 #define __sanitizer_syscall_pre_geteuid32(...)
 #define __sanitizer_syscall_pre_getgid32(...)
@@ -1947,7 +1951,6 @@
 #define __sanitizer_syscall_post_fchown32(res, ...)
 #define __sanitizer_syscall_post_ftime(res, ...)
 #define __sanitizer_syscall_post_ftruncate64(res, ...)
-#define __sanitizer_syscall_post_futex(res, ...)
 #define __sanitizer_syscall_post_getegid32(res, ...)
 #define __sanitizer_syscall_post_geteuid32(res, ...)
 #define __sanitizer_syscall_post_getgid32(res, ...)
@@ -3079,6 +3082,9 @@ void __sanitizer_syscall_post_impl_rt_sigaction(long res, long signum, long act,
                                                 long oldact, long sz);
 void __sanitizer_syscall_pre_impl_sigaltstack(long ss, long oss);
 void __sanitizer_syscall_post_impl_sigaltstack(long res, long ss, long oss);
+void __sanitizer_syscall_pre_impl_futex(long addr, long op, long val, long val2);
+void __sanitizer_syscall_post_impl_futex(long res, long addr, long op, long val, long val2);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

@@ -39,7 +39,7 @@ class StaticSpinMutex {
     atomic_store(&state_, 0, memory_order_release);
   }
 
-  void CheckLocked() {
+  void CheckLocked() const {
     CHECK_EQ(atomic_load(&state_, memory_order_relaxed), 1);
   }
 
@@ -70,6 +70,19 @@ class SpinMutex : public StaticSpinMutex {
   void operator=(const SpinMutex&);
 };
 
+class Semaphore {
+ public:
+  Semaphore();
+  Semaphore(const Semaphore&) = delete;
+  void operator = (const Semaphore&) = delete;
+
+  void Wait();
+  void Post(u32 count = 1);
+
+ private:
+  atomic_uint32_t count_;
+};
+
 class BlockingMutex {
  public:
   explicit constexpr BlockingMutex(LinkerInitialized)
@@ -85,7 +98,7 @@ class BlockingMutex {
   // maintaining complex state to work around those situations, the check only
   // checks that the mutex is owned, and assumes callers to be generally
   // well-behaved.
-  void CheckLocked();
+  void CheckLocked() const;
 
  private:
   // Solaris mutex_t has a member that requires 64-bit alignment.
@@ -132,7 +145,7 @@ class RWMutex {
     (void)prev;
   }
 
-  void CheckLocked() {
+  void CheckLocked() const {
     CHECK_NE(atomic_load(&state_, memory_order_relaxed), kUnlocked);
   }
 

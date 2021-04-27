@@ -20,20 +20,13 @@ namespace __tsan {
 
 enum MutexType {
   MutexTypeInvalid,
-  MutexTypeTrace,
-  MutexTypeThreads,
   MutexTypeReport,
   MutexTypeSyncVar,
-  MutexTypeSyncTab,
-  MutexTypeSlab,
   MutexTypeAnnotations,
-  MutexTypeAtExit,
-  MutexTypeMBlock,
-  MutexTypeJavaMBlock,
-  MutexTypeDDetector,
   MutexTypeFired,
   MutexTypeRacy,
   MutexTypeGlobalProc,
+  MutexTypeTraceAlloc,
 
   // This must be the last.
   MutexTypeCount
@@ -41,7 +34,7 @@ enum MutexType {
 
 class Mutex {
  public:
-  explicit Mutex(MutexType type, StatType stat_type);
+  explicit Mutex(MutexType type);
   ~Mutex();
 
   void Lock();
@@ -56,9 +49,6 @@ class Mutex {
   atomic_uintptr_t state_;
 #if SANITIZER_DEBUG
   MutexType type_;
-#endif
-#if TSAN_COLLECT_STATS
-  StatType stat_type_;
 #endif
 
   Mutex(const Mutex&);
@@ -80,10 +70,15 @@ class InternalDeadlockDetector {
 };
 
 void InitializeMutex();
+void DebugCheckNoLocks();
 
-// Checks that the current thread does not hold any runtime locks
+// Checks if the current thread hold any runtime locks
 // (e.g. when returning from an interceptor).
-void CheckNoLocks(ThreadState *thr);
+ALWAYS_INLINE void CheckNoLocks() {
+#if SANITIZER_DEBUG && !SANITIZER_GO
+  DebugCheckNoLocks();
+#endif
+}
 
 }  // namespace __tsan
 
