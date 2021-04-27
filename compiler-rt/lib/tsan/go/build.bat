@@ -6,6 +6,7 @@ type ^
   ..\rtl\tsan_md5.cpp ^
   ..\rtl\tsan_report.cpp ^
   ..\rtl\tsan_rtl.cpp ^
+  ..\rtl\tsan_rtl_access.cpp ^
   ..\rtl\tsan_rtl_mutex.cpp ^
   ..\rtl\tsan_rtl_report.cpp ^
   ..\rtl\tsan_rtl_thread.cpp ^
@@ -13,6 +14,7 @@ type ^
   ..\rtl\tsan_suppressions.cpp ^
   ..\rtl\tsan_sync.cpp ^
   ..\rtl\tsan_stack_trace.cpp ^
+  ..\rtl\tsan_vector_clock.cpp ^
   ..\..\sanitizer_common\sanitizer_allocator.cpp ^
   ..\..\sanitizer_common\sanitizer_common.cpp ^
   ..\..\sanitizer_common\sanitizer_flags.cpp ^
