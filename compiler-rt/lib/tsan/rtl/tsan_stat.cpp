@@ -28,10 +28,6 @@ void StatOutput(u64 *stat) {
   name[StatMop]                          = "Memory accesses                   ";
   name[StatMopRead]                      = "  Including reads                 ";
   name[StatMopWrite]                     = "            writes                ";
-  name[StatMop1]                         = "  Including size 1                ";
-  name[StatMop2]                         = "            size 2                ";
-  name[StatMop4]                         = "            size 4                ";
-  name[StatMop8]                         = "            size 8                ";
   name[StatMopSame]                      = "  Including same                  ";
   name[StatMopIgnored]                   = "  Including ignored               ";
   name[StatMopRange]                     = "  Including range                 ";
@@ -175,6 +171,7 @@ void StatOutput(u64 *stat) {
   name[StatMtxRacy]                      = "  RacyStacks                      ";
   name[StatMtxFD]                        = "  FD                              ";
   name[StatMtxGlobalProc]                = "  GlobalProc                      ";
+  name[StatMtxTraceAlloc                 = "  TraceAlloc                      ";
 
   Printf("Statistics:\n");
   for (int i = 0; i < StatCnt; i++)

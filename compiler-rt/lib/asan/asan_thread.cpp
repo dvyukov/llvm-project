@@ -46,7 +46,7 @@ static ThreadRegistry *asan_thread_registry;
 static BlockingMutex mu_for_thread_context(LINKER_INITIALIZED);
 static LowLevelAllocator allocator_for_thread_context;
 
-static ThreadContextBase *GetAsanThreadContext(u32 tid) {
+static ThreadContextBase *GetAsanThreadContext(Tid tid) {
   BlockingMutexLock lock(&mu_for_thread_context);
   return new(allocator_for_thread_context) AsanThreadContext(tid);
 }
@@ -60,14 +60,14 @@ ThreadRegistry &asanThreadRegistry() {
     // in TSD and can't reliably tell when no more TSD destructors will
     // be called. It would be wrong to reuse AsanThreadContext for another
     // thread before all TSD destructors will be called for it.
-    asan_thread_registry = new(thread_registry_placeholder) ThreadRegistry(
-        GetAsanThreadContext, kMaxNumberOfThreads, kMaxNumberOfThreads);
+    asan_thread_registry =
+        new (thread_registry_placeholder) ThreadRegistry(GetAsanThreadContext);
     initialized = true;
   }
   return *asan_thread_registry;
 }
 
-AsanThreadContext *GetThreadContextByTidLocked(u32 tid) {
+AsanThreadContext *GetThreadContextByTidLocked(Tid tid) {
   return static_cast<AsanThreadContext *>(
       asanThreadRegistry().GetThreadLocked(tid));
 }
@@ -75,7 +75,7 @@ AsanThreadContext *GetThreadContextByTidLocked(u32 tid) {
 // AsanThread implementation.
 
 AsanThread *AsanThread::Create(thread_callback_t start_routine, void *arg,
-                               u32 parent_tid, StackTrace *stack,
+                               Tid parent_tid, StackTrace *stack,
                                bool detached) {
   uptr PageSize = GetPageSizeCached();
   uptr size = RoundUpTo(sizeof(AsanThread), PageSize);
@@ -97,7 +97,7 @@ void AsanThread::TSDDtor(void *tsd) {
 }
 
 void AsanThread::Destroy() {
-  int tid = this->tid();
+  Tid tid = this->tid();
   VReport(1, "T%d exited\n", tid);
 
   bool was_running =
@@ -451,7 +451,7 @@ void SetCurrentThread(AsanThread *t) {
   CHECK_EQ(t->context(), AsanTSDGet());
 }
 
-u32 GetCurrentTidOrInvalid() {
+Tid GetCurrentTidOrInvalid() {
   AsanThread *t = GetCurrentThread();
   return t ? t->tid() : kInvalidTid;
 }

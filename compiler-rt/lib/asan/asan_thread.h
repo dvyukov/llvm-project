@@ -28,21 +28,21 @@ struct DTLS;
 
 namespace __asan {
 
-const u32 kMaxNumberOfThreads = (1 << 22);  // 4M
-
 class AsanThread;
 
 // These objects are created for every thread and are never deleted,
 // so we can find them by tid even if the thread is long dead.
 class AsanThreadContext final : public ThreadContextBase {
  public:
-  explicit AsanThreadContext(int tid)
-      : ThreadContextBase(tid), announced(false),
-        destructor_iterations(GetPthreadDestructorIterations()), stack_id(0),
+  explicit AsanThreadContext(Tid tid)
+      : ThreadContextBase(tid),
+        announced(false),
+        destructor_iterations(GetPthreadDestructorIterations()),
+        stack_id(kInvalidStackID),
         thread(nullptr) {}
   bool announced;
   u8 destructor_iterations;
-  u32 stack_id;
+  StackID stack_id;
   AsanThread *thread;
 
   void OnCreated(void *arg) override;
@@ -61,7 +61,7 @@ COMPILER_CHECK(sizeof(AsanThreadContext) <= 256);
 class AsanThread {
  public:
   static AsanThread *Create(thread_callback_t start_routine, void *arg,
-                            u32 parent_tid, StackTrace *stack, bool detached);
+                            Tid parent_tid, StackTrace *stack, bool detached);
   static void TSDDtor(void *tsd);
   void Destroy();
 
@@ -76,7 +76,7 @@ class AsanThread {
   uptr tls_begin() { return tls_begin_; }
   uptr tls_end() { return tls_end_; }
   DTLS *dtls() { return dtls_; }
-  u32 tid() { return context_->tid; }
+  Tid tid() { return context_->tid; }
   AsanThreadContext *context() { return context_; }
   void set_context(AsanThreadContext *context) { context_ = context; }
 
@@ -92,7 +92,7 @@ class AsanThread {
 
   bool AddrIsInStack(uptr addr);
 
-  void DeleteFakeStack(int tid) {
+  void DeleteFakeStack(Tid tid) {
     if (!fake_stack_) return;
     FakeStack *t = fake_stack_;
     fake_stack_ = nullptr;
@@ -175,12 +175,12 @@ class AsanThread {
 ThreadRegistry &asanThreadRegistry();
 
 // Must be called under ThreadRegistryLock.
-AsanThreadContext *GetThreadContextByTidLocked(u32 tid);
+AsanThreadContext *GetThreadContextByTidLocked(Tid tid);
 
 // Get the current thread. May return 0.
 AsanThread *GetCurrentThread();
 void SetCurrentThread(AsanThread *t);
-u32 GetCurrentTidOrInvalid();
+Tid GetCurrentTidOrInvalid();
 AsanThread *FindThreadByStackAddress(uptr addr);
 
 // Used to handle fork().

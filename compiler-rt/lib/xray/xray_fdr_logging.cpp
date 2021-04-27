@@ -300,7 +300,7 @@ XRayLogFlushStatus fdrLoggingFlush() XRAY_NEVER_INSTRUMENT {
 
   // We wait a number of milliseconds to allow threads to see that we've
   // finalised before attempting to flush the log.
-  SleepForMillis(fdrFlags()->grace_period_ms);
+  internal_usleep(fdrFlags()->grace_period_ms * 1000);
 
   // At this point, we're going to uninstall the iterator implementation, before
   // we decide to do anything further with the global buffer queue.

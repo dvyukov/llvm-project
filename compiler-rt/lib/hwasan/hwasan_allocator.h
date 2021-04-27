@@ -34,7 +34,7 @@ struct Metadata {
   u32 requested_size_low;
   u32 requested_size_high : 31;
   u32 right_aligned : 1;
-  u32 alloc_context_id;
+  StackID alloc_context_id;
   u64 get_requested_size() {
     return (static_cast<u64>(requested_size_high) << 32) + requested_size_low;
   }
@@ -86,7 +86,7 @@ class HwasanChunkView {
   uptr End() const;            // Last byte of user memory
   uptr UsedSize() const;       // Size requested by the user
   uptr ActualSize() const;     // Size allocated by the allocator.
-  u32 GetAllocStackId() const;
+  StackID GetAllocStackId() const;
   bool FromSmallHeap() const;
  private:
   uptr block_;
@@ -101,8 +101,8 @@ HwasanChunkView FindHeapChunkByAddress(uptr address);
 // Compress it to 16 bytes or extend it to be more useful.
 struct HeapAllocationRecord {
   uptr tagged_addr;
-  u32  alloc_context_id;
-  u32  free_context_id;
+  StackID alloc_context_id;
+  StackID free_context_id;
   u32  requested_size;
 };
 

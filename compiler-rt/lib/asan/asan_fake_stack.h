@@ -64,7 +64,7 @@ class FakeStack {
   // CTOR: create the FakeStack as a single mmap-ed object.
   static FakeStack *Create(uptr stack_size_log);
 
-  void Destroy(int tid);
+  void Destroy(Tid tid);
 
   // stack_size_log is at least 15 (stack_size >= 32K).
   static uptr SizeRequiredForFlags(uptr stack_size_log) {

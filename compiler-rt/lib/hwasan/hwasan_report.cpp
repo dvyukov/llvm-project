@@ -95,8 +95,8 @@ void AppendToErrorMessageBuffer(const char *buffer) {
   ScopedReport::MaybeAppendToErrorMessage(buffer);
 }
 
-static StackTrace GetStackTraceFromId(u32 id) {
-  CHECK(id);
+static StackTrace GetStackTraceFromId(StackID id) {
+  CHECK_NE(id, kInvalidStackID);
   StackTrace res = StackDepotGet(id);
   CHECK(res.trace);
   return res;

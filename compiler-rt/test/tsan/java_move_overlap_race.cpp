@@ -1,6 +1,10 @@
 // RUN: %clangxx_tsan -O1 %s -o %t
 // RUN: %deflake %run %t 2>&1 | FileCheck %s
 // RUN: %deflake %run %t arg 2>&1 | FileCheck %s
+
+// __tsan_java_move is broken.
+// XFAIL: *
+
 #include "java.h"
 
 jptr varaddr1_old;
@@ -51,5 +55,13 @@ int main(int argc, char **argv) {
 }
 
 // CHECK: WARNING: ThreadSanitizer: data race
+// CHECK: Write of size 4
+// CHECK:   #0 Thread
+// CHECK: Previous write of size 4
+// CHECK:   #0 main
 // CHECK: WARNING: ThreadSanitizer: data race
+// CHECK: Write of size 4
+// CHECK:   #0 Thread
+// CHECK: Previous write of size 4
+// CHECK:   #0 main
 // CHECK: DONE

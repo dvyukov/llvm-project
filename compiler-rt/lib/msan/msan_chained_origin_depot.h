@@ -25,10 +25,10 @@ StackDepotStats *ChainedOriginDepotGetStats();
 // If successful, returns true and the new chain id new_id.
 // If the same element already exists, returns false and sets new_id to the
 // existing ID.
-bool ChainedOriginDepotPut(u32 here_id, u32 prev_id, u32 *new_id);
+bool ChainedOriginDepotPut(StackID here_id, StackID prev_id, StackID *new_id);
 
 // Retrieves the stored StackDepot ID for the given origin ID.
-u32 ChainedOriginDepotGet(u32 id, u32 *other);
+StackID ChainedOriginDepotGet(StackID id, StackID *other);
 
 void ChainedOriginDepotLockAll();
 void ChainedOriginDepotUnlockAll();

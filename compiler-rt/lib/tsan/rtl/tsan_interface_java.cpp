@@ -39,13 +39,14 @@ class ScopedJavaFunc {
  public:
   ScopedJavaFunc(ThreadState *thr, uptr pc)
       : thr_(thr) {
-    Initialize(thr_);
+    InitializeMaybe(thr_);
     FuncEntry(thr, pc);
   }
 
   ~ScopedJavaFunc() {
-    FuncExit(thr_);
     // FIXME(dvyukov): process pending signals.
+    FuncExit(thr_);
+    CheckNoLocks();
   }
 
  private:
@@ -57,13 +58,13 @@ static JavaContext *jctx;
 
 }  // namespace __tsan
 
-#define SCOPED_JAVA_FUNC(func) \
-  ThreadState *thr = cur_thread(); \
-  const uptr caller_pc = GET_CALLER_PC(); \
-  const uptr pc = StackTrace::GetCurrentPc(); \
-  (void)pc; \
-  ScopedJavaFunc scoped(thr, caller_pc); \
-/**/
+#define SCOPED_JAVA_FUNC(func)                                                 \
+  ThreadState* thr = cur_thread();                                             \
+  const uptr caller_pc = GET_CALLER_PC();                                      \
+  const uptr pc = StackTrace::GetCurrentPc();                                  \
+  (void)pc;                                                                    \
+  ScopedJavaFunc scoped(thr, caller_pc);                                       \
+  /**/
 
 void __tsan_java_init(jptr heap_begin, jptr heap_size) {
   SCOPED_JAVA_FUNC(__tsan_java_init);
@@ -133,14 +134,14 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   ctx->metamap.MoveMemory(src, dst, size);
 
   // Move shadow.
-  u64 *s = (u64*)MemToShadow(src);
-  u64 *d = (u64*)MemToShadow(dst);
-  u64 *send = (u64*)MemToShadow(src + size);
+  RawShadow* s = (RawShadow*)MemToShadow(src);
+  RawShadow* d = (RawShadow*)MemToShadow(dst);
+  RawShadow* send = (RawShadow*)MemToShadow(src + size);
   uptr inc = 1;
   if (dst > src) {
-    s = (u64*)MemToShadow(src + size) - 1;
-    d = (u64*)MemToShadow(dst + size) - 1;
-    send = (u64*)MemToShadow(src) - 1;
+    s = (RawShadow*)MemToShadow(src + size) - 1;
+    d = (RawShadow*)MemToShadow(dst + size) - 1;
+    send = (RawShadow*)MemToShadow(src) - 1;
     inc = -1;
   }
   for (; s != send; s += inc, d += inc) {
@@ -168,8 +169,8 @@ jptr __tsan_java_find(jptr *from_ptr, jptr to) {
 
 void __tsan_java_finalize() {
   SCOPED_JAVA_FUNC(__tsan_java_finalize);
-  DPrintf("#%d: java_mutex_finalize()\n", thr->tid);
-  AcquireGlobal(thr, 0);
+  DPrintf("#%d: java_finalize()\n", thr->tid);
+  AcquireGlobal(thr, pc);
 }
 
 void __tsan_java_mutex_lock(jptr addr) {

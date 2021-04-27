@@ -26,7 +26,7 @@ struct StackDepotHandle {
   StackDepotHandle() : node_(nullptr) {}
   explicit StackDepotHandle(StackDepotNode *node) : node_(node) {}
   bool valid() { return node_; }
-  u32 id();
+  StackID id();
   int use_count();
   void inc_use_count_unsafe();
 };
@@ -34,10 +34,10 @@ struct StackDepotHandle {
 const int kStackDepotMaxUseCount = 1U << (SANITIZER_ANDROID ? 16 : 20);
 
 StackDepotStats *StackDepotGetStats();
-u32 StackDepotPut(StackTrace stack);
+StackID StackDepotPut(StackTrace stack);
 StackDepotHandle StackDepotPut_WithHandle(StackTrace stack);
 // Retrieves a stored stack trace by the id.
-StackTrace StackDepotGet(u32 id);
+StackTrace StackDepotGet(StackID id);
 
 void StackDepotLockAll();
 void StackDepotUnlockAll();
@@ -50,11 +50,11 @@ void StackDepotPrintAll();
 class StackDepotReverseMap {
  public:
   StackDepotReverseMap();
-  StackTrace Get(u32 id);
+  StackTrace Get(StackID id);
 
  private:
   struct IdDescPair {
-    u32 id;
+    StackID id;
     StackDepotNode *desc;
 
     static bool IdComparator(const IdDescPair &a, const IdDescPair &b);

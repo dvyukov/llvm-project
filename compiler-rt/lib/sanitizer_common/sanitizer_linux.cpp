@@ -430,13 +430,11 @@ uptr internal_sched_yield() {
   return internal_syscall(SYSCALL(sched_yield));
 }
 
-unsigned int internal_sleep(unsigned int seconds) {
+void internal_usleep(u64 useconds) {
   struct timespec ts;
-  ts.tv_sec = seconds;
-  ts.tv_nsec = 0;
-  int res = internal_syscall(SYSCALL(nanosleep), &ts, &ts);
-  if (res) return ts.tv_sec;
-  return 0;
+  ts.tv_sec = useconds / 1000000;
+  ts.tv_nsec = (useconds % 1000000) * 1000;
+  internal_syscall(SYSCALL(nanosleep), &ts, nullptr);
 }
 
 uptr internal_execve(const char *filename, char *const argv[],
@@ -652,6 +650,7 @@ BlockingMutex::BlockingMutex() {
 }
 
 void BlockingMutex::Lock() {
+  OnMutexLockUnlock();
   CHECK_EQ(owner_, 0);
   atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
   if (atomic_exchange(m, MtxLocked, memory_order_acquire) == MtxUnlocked)
@@ -669,6 +668,7 @@ void BlockingMutex::Lock() {
 }
 
 void BlockingMutex::Unlock() {
+  OnMutexLockUnlock();
   atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
   u32 v = atomic_exchange(m, MtxUnlocked, memory_order_release);
   CHECK_NE(v, MtxUnlocked);
@@ -683,11 +683,35 @@ void BlockingMutex::Unlock() {
   }
 }
 
-void BlockingMutex::CheckLocked() {
-  atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
+void BlockingMutex::CheckLocked() const {
+  auto m = reinterpret_cast<atomic_uint32_t const *>(&opaque_storage_);
   CHECK_NE(MtxUnlocked, atomic_load(m, memory_order_relaxed));
 }
-#endif // !SANITIZER_SOLARIS
+
+Semaphore::Semaphore() { atomic_store_relaxed(&count_, 0); }
+
+void Semaphore::Wait() {
+  u32 count = atomic_load(&count_, memory_order_acquire);
+  for (;;) {
+    if (count == 0) {
+      internal_syscall(SYSCALL(futex), (uptr)&count_, FUTEX_WAIT_PRIVATE, 0, 0,
+                       0, 0);
+      count = atomic_load(&count_, memory_order_acquire);
+      continue;
+    }
+    if (atomic_compare_exchange_weak(&count_, &count, count - 1,
+                                     memory_order_acquire))
+      break;
+  }
+}
+
+void Semaphore::Post(u32 count) {
+  atomic_fetch_add(&count_, count, memory_order_release);
+  internal_syscall(SYSCALL(futex), (uptr)&count_, FUTEX_WAKE_PRIVATE, count, 0,
+                   0, 0);
+}
+
+#  endif  // !SANITIZER_SOLARIS
 
 // ----------------- sanitizer_linux.h
 // The actual size of this structure is specified by d_reclen.

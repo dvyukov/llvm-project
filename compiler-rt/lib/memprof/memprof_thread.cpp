@@ -43,7 +43,7 @@ static ThreadRegistry *memprof_thread_registry;
 static BlockingMutex mu_for_thread_context(LINKER_INITIALIZED);
 static LowLevelAllocator allocator_for_thread_context;
 
-static ThreadContextBase *GetMemprofThreadContext(u32 tid) {
+static ThreadContextBase *GetMemprofThreadContext(Tid tid) {
   BlockingMutexLock lock(&mu_for_thread_context);
   return new (allocator_for_thread_context) MemprofThreadContext(tid);
 }
@@ -57,14 +57,14 @@ ThreadRegistry &memprofThreadRegistry() {
     // in TSD and can't reliably tell when no more TSD destructors will
     // be called. It would be wrong to reuse MemprofThreadContext for another
     // thread before all TSD destructors will be called for it.
-    memprof_thread_registry = new (thread_registry_placeholder) ThreadRegistry(
-        GetMemprofThreadContext, kMaxNumberOfThreads, kMaxNumberOfThreads);
+    memprof_thread_registry = new (thread_registry_placeholder)
+        ThreadRegistry(GetMemprofThreadContext);
     initialized = true;
   }
   return *memprof_thread_registry;
 }
 
-MemprofThreadContext *GetThreadContextByTidLocked(u32 tid) {
+MemprofThreadContext *GetThreadContextByTidLocked(Tid tid) {
   return static_cast<MemprofThreadContext *>(
       memprofThreadRegistry().GetThreadLocked(tid));
 }
@@ -72,7 +72,7 @@ MemprofThreadContext *GetThreadContextByTidLocked(u32 tid) {
 // MemprofThread implementation.
 
 MemprofThread *MemprofThread::Create(thread_callback_t start_routine, void *arg,
-                                     u32 parent_tid, StackTrace *stack,
+                                     Tid parent_tid, StackTrace *stack,
                                      bool detached) {
   uptr PageSize = GetPageSizeCached();
   uptr size = RoundUpTo(sizeof(MemprofThread), PageSize);
@@ -94,7 +94,7 @@ void MemprofThread::TSDDtor(void *tsd) {
 }
 
 void MemprofThread::Destroy() {
-  int tid = this->tid();
+  Tid tid = this->tid();
   VReport(1, "T%d exited\n", tid);
 
   malloc_storage().CommitBack();
@@ -206,7 +206,7 @@ void SetCurrentThread(MemprofThread *t) {
   CHECK_EQ(t->context(), TSDGet());
 }
 
-u32 GetCurrentTidOrInvalid() {
+Tid GetCurrentTidOrInvalid() {
   MemprofThread *t = GetCurrentThread();
   return t ? t->tid() : kInvalidTid;
 }

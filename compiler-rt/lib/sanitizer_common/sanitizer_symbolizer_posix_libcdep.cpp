@@ -191,7 +191,7 @@ bool SymbolizerProcess::StartSymbolizerSubprocess() {
   CHECK_GT(pid, 0);
 
   // Check that symbolizer subprocess started successfully.
-  SleepForMillis(kSymbolizerStartupTimeMillis);
+  internal_usleep(10 * 1000);
   if (!IsProcessRunning(pid)) {
     // Either waitpid failed, or child has already exited.
     Report("WARNING: external symbolizer didn't start up correctly!\n");

@@ -53,7 +53,7 @@ namespace __msan {
 
 class Origin {
  public:
-  static bool isValidId(u32 id) { return id != 0 && id != (u32)-1; }
+  static bool isValidId(u32 id) { return id != 0 && id != (u32)(-1); }
 
   u32 raw_id() const { return raw_id_; }
   bool isHeapOrigin() const {
@@ -68,24 +68,24 @@ class Origin {
     // 1zzz xxxx xxxx xxxx, zzz != 000
     return (raw_id_ >> kDepthShift) > (1 << kDepthBits);
   }
-  u32 getChainedId() const {
+  StackID getChainedId() const {
     CHECK(isChainedOrigin());
-    return raw_id_ & kChainedIdMask;
+    return static_cast<StackID>(raw_id_ & kChainedIdMask);
   }
   u32 getStackId() const {
     CHECK(isStackOrigin());
     return raw_id_ & kChainedIdMask;
   }
-  u32 getHeapId() const {
+  StackID getHeapId() const {
     CHECK(isHeapOrigin());
-    return raw_id_ & kHeapIdMask;
+    return static_cast<StackID>(raw_id_ & kHeapIdMask);
   }
 
   // Returns the next origin in the chain and the current stack trace.
   Origin getNextChainedOrigin(StackTrace *stack) const {
     CHECK(isChainedOrigin());
-    u32 prev_id;
-    u32 stack_id = ChainedOriginDepotGet(getChainedId(), &prev_id);
+    StackID prev_id;
+    StackID stack_id = ChainedOriginDepotGet(getChainedId(), &prev_id);
     if (stack) *stack = StackDepotGet(stack_id);
     return Origin(prev_id);
   }
@@ -95,14 +95,14 @@ class Origin {
   }
 
   static Origin CreateStackOrigin(u32 id) {
-    CHECK((id & kStackIdMask) == id);
+    CHECK_EQ(id & kStackIdMask, id);
     return Origin((1 << kHeapShift) | id);
   }
 
   static Origin CreateHeapOrigin(StackTrace *stack) {
-    u32 stack_id = StackDepotPut(*stack);
-    CHECK(stack_id);
-    CHECK((stack_id & kHeapIdMask) == stack_id);
+    StackID stack_id = StackDepotPut(*stack);
+    CHECK_NE(stack_id, kInvalidStackID);
+    CHECK_EQ(static_cast<u32>(stack_id) & kHeapIdMask, stack_id);
     return Origin(stack_id);
   }
 
@@ -128,8 +128,10 @@ class Origin {
     }
 
     u32 chained_id;
-    bool inserted = ChainedOriginDepotPut(h.id(), prev.raw_id(), &chained_id);
-    CHECK((chained_id & kChainedIdMask) == chained_id);
+    bool inserted =
+        ChainedOriginDepotPut(h.id(), static_cast<StackID>(prev.raw_id()),
+                              reinterpret_cast<StackID *>(&chained_id));
+    CHECK_EQ(chained_id & kChainedIdMask, chained_id);
 
     if (inserted && flags()->origin_history_per_stack_limit > 0)
       h.inc_use_count_unsafe();
@@ -137,9 +139,8 @@ class Origin {
     return Origin((1 << kHeapShift) | (depth << kDepthShift) | chained_id);
   }
 
-  static Origin FromRawId(u32 id) {
-    return Origin(id);
-  }
+  explicit Origin(u32 raw_id) : raw_id_(raw_id) {}
+  explicit Origin(StackID raw_id) : raw_id_(static_cast<u32>(raw_id)) {}
 
  private:
   static const int kDepthBits = 3;
@@ -152,11 +153,9 @@ class Origin {
 
   u32 raw_id_;
 
-  explicit Origin(u32 raw_id) : raw_id_(raw_id) {}
-
   int depth() const {
     CHECK(isChainedOrigin());
-    return (raw_id_ >> kDepthShift) & ((1 << kDepthBits) - 1);
+    return (static_cast<u32>(raw_id_) >> kDepthShift) & ((1 << kDepthBits) - 1);
   }
 
  public:

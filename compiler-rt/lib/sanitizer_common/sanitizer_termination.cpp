@@ -78,7 +78,7 @@ void NORETURN CheckFailed(const char *file, int line, const char *cond,
       // Recursing into CheckFailed.
     } else {
       // Another thread fails already, let it print the stack and terminate.
-      SleepForSeconds(2);
+      internal_usleep(2 * 1000 * 1000);
     }
     Trap();
   }

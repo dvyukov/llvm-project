@@ -352,8 +352,8 @@ void ReportBadParamsToAnnotateContiguousContainer(uptr beg, uptr end,
   in_report.ReportError(error);
 }
 
-void ReportODRViolation(const __asan_global *g1, u32 stack_id1,
-                        const __asan_global *g2, u32 stack_id2) {
+void ReportODRViolation(const __asan_global *g1, StackID stack_id1,
+                        const __asan_global *g2, StackID stack_id2) {
   ScopedInErrorReport in_report;
   ErrorODRViolation error(GetCurrentTidOrInvalid(), g1, stack_id1, g2,
                           stack_id2);

@@ -42,7 +42,7 @@ enum RightAlignMode {
 static ALIGNED(16) u8 tail_magic[kShadowAlignment - 1];
 
 bool HwasanChunkView::IsAllocated() const {
-  return metadata_ && metadata_->alloc_context_id &&
+  return metadata_ && metadata_->alloc_context_id != kInvalidStackID &&
          metadata_->get_requested_size();
 }
 
@@ -64,7 +64,7 @@ uptr HwasanChunkView::End() const {
 uptr HwasanChunkView::UsedSize() const {
   return metadata_->get_requested_size();
 }
-u32 HwasanChunkView::GetAllocStackId() const {
+StackID HwasanChunkView::GetAllocStackId() const {
   return metadata_->alloc_context_id;
 }
 
@@ -199,8 +199,8 @@ static void HwasanDeallocate(StackTrace *stack, void *tagged_ptr) {
   Metadata *meta =
       reinterpret_cast<Metadata *>(allocator.GetMetaData(aligned_ptr));
   uptr orig_size = meta->get_requested_size();
-  u32 free_context_id = StackDepotPut(*stack);
-  u32 alloc_context_id = meta->alloc_context_id;
+  StackID free_context_id = StackDepotPut(*stack);
+  StackID alloc_context_id = meta->alloc_context_id;
 
   // Check tail magic.
   uptr tagged_size = TaggedSize(orig_size);
@@ -216,7 +216,7 @@ static void HwasanDeallocate(StackTrace *stack, void *tagged_ptr) {
   }
 
   meta->set_requested_size(0);
-  meta->alloc_context_id = 0;
+  meta->alloc_context_id = kInvalidStackID;
   // This memory will not be reused by anyone else, so we are free to keep it
   // poisoned.
   Thread *t = GetCurrentThread();
