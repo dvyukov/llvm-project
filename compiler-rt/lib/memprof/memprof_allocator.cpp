@@ -77,7 +77,7 @@ constexpr uptr kMaxAllowedMallocBits = 40;
 // Should be no more than 32-bytes
 struct ChunkHeader {
   // 1-st 4 bytes.
-  u32 alloc_context_id;
+  StackID alloc_context_id;
   // 2-nd 4 bytes
   u32 cpu_id;
   // 3-rd 4 bytes
@@ -200,7 +200,7 @@ struct MemInfoBlock {
     num_migrated_cpu = alloc_cpu_id != dealloc_cpu_id;
   }
 
-  void Print(u64 id) {
+  void Print(StackID id) {
     u64 p;
     if (flags()->print_terse) {
       p = total_size * 100 / alloc_count;
@@ -271,14 +271,14 @@ static u32 AccessCount = 0;
 static u32 MissCount = 0;
 
 struct SetEntry {
-  SetEntry() : id(0), MIB() {}
-  bool Empty() { return id == 0; }
+  SetEntry() : id(kInvalidStackID), MIB() {}
+  bool Empty() { return id == kInvalidStackID; }
   void Print() {
     CHECK(!Empty());
     MIB.Print(id);
   }
   // The stack id
-  u64 id;
+  StackID id;
   MemInfoBlock MIB;
 };
 
@@ -292,7 +292,7 @@ struct CacheSet {
       Entries[i].Print();
     }
   }
-  void insertOrMerge(u64 new_id, MemInfoBlock &newMIB) {
+  void insertOrMerge(StackID new_id, MemInfoBlock &newMIB) {
     AccessCount++;
     SetAccessCount++;
 
@@ -301,8 +301,8 @@ struct CacheSet {
       // Check if this is a hit or an empty entry. Since we always move any
       // filled locations to the front of the array (see below), we don't need
       // to look after finding the first empty entry.
-      if (id == new_id || !id) {
-        if (id == 0) {
+      if (id == new_id || id == kInvalidStackID) {
+        if (id == kInvalidStackID) {
           Entries[i].id = new_id;
           Entries[i].MIB = newMIB;
         } else {
@@ -370,12 +370,10 @@ struct MemInfoBlockCache {
 
   ~MemInfoBlockCache() { free(Sets); }
 
-  void insertOrMerge(u64 new_id, MemInfoBlock &newMIB) {
-    u64 hv = new_id;
-
+  void insertOrMerge(StackID new_id, MemInfoBlock &newMIB) {
     // Use mod method where number of entries should be a prime close to power
     // of 2.
-    hv %= flags()->mem_info_cache_entries;
+    uptr hv = static_cast<uptr>(new_id) % flags()->mem_info_cache_entries;
 
     return Sets[hv].insertOrMerge(new_id, newMIB);
   }

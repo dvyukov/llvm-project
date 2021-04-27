@@ -29,13 +29,13 @@ inline void DescribeThread(MemprofThread *t) {
 class MemprofThreadIdAndName {
 public:
   explicit MemprofThreadIdAndName(MemprofThreadContext *t);
-  explicit MemprofThreadIdAndName(u32 tid);
+  explicit MemprofThreadIdAndName(Tid tid);
 
   // Contains "T%tid (%name)" or "T%tid" if the name is empty.
   const char *c_str() const { return &name[0]; }
 
 private:
-  void Init(u32 tid, const char *tname);
+  void Init(Tid tid, const char *tname);
 
   char name[128];
 };

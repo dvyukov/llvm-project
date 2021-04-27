@@ -52,19 +52,16 @@ static u32 RZSize2Log(u32 rz_size) {
 static AsanAllocator &get_allocator();
 
 static void AtomicContextStore(volatile atomic_uint64_t *atomic_context,
-                               u32 tid, u32 stack) {
-  u64 context = tid;
-  context <<= 32;
-  context += stack;
+                               Tid tid, StackID stack) {
+  u64 context = static_cast<u64>(tid) << 32 | static_cast<u64>(stack);
   atomic_store(atomic_context, context, memory_order_relaxed);
 }
 
 static void AtomicContextLoad(const volatile atomic_uint64_t *atomic_context,
-                              u32 &tid, u32 &stack) {
+                              Tid &tid, StackID &stack) {
   u64 context = atomic_load(atomic_context, memory_order_relaxed);
-  stack = context;
-  context >>= 32;
-  tid = context;
+  stack = static_cast<StackID>(context);
+  tid = static_cast<Tid>(context >> 32);
 }
 
 // The memory chunk allocated from the underlying allocator looks like this:
@@ -117,11 +114,11 @@ class ChunkHeader {
     }
   }
 
-  void SetAllocContext(u32 tid, u32 stack) {
+  void SetAllocContext(Tid tid, StackID stack) {
     AtomicContextStore(&alloc_context_id, tid, stack);
   }
 
-  void GetAllocContext(u32 &tid, u32 &stack) const {
+  void GetAllocContext(Tid &tid, StackID &stack) const {
     AtomicContextLoad(&alloc_context_id, tid, stack);
   }
 };
@@ -130,11 +127,11 @@ class ChunkBase : public ChunkHeader {
   atomic_uint64_t free_context_id;
 
  public:
-  void SetFreeContext(u32 tid, u32 stack) {
+  void SetFreeContext(Tid tid, StackID stack) {
     AtomicContextStore(&free_context_id, tid, stack);
   }
 
-  void GetFreeContext(u32 &tid, u32 &stack) const {
+  void GetFreeContext(Tid &tid, StackID &stack) const {
     AtomicContextLoad(&free_context_id, tid, stack);
   }
 };
@@ -627,7 +624,7 @@ struct Allocator {
     }
     CHECK_EQ(CHUNK_ALLOCATED, old_chunk_state);
     // It was a user data.
-    m->SetFreeContext(kInvalidTid, 0);
+    m->SetFreeContext(kInvalidTid, kInvalidStackID);
     return true;
   }
 
@@ -637,7 +634,7 @@ struct Allocator {
     CHECK_EQ(atomic_load(&m->chunk_state, memory_order_relaxed),
              CHUNK_QUARANTINE);
     AsanThread *t = GetCurrentThread();
-    m->SetFreeContext(t ? t->tid() : 0, StackDepotPut(*stack));
+    m->SetFreeContext(t ? t->tid() : kInvalidTid, StackDepotPut(*stack));
 
     Flags &fl = *flags();
     if (fl.max_free_fill_size > 0) {
@@ -888,18 +885,18 @@ u32 AsanChunkView::UserRequestedAlignment() const {
   return Allocator::ComputeUserAlignment(chunk_->user_requested_alignment_log);
 }
 
-uptr AsanChunkView::AllocTid() const {
-  u32 tid = 0;
-  u32 stack = 0;
+Tid AsanChunkView::AllocTid() const {
+  Tid tid;
+  StackID stack;
   chunk_->GetAllocContext(tid, stack);
   return tid;
 }
 
-uptr AsanChunkView::FreeTid() const {
+Tid AsanChunkView::FreeTid() const {
   if (!IsQuarantined())
     return kInvalidTid;
-  u32 tid = 0;
-  u32 stack = 0;
+  Tid tid;
+  StackID stack;
   chunk_->GetFreeContext(tid, stack);
   return tid;
 }
@@ -908,25 +905,25 @@ AllocType AsanChunkView::GetAllocType() const {
   return (AllocType)chunk_->alloc_type;
 }
 
-static StackTrace GetStackTraceFromId(u32 id) {
-  CHECK(id);
+static StackTrace GetStackTraceFromId(StackID id) {
+  CHECK_NE(id, kInvalidStackID);
   StackTrace res = StackDepotGet(id);
   CHECK(res.trace);
   return res;
 }
 
-u32 AsanChunkView::GetAllocStackId() const {
-  u32 tid = 0;
-  u32 stack = 0;
+StackID AsanChunkView::GetAllocStackId() const {
+  Tid tid;
+  StackID stack;
   chunk_->GetAllocContext(tid, stack);
   return stack;
 }
 
-u32 AsanChunkView::GetFreeStackId() const {
+StackID AsanChunkView::GetFreeStackId() const {
   if (!IsQuarantined())
-    return 0;
-  u32 tid = 0;
-  u32 stack = 0;
+    return kInvalidStackID;
+  Tid tid;
+  StackID stack;
   chunk_->GetFreeContext(tid, stack);
   return stack;
 }
@@ -1157,10 +1154,10 @@ uptr LsanMetadata::requested_size() const {
   return m->UsedSize();
 }
 
-u32 LsanMetadata::stack_trace_id() const {
+StackID LsanMetadata::stack_trace_id() const {
   __asan::AsanChunk *m = reinterpret_cast<__asan::AsanChunk *>(metadata_);
-  u32 tid = 0;
-  u32 stack = 0;
+  Tid tid;
+  StackID stack;
   m->GetAllocContext(tid, stack);
   return stack;
 }

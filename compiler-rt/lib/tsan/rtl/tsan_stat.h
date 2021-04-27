@@ -49,9 +49,6 @@ enum StatType {
   // Threads.
   StatThreadCreate,
   StatThreadFinish,
-  StatThreadReuse,
-  StatThreadMaxTid,
-  StatThreadMaxAlive,
 
   // Mutexes.
   StatMutexCreate,
@@ -164,23 +161,6 @@ enum StatType {
   Stat__tsan_mutex_post_signal,
   Stat__tsan_mutex_pre_divert,
   Stat__tsan_mutex_post_divert,
-
-  // Internal mutex contentionz.
-  StatMtxTotal,
-  StatMtxTrace,
-  StatMtxThreads,
-  StatMtxReport,
-  StatMtxSyncVar,
-  StatMtxSyncTab,
-  StatMtxSlab,
-  StatMtxAnnotations,
-  StatMtxAtExit,
-  StatMtxMBlock,
-  StatMtxDeadlockDetector,
-  StatMtxFired,
-  StatMtxRacy,
-  StatMtxFD,
-  StatMtxGlobalProc,
 
   // This must be the last.
   StatCnt

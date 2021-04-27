@@ -25,6 +25,8 @@ void EnterSymbolizer() {
   ThreadState *thr = cur_thread();
   CHECK(!thr->in_symbolizer);
   thr->in_symbolizer = true;
+  CHECK(!thr->ignore_funcs_);
+  thr->ignore_funcs_ = true;
   thr->ignore_interceptors++;
 }
 
@@ -32,6 +34,8 @@ void ExitSymbolizer() {
   ThreadState *thr = cur_thread();
   CHECK(thr->in_symbolizer);
   thr->in_symbolizer = false;
+  CHECK(thr->ignore_funcs_);
+  thr->ignore_funcs_ = false;
   thr->ignore_interceptors--;
 }
 
@@ -81,36 +85,37 @@ static void AddFrame(void *ctx, const char *function_name, const char *file,
 
 SymbolizedStack *SymbolizeCode(uptr addr) {
   // Check if PC comes from non-native land.
-  if (addr & kExternalPCBit) {
-    SymbolizedStackBuilder ssb = {nullptr, nullptr, addr};
-    __tsan_symbolize_external_ex(addr, AddFrame, &ssb);
-    if (ssb.head)
-      return ssb.head;
-    // Legacy code: remove along with the declaration above
-    // once all clients using this API are gone.
-    // Declare static to not consume too much stack space.
-    // We symbolize reports in a single thread, so this is fine.
-    static char func_buf[1024];
-    static char file_buf[1024];
-    int line, col;
-    SymbolizedStack *frame = SymbolizedStack::New(addr);
-    if (__tsan_symbolize_external(addr, func_buf, sizeof(func_buf), file_buf,
-                                  sizeof(file_buf), &line, &col)) {
-      frame->info.function = internal_strdup(func_buf);
-      frame->info.file = internal_strdup(file_buf);
-      frame->info.line = line;
-      frame->info.column = col;
-    }
-    return frame;
+  if (!(addr & kExternalPCBit))
+    return Symbolizer::GetOrInit()->SymbolizePC(addr);
+  ExternalCallback cb;
+  SymbolizedStackBuilder ssb = {nullptr, nullptr, addr};
+  __tsan_symbolize_external_ex(addr, AddFrame, &ssb);
+  if (ssb.head)
+    return ssb.head;
+  // Legacy code: remove along with the declaration above
+  // once all clients using this API are gone.
+  // Declare static to not consume too much stack space.
+  // We symbolize reports in a single thread, so this is fine.
+  static char func_buf[1024];
+  static char file_buf[1024];
+  int line, col;
+  SymbolizedStack *frame = SymbolizedStack::New(addr);
+  if (__tsan_symbolize_external(addr, func_buf, sizeof(func_buf), file_buf,
+                                sizeof(file_buf), &line, &col)) {
+    frame->info.function = internal_strdup(func_buf);
+    frame->info.file = internal_strdup(file_buf);
+    frame->info.line = line;
+    frame->info.column = col;
   }
-  return Symbolizer::GetOrInit()->SymbolizePC(addr);
+  return frame;
 }
 
 ReportLocation *SymbolizeData(uptr addr) {
   DataInfo info;
   if (!Symbolizer::GetOrInit()->SymbolizeData(addr, &info))
-    return 0;
-  ReportLocation *ent = ReportLocation::New(ReportLocationGlobal);
+    return nullptr;
+  auto ent = New<ReportLocation>();
+  ent->type = ReportLocationGlobal;
   internal_memcpy(&ent->global, &info, sizeof(info));
   return ent;
 }

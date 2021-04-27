@@ -21,19 +21,9 @@ namespace __tsan {
 
 ReportStack::ReportStack() : frames(nullptr), suppressable(false) {}
 
-ReportStack *ReportStack::New() {
-  void *mem = internal_alloc(MBlockReportStack, sizeof(ReportStack));
-  return new(mem) ReportStack();
-}
-
-ReportLocation::ReportLocation(ReportLocationType type)
-    : type(type), global(), heap_chunk_start(0), heap_chunk_size(0), tid(0),
+ReportLocation::ReportLocation()
+    : type(ReportLocationInvalid), global(), heap_chunk_start(0), heap_chunk_size(0), tid(kInvalidTid),
       fd(0), suppressable(false), stack(nullptr) {}
-
-ReportLocation *ReportLocation::New(ReportLocationType type) {
-  void *mem = internal_alloc(MBlockReportStack, sizeof(ReportLocation));
-  return new(mem) ReportLocation(type);
-}
 
 class Decorator: public __sanitizer::SanitizerCommonDecorator {
  public:
@@ -68,7 +58,7 @@ ReportDesc::~ReportDesc() {
 #if !SANITIZER_GO
 
 const int kThreadBufSize = 32;
-const char *thread_name(char *buf, int tid) {
+const char *thread_name(char *buf, Tid tid) {
   if (tid == kMainTid)
     return "main thread";
   internal_snprintf(buf, kThreadBufSize, "thread T%d", tid);
@@ -142,7 +132,7 @@ static void PrintMutexSet(Vector<ReportMopMutex> const& mset) {
     if (i == 0)
       Printf(" (mutexes:");
     const ReportMopMutex m = mset[i];
-    Printf(" %s M%llu", m.write ? "write" : "read", m.id);
+    Printf(" %s M%d", m.write ? "write" : "read", m.id);
     Printf(i == mset.Size() - 1 ? ")" : ",");
   }
 }
@@ -225,27 +215,21 @@ static void PrintLocation(const ReportLocation *loc) {
 
 static void PrintMutexShort(const ReportMutex *rm, const char *after) {
   Decorator d;
-  Printf("%sM%zd%s%s", d.Mutex(), rm->id, d.Default(), after);
+  Printf("%sM%d%s%s", d.Mutex(), rm->id, d.Default(), after);
 }
 
 static void PrintMutexShortWithAddress(const ReportMutex *rm,
                                        const char *after) {
   Decorator d;
-  Printf("%sM%zd (%p)%s%s", d.Mutex(), rm->id, rm->addr, d.Default(), after);
+  Printf("%sM%d (%p)%s%s", d.Mutex(), rm->id, rm->addr, d.Default(), after);
 }
 
 static void PrintMutex(const ReportMutex *rm) {
   Decorator d;
-  if (rm->destroyed) {
-    Printf("%s", d.Mutex());
-    Printf("  Mutex M%llu is already destroyed.\n\n", rm->id);
-    Printf("%s", d.Default());
-  } else {
-    Printf("%s", d.Mutex());
-    Printf("  Mutex M%llu (%p) created at:\n", rm->id, rm->addr);
-    Printf("%s", d.Default());
-    PrintStack(rm->stack);
-  }
+  Printf("%s", d.Mutex());
+  Printf("  Mutex M%d (%p) created at:\n", rm->id, rm->addr);
+  Printf("%s", d.Default());
+  PrintStack(rm->stack);
 }
 
 static void PrintThread(const ReportThread *rt) {
@@ -382,8 +366,11 @@ void PrintReport(const ReportDesc *rep) {
     Printf("  And %d more similar thread leaks.\n\n", rep->count - 1);
 
   if (ReportStack *stack = ChooseSummaryStack(rep)) {
-    if (SymbolizedStack *frame = SkipTsanInternalFrames(stack->frames))
+    if (SymbolizedStack *frame = SkipTsanInternalFrames(stack->frames)) {
+      // ReportErrorSummary calls __sanitizer_report_error_summary.
+      ExternalCallback cb;
       ReportErrorSummary(rep_typ_str, frame->info);
+    }
   }
 
   if (common_flags()->print_module_map == 2)
@@ -394,7 +381,7 @@ void PrintReport(const ReportDesc *rep) {
 
 #else  // #if !SANITIZER_GO
 
-const u32 kMainGoroutineId = 1;
+const Tid kMainGoroutineId = static_cast<Tid>(1);
 
 void PrintStack(const ReportStack *ent) {
   if (ent == 0 || ent->frames == 0) {
@@ -469,13 +456,12 @@ void PrintReport(const ReportDesc *rep) {
   } else if (rep->typ == ReportTypeDeadlock) {
     Printf("WARNING: DEADLOCK\n");
     for (uptr i = 0; i < rep->mutexes.Size(); i++) {
+      uptr next = (i+1) % rep->mutexes.Size();
       Printf("Goroutine %d lock mutex %d while holding mutex %d:\n",
-          999, rep->mutexes[i]->id,
-          rep->mutexes[(i+1) % rep->mutexes.Size()]->id);
+          999, i, next);
       PrintStack(rep->stacks[2*i]);
       Printf("\n");
-      Printf("Mutex %d was previously locked here:\n",
-          rep->mutexes[(i+1) % rep->mutexes.Size()]->id);
+      Printf("Mutex %d was previously locked here:\n", next);
       PrintStack(rep->stacks[2*i + 1]);
       Printf("\n");
     }

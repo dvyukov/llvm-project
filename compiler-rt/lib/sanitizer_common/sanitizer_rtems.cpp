@@ -69,10 +69,6 @@ void Abort() { abort(); }
 
 int Atexit(void (*function)(void)) { return atexit(function); }
 
-void SleepForSeconds(int seconds) { sleep(seconds); }
-
-void SleepForMillis(int millis) { usleep(millis * 1000); }
-
 bool SupportsColoredOutput(fd_t fd) { return false; }
 
 void GetThreadStackTopAndBottom(bool at_initialization,

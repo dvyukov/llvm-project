@@ -27,22 +27,14 @@ namespace __tsan {
 #if SANITIZER_DEBUG && !SANITIZER_GO
 const MutexType MutexTypeLeaf = (MutexType)-1;
 static MutexType CanLockTab[MutexTypeCount][MutexTypeCount] = {
-  /*0  MutexTypeInvalid*/     {},
-  /*1  MutexTypeTrace*/       {MutexTypeLeaf},
-  /*2  MutexTypeThreads*/     {MutexTypeReport},
-  /*3  MutexTypeReport*/      {MutexTypeSyncVar,
-                               MutexTypeMBlock, MutexTypeJavaMBlock},
-  /*4  MutexTypeSyncVar*/     {MutexTypeDDetector},
-  /*5  MutexTypeSyncTab*/     {},  // unused
-  /*6  MutexTypeSlab*/        {MutexTypeLeaf},
-  /*7  MutexTypeAnnotations*/ {},
-  /*8  MutexTypeAtExit*/      {MutexTypeSyncVar},
-  /*9  MutexTypeMBlock*/      {MutexTypeSyncVar},
-  /*10 MutexTypeJavaMBlock*/  {MutexTypeSyncVar},
-  /*11 MutexTypeDDetector*/   {},
-  /*12 MutexTypeFired*/       {MutexTypeLeaf},
-  /*13 MutexTypeRacy*/        {MutexTypeLeaf},
-  /*14 MutexTypeGlobalProc*/  {},
+  /*MutexTypeInvalid*/ {},
+  /*MutexTypeReport*/ {MutexTypeSyncVar},
+  /*MutexTypeSyncVar*/ {},
+  /*MutexTypeAnnotations*/ {},
+  /*MutexTypeFired*/ {MutexTypeLeaf},
+  /*MutexTypeRacy*/ {MutexTypeLeaf},
+  /*MutexTypeGlobalProc*/ {},
+  /*MutexTypeTraceAlloc*/ {},
 };
 
 static bool CanLockAdj[MutexTypeCount][MutexTypeCount];
@@ -165,14 +157,14 @@ void InternalDeadlockDetector::Unlock(MutexType t) {
 }
 
 void InternalDeadlockDetector::CheckNoLocks() {
-  for (int i = 0; i != MutexTypeCount; i++) {
+  for (int i = MutexTypeInvalid + 1; i != MutexTypeCount; i++)
     CHECK_EQ(locked_[i], 0);
-  }
 }
 #endif
 
-void CheckNoLocks(ThreadState *thr) {
+void DebugCheckNoLocks() {
 #if SANITIZER_DEBUG && !SANITIZER_GO
+  ThreadState* thr = cur_thread();
   thr->internal_deadlock_detector.CheckNoLocks();
 #endif
 }
@@ -207,14 +199,11 @@ class Backoff {
   static const int kActiveSpinCnt = 20;
 };
 
-Mutex::Mutex(MutexType type, StatType stat_type) {
+Mutex::Mutex(MutexType type) {
   CHECK_GT(type, MutexTypeInvalid);
   CHECK_LT(type, MutexTypeCount);
 #if SANITIZER_DEBUG
   type_ = type;
-#endif
-#if TSAN_COLLECT_STATS
-  stat_type_ = stat_type;
 #endif
   atomic_store(&state_, kUnlocked, memory_order_relaxed);
 }
@@ -236,9 +225,6 @@ void Mutex::Lock() {
       cmp = kUnlocked;
       if (atomic_compare_exchange_weak(&state_, &cmp, kWriteLock,
                                        memory_order_acquire)) {
-#if TSAN_COLLECT_STATS && !SANITIZER_GO
-        StatInc(cur_thread(), stat_type_, backoff.Contention());
-#endif
         return;
       }
     }
@@ -264,9 +250,6 @@ void Mutex::ReadLock() {
   for (Backoff backoff; backoff.Do();) {
     prev = atomic_load(&state_, memory_order_acquire);
     if ((prev & kWriteLock) == 0) {
-#if TSAN_COLLECT_STATS && !SANITIZER_GO
-      StatInc(cur_thread(), stat_type_, backoff.Contention());
-#endif
       return;
     }
   }

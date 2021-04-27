@@ -3357,7 +3357,9 @@ INTERCEPTOR(char *, setlocale, int category, char *locale) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, locale, REAL(strlen)(locale) + 1);
   char *res = REAL(setlocale)(category, locale);
   if (res) {
-    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+    // res can be in .rodata, we can't write into .rodata.
+    // did we intend to just msan-unpoison here?
+    //!!! COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, REAL(strlen)(res) + 1);
     unpoison_ctype_arrays(ctx);
   }
   return res;
@@ -4251,7 +4253,7 @@ INTERCEPTOR(int, pthread_mutex_lock, void *m) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, pthread_mutex_lock, m);
   COMMON_INTERCEPTOR_MUTEX_PRE_LOCK(ctx, m);
-  int res = REAL(pthread_mutex_lock)(m);
+  int res = COMMON_INTERCEPTOR_BLOCK_REAL(pthread_mutex_lock)(m);
   if (res == errno_EOWNERDEAD)
     COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m);
   if (res == 0 || res == errno_EOWNERDEAD)
@@ -6463,7 +6465,7 @@ INTERCEPTOR(int, sem_wait, __sanitizer_sem_t *s) {
 INTERCEPTOR(int, sem_trywait, __sanitizer_sem_t *s) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, sem_trywait, s);
-  int res = COMMON_INTERCEPTOR_BLOCK_REAL(sem_trywait)(s);
+  int res = REAL(sem_trywait)(s);
   if (res == 0) {
     COMMON_INTERCEPTOR_ACQUIRE(ctx, (uptr)s);
   }
@@ -6907,6 +6909,7 @@ INTERCEPTOR(int, getloadavg, double *loadavg, int nelem) {
 #define INIT_GETLOADAVG
 #endif
 
+/*
 #if SANITIZER_INTERCEPT_MCHECK_MPROBE
 INTERCEPTOR(int, mcheck, void (*abortfunc)(int mstatus)) {
   return 0;
@@ -6920,6 +6923,7 @@ INTERCEPTOR(int, mprobe, void *ptr) {
   return 0;
 }
 #endif
+*/
 
 INTERCEPTOR(SIZE_T, wcslen, const wchar_t *s) {
   void *ctx;

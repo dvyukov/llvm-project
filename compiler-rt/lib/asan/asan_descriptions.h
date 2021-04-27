@@ -29,13 +29,13 @@ static inline void DescribeThread(AsanThread *t) {
 class AsanThreadIdAndName {
  public:
   explicit AsanThreadIdAndName(AsanThreadContext *t);
-  explicit AsanThreadIdAndName(u32 tid);
+  explicit AsanThreadIdAndName(Tid tid);
 
   // Contains "T%tid (%name)" or "T%tid" if the name is empty.
   const char *c_str() const { return &name[0]; }
 
  private:
-  void Init(u32 tid, const char *tname);
+  void Init(Tid tid, const char *tname);
 
   char name[128];
 };
@@ -119,10 +119,10 @@ struct ChunkAccess {
 
 struct HeapAddressDescription {
   uptr addr;
-  uptr alloc_tid;
-  uptr free_tid;
-  u32 alloc_stack_id;
-  u32 free_stack_id;
+  Tid alloc_tid;
+  Tid free_tid;
+  StackID alloc_stack_id;
+  StackID free_stack_id;
   ChunkAccess chunk_access;
 
   void Print() const;
@@ -134,7 +134,7 @@ bool DescribeAddressIfHeap(uptr addr, uptr access_size = 1);
 
 struct StackAddressDescription {
   uptr addr;
-  uptr tid;
+  Tid tid;
   uptr offset;
   uptr frame_pc;
   uptr access_size;
@@ -158,7 +158,7 @@ struct GlobalAddressDescription {
   // Assume address is close to at most four globals.
   static const int kMaxGlobals = 4;
   __asan_global globals[kMaxGlobals];
-  u32 reg_sites[kMaxGlobals];
+  StackID reg_sites[kMaxGlobals];
   uptr access_size;
   u8 size;
 

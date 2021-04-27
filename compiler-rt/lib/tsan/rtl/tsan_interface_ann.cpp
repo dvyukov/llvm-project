@@ -38,7 +38,7 @@ class ScopedAnnotation {
 
   ~ScopedAnnotation() {
     FuncExit(thr_);
-    CheckNoLocks(thr_);
+    CheckNoLocks();
   }
  private:
   ThreadState *const thr_;
@@ -78,7 +78,7 @@ struct DynamicAnnContext {
   ExpectRace benign;
 
   DynamicAnnContext()
-    : mtx(MutexTypeAnnotations, StatMtxAnnotations) {
+    : mtx(MutexTypeAnnotations) {
   }
 };
 
@@ -95,7 +95,7 @@ static void AddExpectRace(ExpectRace *list,
       return;
     }
   }
-  race = (ExpectRace*)internal_alloc(MBlockExpectRace, sizeof(ExpectRace));
+  race = New<ExpectRace>();
   race->addr = addr;
   race->size = size;
   race->file = f;
@@ -311,7 +311,7 @@ void INTERFACE_ATTRIBUTE AnnotateFlushExpectedRaces(char *f, int l) {
     }
     race->prev->next = race->next;
     race->next->prev = race->prev;
-    internal_free(race);
+    Free(race);
   }
 }
 
