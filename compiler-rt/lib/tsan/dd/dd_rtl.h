@@ -34,7 +34,7 @@ struct Callback final : public DDCallback {
   Thread *thr;
 
   Callback(Thread *thr);
-  u32 Unwind() override;
+  StackID Unwind() override;
 };
 
 typedef AddrHashMap<Mutex, 31051> MutexHashMap;

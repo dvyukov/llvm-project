@@ -18,6 +18,19 @@
 #include "tsan_stat.h"
 #include "ubsan/ubsan_platform.h"
 
+#ifdef __SSE3__
+// <emmintrin.h> transitively includes <stdlib.h>,
+// and it's prohibited to include std headers into tsan runtime.
+// So we do this dirty trick.
+#define _MM_MALLOC_H_INCLUDED
+#define __MM_MALLOC_H
+#include <emmintrin.h>
+typedef __m128i m128;
+#define VECTOR_ALIGNED ALIGNED(16)
+#else
+#define VECTOR_ALIGNED
+#endif
+
 // Setup defaults for compile definitions.
 #ifndef TSAN_NO_HISTORY
 # define TSAN_NO_HISTORY 0
@@ -37,40 +50,12 @@
 
 namespace __tsan {
 
-const int kClkBits = 42;
-const unsigned kMaxTidReuse = (1 << (64 - kClkBits)) - 1;
+enum class Sid : u8 {};
+enum class Epoch : u16 {};
 
-struct ClockElem {
-  u64 epoch  : kClkBits;
-  u64 reused : 64 - kClkBits;  // tid reuse count
-};
-
-struct ClockBlock {
-  static const uptr kSize = 512;
-  static const uptr kTableSize = kSize / sizeof(u32);
-  static const uptr kClockCount = kSize / sizeof(ClockElem);
-  static const uptr kRefIdx = kTableSize - 1;
-  static const uptr kBlockIdx = kTableSize - 2;
-
-  union {
-    u32       table[kTableSize];
-    ClockElem clock[kClockCount];
-  };
-
-  ClockBlock() {
-  }
-};
-
-const int kTidBits = 13;
-// Reduce kMaxTid by kClockCount because one slot in ClockBlock table is
-// occupied by reference counter, so total number of elements we can store
-// in SyncClock is kClockCount * (kTableSize - 1).
-const unsigned kMaxTid = (1 << kTidBits) - ClockBlock::kClockCount;
-#if !SANITIZER_GO
-const unsigned kMaxTidInClock = kMaxTid * 2;  // This includes msb 'freed' bit.
-#else
-const unsigned kMaxTidInClock = kMaxTid;  // Go does not track freed memory.
-#endif
+const Epoch kLastEpoch = static_cast<Epoch>(-1);
+const int kByteBits = 8;
+const uptr kMaxSid = 1 << (sizeof(Sid) * kByteBits);
 const uptr kShadowStackSize = 64 * 1024;
 
 // Count of shadow values in a shadow cell.
@@ -79,8 +64,12 @@ const uptr kShadowCnt = 4;
 // That many user bytes are mapped onto a single shadow cell.
 const uptr kShadowCell = 8;
 
-// Size of a single shadow value (u64).
-const uptr kShadowSize = 8;
+// Size of a single shadow value (u32).
+const uptr kShadowSize = 4;
+typedef u32 RawShadow; //!!! strong typedef
+
+// .rodata shadow marker, see MapRodata and ContainsSameAccessFast.
+const RawShadow kShadowRodata = 1<<10;
 
 // Shadow memory is kShadowMultiplier times larger than user memory.
 const uptr kShadowMultiplier = kShadowSize * kShadowCnt / kShadowCell;
@@ -97,8 +86,6 @@ const bool kCollectHistory = false;
 #else
 const bool kCollectHistory = true;
 #endif
-
-const u16 kInvalidTid = kMaxTid + 1;
 
 // The following "build consistency" machinery ensures that all source files
 // are built in the same configuration. Inconsistent builds lead to
@@ -156,16 +143,10 @@ T GetLsb(T v, int bits) {
   return (T)((u64)v & ((1ull << bits) - 1));
 }
 
-struct MD5Hash {
-  u64 hash[2];
-  bool operator==(const MD5Hash &other) const;
-};
-
-MD5Hash md5_hash(const void *data, uptr size);
-
 struct Processor;
 struct ThreadState;
 class ThreadContext;
+struct TidSlot;
 struct Context;
 struct ReportStack;
 class ReportDesc;
@@ -175,11 +156,10 @@ class RegionAlloc;
 struct MBlock {
   u64  siz : 48;
   u64  tag : 16;
-  u32  stk;
-  u16  tid;
+  StackID  stk;
+  Tid  tid;
 };
-
-COMPILER_CHECK(sizeof(MBlock) == 16);
+static_assert(sizeof(MBlock) == 16, "bad MBlock size");
 
 enum ExternalTag : uptr {
   kExternalTagNone = 0,
@@ -188,6 +168,11 @@ enum ExternalTag : uptr {
   kExternalTagMax = 1024,
   // Don't set kExternalTagMax over 65,536, since MBlock only stores tags
   // as 16-bit values, see tsan_defs.h.
+};
+
+struct MD5Hash {
+  u64 hash[2];
+  bool operator==(const MD5Hash &other) const;
 };
 
 }  // namespace __tsan

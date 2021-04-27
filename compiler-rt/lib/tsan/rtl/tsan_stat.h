@@ -49,9 +49,6 @@ enum StatType {
   // Threads.
   StatThreadCreate,
   StatThreadFinish,
-  StatThreadReuse,
-  StatThreadMaxTid,
-  StatThreadMaxAlive,
 
   // Mutexes.
   StatMutexCreate,
@@ -181,6 +178,7 @@ enum StatType {
   StatMtxRacy,
   StatMtxFD,
   StatMtxGlobalProc,
+  StatMtxTraceAlloc,
 
   // This must be the last.
   StatCnt

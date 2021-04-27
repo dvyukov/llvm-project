@@ -21,7 +21,7 @@
 
 namespace __lsan {
 
-ThreadContext::ThreadContext(int tid) : ThreadContextLsanBase(tid) {}
+ThreadContext::ThreadContext(Tid tid) : ThreadContextLsanBase(tid) {}
 
 struct OnStartedArgs {
   uptr stack_begin;
@@ -44,11 +44,11 @@ void ThreadContext::OnStarted(void *arg) {
   dtls_ = args->dtls;
 }
 
-void ThreadStart(u32 tid, tid_t os_id, ThreadType thread_type) {
+void ThreadStart(Tid tid, tid_t os_id, ThreadType thread_type) {
   OnStartedArgs args;
   uptr stack_size = 0;
   uptr tls_size = 0;
-  GetThreadStackAndTls(tid == 0, &args.stack_begin, &stack_size,
+  GetThreadStackAndTls(tid == kMainTid, &args.stack_begin, &stack_size,
                        &args.tls_begin, &tls_size);
   args.stack_end = args.stack_begin + stack_size;
   args.tls_end = args.tls_begin + tls_size;
@@ -75,8 +75,8 @@ bool GetThreadRangesLocked(tid_t os_id, uptr *stack_begin, uptr *stack_end,
 }
 
 void InitializeMainThread() {
-  u32 tid = ThreadCreate(0, 0, true);
-  CHECK_EQ(tid, 0);
+  Tid tid = ThreadCreate(kMainTid, 0, true);
+  CHECK_EQ(tid, kMainTid);
   ThreadStart(tid, GetTid());
 }
 

@@ -43,7 +43,7 @@ static ThreadRegistry *memprof_thread_registry;
 static BlockingMutex mu_for_thread_context(LINKER_INITIALIZED);
 static LowLevelAllocator allocator_for_thread_context;
 
-static ThreadContextBase *GetMemprofThreadContext(u32 tid) {
+static ThreadContextBase *GetMemprofThreadContext(Tid tid) {
   BlockingMutexLock lock(&mu_for_thread_context);
   return new (allocator_for_thread_context) MemprofThreadContext(tid);
 }
@@ -58,13 +58,13 @@ ThreadRegistry &memprofThreadRegistry() {
     // be called. It would be wrong to reuse MemprofThreadContext for another
     // thread before all TSD destructors will be called for it.
     memprof_thread_registry = new (thread_registry_placeholder) ThreadRegistry(
-        GetMemprofThreadContext, kMaxNumberOfThreads, kMaxNumberOfThreads);
+        GetMemprofThreadContext);
     initialized = true;
   }
   return *memprof_thread_registry;
 }
 
-MemprofThreadContext *GetThreadContextByTidLocked(u32 tid) {
+MemprofThreadContext *GetThreadContextByTidLocked(Tid tid) {
   return static_cast<MemprofThreadContext *>(
       memprofThreadRegistry().GetThreadLocked(tid));
 }
@@ -72,7 +72,7 @@ MemprofThreadContext *GetThreadContextByTidLocked(u32 tid) {
 // MemprofThread implementation.
 
 MemprofThread *MemprofThread::Create(thread_callback_t start_routine, void *arg,
-                                     u32 parent_tid, StackTrace *stack,
+                                     Tid parent_tid, StackTrace *stack,
                                      bool detached) {
   uptr PageSize = GetPageSizeCached();
   uptr size = RoundUpTo(sizeof(MemprofThread), PageSize);
@@ -94,7 +94,7 @@ void MemprofThread::TSDDtor(void *tsd) {
 }
 
 void MemprofThread::Destroy() {
-  int tid = this->tid();
+  Tid tid = this->tid();
   VReport(1, "T%d exited\n", tid);
 
   malloc_storage().CommitBack();
@@ -156,7 +156,7 @@ MemprofThread::ThreadStart(tid_t os_id,
 
 MemprofThread *CreateMainThread() {
   MemprofThread *main_thread = MemprofThread::Create(
-      /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ 0,
+      /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ kMainTid,
       /* stack */ nullptr, /* detached */ true);
   SetCurrentThread(main_thread);
   main_thread->ThreadStart(internal_getpid(),
@@ -171,7 +171,7 @@ void MemprofThread::SetThreadStackAndTls(const InitOptions *options) {
   DCHECK_EQ(options, nullptr);
   uptr tls_size = 0;
   uptr stack_size = 0;
-  GetThreadStackAndTls(tid() == 0, &stack_bottom_, &stack_size, &tls_begin_,
+  GetThreadStackAndTls(tid() == kMainTid, &stack_bottom_, &stack_size, &tls_begin_,
                        &tls_size);
   stack_top_ = stack_bottom_ + stack_size;
   tls_end_ = tls_begin_ + tls_size;
@@ -206,7 +206,7 @@ void SetCurrentThread(MemprofThread *t) {
   CHECK_EQ(t->context(), TSDGet());
 }
 
-u32 GetCurrentTidOrInvalid() {
+Tid GetCurrentTidOrInvalid() {
   MemprofThread *t = GetCurrentThread();
   return t ? t->tid() : kInvalidTid;
 }
@@ -214,7 +214,7 @@ u32 GetCurrentTidOrInvalid() {
 void EnsureMainThreadIDIsCorrect() {
   MemprofThreadContext *context =
       reinterpret_cast<MemprofThreadContext *>(TSDGet());
-  if (context && (context->tid == 0))
+  if (context && (context->tid == kMainTid))
     context->os_id = GetTid();
 }
 } // namespace __memprof

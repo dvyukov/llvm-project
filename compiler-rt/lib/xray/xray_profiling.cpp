@@ -329,7 +329,7 @@ XRayLogInitStatus profilingFinalize() XRAY_NEVER_INSTRUMENT {
   BQ->finalize();
 
   // Wait a grace period to allow threads to see that we're finalizing.
-  SleepForMillis(profilingFlags()->grace_period_ms);
+  internal_usleep(profilingFlags()->grace_period_ms * 1000);
 
   // If we for some reason are entering this function from an instrumented
   // handler, we bail out.

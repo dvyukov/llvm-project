@@ -7,6 +7,7 @@
 
 int bench_nthread;
 int bench_niter;
+int bench_mode;
 int grow_clock_var;
 pthread_barrier_t glow_clock_barrier;
 
@@ -21,6 +22,8 @@ int main(int argc, char **argv) {
   bench_niter = 100;
   if (argc > 2)
     bench_niter = atoi(argv[2]);
+  if (argc > 3)
+    bench_mode = atoi(argv[3]);
 
   // Grow thread's clock.
   int clock_size = 10;
