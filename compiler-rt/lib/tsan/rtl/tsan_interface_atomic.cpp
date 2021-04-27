@@ -230,13 +230,13 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
   // Don't create sync object if it does not exist yet. For example, an atomic
   // pointer is initialized to nullptr and then periodically acquire-loaded.
   T v = NoTsanAtomicLoad(a, mo);
-  SyncVar *s = ctx->metamap.GetIfExistsAndLock((uptr)a, false);
+  SyncVar* s = ctx->metamap.GetIfExists((uptr)a);
   if (s) {
-    AcquireImpl(thr, pc, &s->clock);
+    ReadLock lock(&s->mtx);
+    AcquireImpl(thr, pc, s->clock);
     // Re-read under sync mutex because we need a consistent snapshot
     // of the value and the clock we acquire.
     v = NoTsanAtomicLoad(a, mo);
-    s->mtx.ReadUnlock();
   }
   MemoryReadAtomic(thr, pc, (uptr)a, SizeLog<T>());
   return v;
@@ -268,13 +268,13 @@ static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
     return;
   }
   __sync_synchronize();
-  SyncVar *s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, true);
-  thr->fast_state.IncrementEpoch();
-  // Can't increment epoch w/o writing to the trace as well.
-  TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
-  ReleaseStoreImpl(thr, pc, &s->clock);
-  NoTsanAtomicStore(a, v, mo);
-  s->mtx.Unlock();
+  SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
+  {
+    Lock lock(&s->mtx);
+    ReleaseStoreImpl(thr, pc, &s->clock);
+    NoTsanAtomicStore(a, v, mo);
+  }
+  IncrementEpoch(thr, pc);
 }
 
 template<typename T, T (*F)(volatile T *v, T op)>
@@ -282,20 +282,27 @@ static T AtomicRMW(ThreadState *thr, uptr pc, volatile T *a, T v, morder mo) {
   MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
   SyncVar *s = 0;
   if (mo != mo_relaxed) {
-    s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, true);
-    thr->fast_state.IncrementEpoch();
-    // Can't increment epoch w/o writing to the trace as well.
-    TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
+    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
+    if (IsReleaseOrder(mo))
+      s->mtx.Lock();
+    else
+      s->mtx.ReadLock();
     if (IsAcqRelOrder(mo))
-      AcquireReleaseImpl(thr, pc, &s->clock);
+      ReleaseAcquireImpl(thr, pc, &s->clock);
     else if (IsReleaseOrder(mo))
       ReleaseImpl(thr, pc, &s->clock);
     else if (IsAcquireOrder(mo))
-      AcquireImpl(thr, pc, &s->clock);
+      AcquireImpl(thr, pc, s->clock);
   }
   v = F(a, v);
-  if (s)
-    s->mtx.Unlock();
+  if (s) {
+    if (IsReleaseOrder(mo))
+      s->mtx.Unlock();
+    else
+      s->mtx.ReadUnlock();
+  }
+  if (IsReleaseOrder(mo))
+    IncrementEpoch(thr, pc);
   return v;
 }
 
@@ -411,8 +418,13 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   SyncVar *s = 0;
   bool write_lock = IsReleaseOrder(mo);
 
-  if (mo != mo_relaxed || fmo != mo_relaxed)
-    s = ctx->metamap.GetOrCreateAndLock(thr, pc, (uptr)a, write_lock);
+  if (mo != mo_relaxed || fmo != mo_relaxed) {
+    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
+    if (write_lock)
+      s->mtx.Lock();
+    else
+      s->mtx.ReadLock();
+  }
 
   T cc = *c;
   T pr = func_cas(a, cc, v);
@@ -423,22 +435,21 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   }
 
   if (s) {
-    thr->fast_state.IncrementEpoch();
-    // Can't increment epoch w/o writing to the trace as well.
-    TraceAddEvent(thr, thr->fast_state, EventTypeMop, 0);
-
     if (success && IsAcqRelOrder(mo))
-      AcquireReleaseImpl(thr, pc, &s->clock);
+      ReleaseAcquireImpl(thr, pc, &s->clock);
     else if (success && IsReleaseOrder(mo))
       ReleaseImpl(thr, pc, &s->clock);
     else if (IsAcquireOrder(mo))
-      AcquireImpl(thr, pc, &s->clock);
+      AcquireImpl(thr, pc, s->clock);
 
     if (write_lock)
       s->mtx.Unlock();
     else
       s->mtx.ReadUnlock();
   }
+
+  if (write_lock)
+    IncrementEpoch(thr, pc);
 
   return success;
 }
@@ -483,31 +494,37 @@ static morder convert_morder(morder mo) {
   return (morder)(mo & 0x7fff);
 }
 
-#define SCOPED_ATOMIC(func, ...) \
-    ThreadState *const thr = cur_thread(); \
-    if (UNLIKELY(thr->ignore_sync || thr->ignore_interceptors)) { \
-      ProcessPendingSignals(thr); \
-      return NoTsanAtomic##func(__VA_ARGS__); \
-    } \
-    const uptr callpc = (uptr)__builtin_return_address(0); \
-    uptr pc = StackTrace::GetCurrentPc(); \
-    mo = convert_morder(mo); \
-    AtomicStatInc(thr, sizeof(*a), mo, StatAtomic##func); \
-    ScopedAtomic sa(thr, callpc, a, mo, __func__); \
-    return Atomic##func(thr, pc, __VA_ARGS__); \
-/**/
+#  define SCOPED_ATOMIC(func, ...)                                             \
+    ThreadState* const thr = cur_thread();                                     \
+    if (UNLIKELY(thr->ignore_sync || thr->ignore_interceptors)) {              \
+      ProcessPendingSignals(thr);                                              \
+      return NoTsanAtomic##func(__VA_ARGS__);                                  \
+    }                                                                          \
+    const uptr callpc = (uptr)__builtin_return_address(0);                     \
+    uptr pc = StackTrace::GetCurrentPc();                                      \
+    mo = convert_morder(mo);                                                   \
+    AtomicStatInc(thr, sizeof(*a), mo, StatAtomic##func);                      \
+    ScopedAtomic sa(thr, callpc, a, mo, __func__);                             \
+    ScopedRuntime sr(thr);                                                     \
+    return Atomic##func(thr, pc, __VA_ARGS__);                                 \
+    /**/
 
 class ScopedAtomic {
  public:
   ScopedAtomic(ThreadState *thr, uptr pc, const volatile void *a,
                morder mo, const char *func)
       : thr_(thr) {
+    DPrintf2("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
+    ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
     FuncEntry(thr_, pc);
-    DPrintf("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
   }
   ~ScopedAtomic() {
     ProcessPendingSignals(thr_);
-    FuncExit(thr_);
+    {
+      ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
+      FuncExit(thr_);
+    }
+    CheckNoLocks();
   }
  private:
   ThreadState *thr_;

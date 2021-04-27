@@ -19,7 +19,6 @@
 #endif
 
 #include "tsan_defs.h"
-#include "tsan_trace.h"
 
 namespace __tsan {
 
@@ -47,9 +46,7 @@ C/C++ on linux/x86_64 and freebsd/x86_64
 3000 0000 0000 - 4000 0000 0000: metainfo (memory blocks and sync objects)
 4000 0000 0000 - 5500 0000 0000: -
 5500 0000 0000 - 5680 0000 0000: pie binaries without ASLR or on 4.1+ kernels
-5680 0000 0000 - 6000 0000 0000: -
-6000 0000 0000 - 6200 0000 0000: traces
-6200 0000 0000 - 7d00 0000 0000: -
+5680 0000 0000 - 7d00 0000 0000: -
 7b00 0000 0000 - 7c00 0000 0000: heap
 7c00 0000 0000 - 7e80 0000 0000: -
 7e80 0000 0000 - 8000 0000 0000: modules and main thread stack
@@ -70,10 +67,8 @@ C/C++ on netbsd/amd64 can reuse the same mapping:
 struct Mapping {
   static const uptr kMetaShadowBeg = 0x300000000000ull;
   static const uptr kMetaShadowEnd = 0x340000000000ull;
-  static const uptr kTraceMemBeg   = 0x600000000000ull;
-  static const uptr kTraceMemEnd   = 0x620000000000ull;
   static const uptr kShadowBeg     = 0x010000000000ull;
-  static const uptr kShadowEnd     = 0x200000000000ull;
+  static const uptr kShadowEnd = 0x100000000000ull;
   static const uptr kHeapMemBeg    = 0x7b0000000000ull;
   static const uptr kHeapMemEnd    = 0x7c0000000000ull;
   static const uptr kLoAppMemBeg   = 0x000000001000ull;
@@ -555,8 +550,6 @@ enum MappingType {
   MAPPING_SHADOW_END,
   MAPPING_META_SHADOW_BEG,
   MAPPING_META_SHADOW_END,
-  MAPPING_TRACE_BEG,
-  MAPPING_TRACE_END,
   MAPPING_VDSO_BEG,
 };
 
@@ -583,8 +576,6 @@ uptr MappingImpl(void) {
     case MAPPING_SHADOW_END: return Mapping::kShadowEnd;
     case MAPPING_META_SHADOW_BEG: return Mapping::kMetaShadowBeg;
     case MAPPING_META_SHADOW_END: return Mapping::kMetaShadowEnd;
-    case MAPPING_TRACE_BEG: return Mapping::kTraceMemBeg;
-    case MAPPING_TRACE_END: return Mapping::kTraceMemEnd;
   }
 }
 
@@ -731,16 +722,6 @@ uptr MetaShadowEnd(void) {
   return MappingArchImpl<MAPPING_META_SHADOW_END>();
 }
 
-ALWAYS_INLINE
-uptr TraceMemBeg(void) {
-  return MappingArchImpl<MAPPING_TRACE_BEG>();
-}
-ALWAYS_INLINE
-uptr TraceMemEnd(void) {
-  return MappingArchImpl<MAPPING_TRACE_END>();
-}
-
-
 template<typename Mapping>
 bool IsAppMemImpl(uptr mem) {
 #if !SANITIZER_GO
@@ -877,13 +858,14 @@ template<typename Mapping>
 uptr MemToShadowImpl(uptr x) {
   DCHECK(IsAppMem(x));
 #if !SANITIZER_GO
-  return (((x) & ~(Mapping::kAppMemMsk | (kShadowCell - 1)))
-      ^ Mapping::kAppMemXor) * kShadowCnt;
+  return (((x) & ~(Mapping::kAppMemMsk | (kShadowCell - 1))) ^
+          Mapping::kAppMemXor) *
+         kShadowMultiplier;
 #else
 # ifndef SANITIZER_WINDOWS
-  return ((x & ~(kShadowCell - 1)) * kShadowCnt) | Mapping::kShadowBeg;
+  return ((x & ~(kShadowCell - 1)) * kShadowMultiplier) | Mapping::kShadowBeg;
 # else
-  return ((x & ~(kShadowCell - 1)) * kShadowCnt) + Mapping::kShadowBeg;
+  return ((x & ~(kShadowCell - 1)) * kShadowMultiplier) + Mapping::kShadowBeg;
 # endif
 #endif
 }
@@ -986,23 +968,23 @@ uptr ShadowToMemImpl(uptr s) {
   // bijection, so we try to restore the address as belonging to low/mid/high
   // range consecutively and see if shadow->app->shadow mapping gives us the
   // same address.
-  uptr p = (s / kShadowCnt) ^ Mapping::kAppMemXor;
+  uptr p = (s / kShadowMultiplier) ^ Mapping::kAppMemXor;
   if (p >= Mapping::kLoAppMemBeg && p < Mapping::kLoAppMemEnd &&
       MemToShadow(p) == s)
     return p;
 # ifdef TSAN_MID_APP_RANGE
-  p = ((s / kShadowCnt) ^ Mapping::kAppMemXor) +
+  p = ((s / kShadowMultiplier) ^ Mapping::kAppMemXor) +
       (Mapping::kMidAppMemBeg & Mapping::kAppMemMsk);
   if (p >= Mapping::kMidAppMemBeg && p < Mapping::kMidAppMemEnd &&
       MemToShadow(p) == s)
     return p;
 # endif
-  return ((s / kShadowCnt) ^ Mapping::kAppMemXor) | Mapping::kAppMemMsk;
+  return ((s / kShadowMultiplier) ^ Mapping::kAppMemXor) | Mapping::kAppMemMsk;
 #else  // #if !SANITIZER_GO
 # ifndef SANITIZER_WINDOWS
-  return (s & ~Mapping::kShadowBeg) / kShadowCnt;
+  return (s & ~Mapping::kShadowBeg) / kShadowMultiplier;
 # else
-  return (s - Mapping::kShadowBeg) / kShadowCnt;
+  return (s - Mapping::kShadowBeg) / kShadowMultiplier;
 # endif // SANITIZER_WINDOWS
 #endif
 }
@@ -1042,102 +1024,9 @@ uptr ShadowToMem(uptr s) {
 #endif
 }
 
-
-
-// The additional page is to catch shadow stack overflow as paging fault.
-// Windows wants 64K alignment for mmaps.
-const uptr kTotalTraceSize = (kTraceSize * sizeof(Event) + sizeof(Trace)
-    + (64 << 10) + (64 << 10) - 1) & ~((64 << 10) - 1);
-
-template<typename Mapping>
-uptr GetThreadTraceImpl(int tid) {
-  uptr p = Mapping::kTraceMemBeg + (uptr)tid * kTotalTraceSize;
-  DCHECK_LT(p, Mapping::kTraceMemEnd);
-  return p;
-}
-
-ALWAYS_INLINE
-uptr GetThreadTrace(int tid) {
-#if defined(__aarch64__) && !defined(__APPLE__) && !SANITIZER_GO
-  switch (vmaSize) {
-    case 39: return GetThreadTraceImpl<Mapping39>(tid);
-    case 42: return GetThreadTraceImpl<Mapping42>(tid);
-    case 48: return GetThreadTraceImpl<Mapping48>(tid);
-  }
-  DCHECK(0);
-  return 0;
-#elif defined(__powerpc64__)
-  switch (vmaSize) {
-#if !SANITIZER_GO
-    case 44: return GetThreadTraceImpl<Mapping44>(tid);
-#endif
-    case 46: return GetThreadTraceImpl<Mapping46>(tid);
-    case 47: return GetThreadTraceImpl<Mapping47>(tid);
-  }
-  DCHECK(0);
-  return 0;
-#elif defined(__mips64)
-  switch (vmaSize) {
-#if !SANITIZER_GO
-    case 40: return GetThreadTraceImpl<Mapping40>(tid);
-#else
-    case 47: return GetThreadTraceImpl<Mapping47>(tid);
-#endif
-  }
-  DCHECK(0);
-  return 0;
-#else
-  return GetThreadTraceImpl<Mapping>(tid);
-#endif
-}
-
-
-template<typename Mapping>
-uptr GetThreadTraceHeaderImpl(int tid) {
-  uptr p = Mapping::kTraceMemBeg + (uptr)tid * kTotalTraceSize
-      + kTraceSize * sizeof(Event);
-  DCHECK_LT(p, Mapping::kTraceMemEnd);
-  return p;
-}
-
-ALWAYS_INLINE
-uptr GetThreadTraceHeader(int tid) {
-#if defined(__aarch64__) && !defined(__APPLE__) && !SANITIZER_GO
-  switch (vmaSize) {
-    case 39: return GetThreadTraceHeaderImpl<Mapping39>(tid);
-    case 42: return GetThreadTraceHeaderImpl<Mapping42>(tid);
-    case 48: return GetThreadTraceHeaderImpl<Mapping48>(tid);
-  }
-  DCHECK(0);
-  return 0;
-#elif defined(__powerpc64__)
-  switch (vmaSize) {
-#if !SANITIZER_GO
-    case 44: return GetThreadTraceHeaderImpl<Mapping44>(tid);
-#endif
-    case 46: return GetThreadTraceHeaderImpl<Mapping46>(tid);
-    case 47: return GetThreadTraceHeaderImpl<Mapping47>(tid);
-  }
-  DCHECK(0);
-  return 0;
-#elif defined(__mips64)
-  switch (vmaSize) {
-#if !SANITIZER_GO
-    case 40: return GetThreadTraceHeaderImpl<Mapping40>(tid);
-#else
-    case 47: return GetThreadTraceHeaderImpl<Mapping47>(tid);
-#endif
-  }
-  DCHECK(0);
-  return 0;
-#else
-  return GetThreadTraceHeaderImpl<Mapping>(tid);
-#endif
-}
-
 void InitializePlatform();
 void InitializePlatformEarly();
-void CheckAndProtect();
+void MappingCheckAndProtect();
 void InitializeShadowMemoryPlatform();
 void FlushShadowMemory();
 void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive);

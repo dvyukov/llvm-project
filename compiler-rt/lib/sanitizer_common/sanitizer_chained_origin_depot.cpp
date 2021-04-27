@@ -41,14 +41,14 @@ u32 ChainedOriginDepot::ChainedOriginDepotNode::hash(const args_type &args) {
   const u32 seed = 0x9747b28c;
   const u32 r = 24;
   u32 h = seed;
-  u32 k = args.here_id;
+  u32 k = static_cast<u32>(args.here_id);
   k *= m;
   k ^= k >> r;
   k *= m;
   h *= m;
   h ^= k;
 
-  k = args.prev_id;
+  k = static_cast<u32>(args.prev_id);
   k *= m;
   k ^= k >> r;
   k *= m;
@@ -87,15 +87,16 @@ ChainedOriginDepot::ChainedOriginDepot() {}
 
 StackDepotStats *ChainedOriginDepot::GetStats() { return depot.GetStats(); }
 
-bool ChainedOriginDepot::Put(u32 here_id, u32 prev_id, u32 *new_id) {
+bool ChainedOriginDepot::Put(StackID here_id, StackID prev_id,
+                             StackID *new_id) {
   ChainedOriginDepotDesc desc = {here_id, prev_id};
   bool inserted;
   ChainedOriginDepotNode::Handle h = depot.Put(desc, &inserted);
-  *new_id = h.valid() ? h.id() : 0;
+  *new_id = h.valid() ? h.id() : kInvalidStackID;
   return inserted;
 }
 
-u32 ChainedOriginDepot::Get(u32 id, u32 *other) {
+StackID ChainedOriginDepot::Get(StackID id, StackID *other) {
   ChainedOriginDepotDesc desc = depot.Get(id);
   *other = desc.prev_id;
   return desc.here_id;

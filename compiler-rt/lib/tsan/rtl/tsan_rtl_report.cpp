@@ -23,13 +23,28 @@
 #include "tsan_sync.h"
 #include "tsan_mman.h"
 #include "tsan_flags.h"
-#include "tsan_fd.h"
 
 namespace __tsan {
 
-using namespace __sanitizer;
+ExternalCallback::ExternalCallback() {
+#if !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  //!!! should also ignore annotations
+  thr->ignore_funcs_++;
+  thr->ignore_interceptors++;
+  ThreadIgnoreBegin(thr, 0, false);
+#endif
+}
 
-static ReportStack *SymbolizeStack(StackTrace trace);
+ExternalCallback::~ExternalCallback() {
+#if !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  CHECK(thr->ignore_funcs_);
+  thr->ignore_funcs_--;
+  thr->ignore_interceptors--;
+  ThreadIgnoreEnd(thr, 0);
+#endif
+}
 
 // Can be overriden by an application/test to intercept reports.
 #ifdef TSAN_EXTERNAL_HOOKS
@@ -69,7 +84,8 @@ static void StackStripMain(SymbolizedStack *frames) {
     last_frame->ClearAll();
     last_frame2->next = nullptr;
   // Strip global ctors init.
-  } else if (last && 0 == internal_strcmp(last, "__do_global_ctors_aux")) {
+  } else if (last && (0 == internal_strcmp(last, "__do_global_ctors_aux") ||
+                      0 == internal_strcmp(last, "__libc_csu_init"))) {
     last_frame->ClearAll();
     last_frame2->next = nullptr;
   // If both are 0, then we probably just failed to symbolize.
@@ -87,18 +103,9 @@ static void StackStripMain(SymbolizedStack *frames) {
 #endif
 }
 
-ReportStack *SymbolizeStackId(u32 stack_id) {
-  if (stack_id == 0)
-    return 0;
-  StackTrace stack = StackDepotGet(stack_id);
-  if (stack.trace == nullptr)
-    return nullptr;
-  return SymbolizeStack(stack);
-}
-
-static ReportStack *SymbolizeStack(StackTrace trace) {
+static SymbolizedStack* SymbolizeStack(StackTrace trace) {
   if (trace.size == 0)
-    return 0;
+    return nullptr;
   SymbolizedStack *top = nullptr;
   for (uptr si = 0; si < trace.size; si++) {
     const uptr pc = trace.trace[si];
@@ -119,20 +126,25 @@ static ReportStack *SymbolizeStack(StackTrace trace) {
     top = ent;
   }
   StackStripMain(top);
+  return top;
+}
 
-  ReportStack *stack = ReportStack::New();
-  stack->frames = top;
-  return stack;
+void PrintStack(StackTrace stack) {
+  PrintStack(SymbolizeStack(stack));
+}
+
+void PrintStack(StackID id) {
+  PrintStack(StackDepotGet(id));
 }
 
 bool ShouldReport(ThreadState *thr, ReportType typ) {
   // We set thr->suppress_reports in the fork context.
   // Taking any locking in the fork context can lead to deadlocks.
   // If any locks are already taken, it's too late to do this check.
-  CheckNoLocks(thr);
+  CheckNoLocks();
   // For the same reason check we didn't lock thread_registry yet.
   if (SANITIZER_DEBUG)
-    ThreadRegistryLock l(ctx->thread_registry);
+    ThreadRegistryLock l(&ctx->thread_registry);
   if (!flags()->report_bugs || thr->suppress_reports)
     return false;
   switch (typ) {
@@ -153,92 +165,12 @@ bool ShouldReport(ThreadState *thr, ReportType typ) {
   }
 }
 
-ScopedReportBase::ScopedReportBase(ReportType typ, uptr tag) {
-  ctx->thread_registry->CheckLocked();
-  void *mem = internal_alloc(MBlockReport, sizeof(ReportDesc));
-  rep_ = new(mem) ReportDesc;
-  rep_->typ = typ;
-  rep_->tag = tag;
-  ctx->report_mtx.Lock();
-}
-
-ScopedReportBase::~ScopedReportBase() {
-  ctx->report_mtx.Unlock();
-  DestroyAndFree(rep_);
-  rep_ = nullptr;
-}
-
-void ScopedReportBase::AddStack(StackTrace stack, bool suppressable) {
-  ReportStack **rs = rep_->stacks.PushBack();
-  *rs = SymbolizeStack(stack);
-  (*rs)->suppressable = suppressable;
-}
-
-void ScopedReportBase::AddMemoryAccess(uptr addr, uptr external_tag, Shadow s,
-                                       StackTrace stack, const MutexSet *mset) {
-  void *mem = internal_alloc(MBlockReportMop, sizeof(ReportMop));
-  ReportMop *mop = new(mem) ReportMop;
-  rep_->mops.PushBack(mop);
-  mop->tid = s.tid();
-  mop->addr = addr + s.addr0();
-  mop->size = s.size();
-  mop->write = s.IsWrite();
-  mop->atomic = s.IsAtomic();
-  mop->stack = SymbolizeStack(stack);
-  mop->external_tag = external_tag;
-  if (mop->stack)
-    mop->stack->suppressable = true;
-  for (uptr i = 0; i < mset->Size(); i++) {
-    MutexSet::Desc d = mset->Get(i);
-    u64 mid = this->AddMutex(d.id);
-    ReportMopMutex mtx = {mid, d.write};
-    mop->mset.PushBack(mtx);
-  }
-}
-
-void ScopedReportBase::AddUniqueTid(int unique_tid) {
-  rep_->unique_tids.PushBack(unique_tid);
-}
-
-void ScopedReportBase::AddThread(const ThreadContext *tctx, bool suppressable) {
-  for (uptr i = 0; i < rep_->threads.Size(); i++) {
-    if ((u32)rep_->threads[i]->id == tctx->tid)
-      return;
-  }
-  void *mem = internal_alloc(MBlockReportThread, sizeof(ReportThread));
-  ReportThread *rt = new(mem) ReportThread;
-  rep_->threads.PushBack(rt);
-  rt->id = tctx->tid;
-  rt->os_id = tctx->os_id;
-  rt->running = (tctx->status == ThreadStatusRunning);
-  rt->name = internal_strdup(tctx->name);
-  rt->parent_tid = tctx->parent_tid;
-  rt->thread_type = tctx->thread_type;
-  rt->stack = 0;
-  rt->stack = SymbolizeStackId(tctx->creation_stack_id);
-  if (rt->stack)
-    rt->stack->suppressable = suppressable;
+ReportScope::ReportScope()
+    : registry_lock_(&ctx->thread_registry), slot_lock_(&ctx->slot_mtx),
+      report_lock_(&ctx->report_mtx), error_lock_() {
 }
 
 #if !SANITIZER_GO
-static bool FindThreadByUidLockedCallback(ThreadContextBase *tctx, void *arg) {
-  int unique_id = *(int *)arg;
-  return tctx->unique_id == (u32)unique_id;
-}
-
-static ThreadContext *FindThreadByUidLocked(int unique_id) {
-  ctx->thread_registry->CheckLocked();
-  return static_cast<ThreadContext *>(
-      ctx->thread_registry->FindThreadContextLocked(
-          FindThreadByUidLockedCallback, &unique_id));
-}
-
-static ThreadContext *FindThreadByTidLocked(int tid) {
-  ctx->thread_registry->CheckLocked();
-  return static_cast<ThreadContext*>(
-      ctx->thread_registry->GetThreadLocked(tid));
-}
-
 static bool IsInStackOrTls(ThreadContextBase *tctx_base, void *arg) {
   uptr addr = (uptr)arg;
   ThreadContext *tctx = static_cast<ThreadContext*>(tctx_base);
@@ -251,10 +183,10 @@ static bool IsInStackOrTls(ThreadContextBase *tctx_base, void *arg) {
 }
 
 ThreadContext *IsThreadStackOrTls(uptr addr, bool *is_stack) {
-  ctx->thread_registry->CheckLocked();
-  ThreadContext *tctx = static_cast<ThreadContext*>(
-      ctx->thread_registry->FindThreadContextLocked(IsInStackOrTls,
-                                                    (void*)addr));
+  ctx->thread_registry.CheckLocked();
+  ThreadContext* tctx =
+      static_cast<ThreadContext*>(ctx->thread_registry.FindThreadContextLocked(
+          IsInStackOrTls, (void*)addr));
   if (!tctx)
     return 0;
   ThreadState *thr = tctx->thr;
@@ -264,189 +196,301 @@ ThreadContext *IsThreadStackOrTls(uptr addr, bool *is_stack) {
 }
 #endif
 
-void ScopedReportBase::AddThread(int unique_tid, bool suppressable) {
+static void SymbolizeStack(ReportStack* rep) {
+  if (!rep || rep->stack.size == 0)
+    return;
+  CHECK(!rep->frames);
+  rep->frames = SymbolizeStack(rep->stack);
+}
+
+struct SymbolizerScope {
+  SymbolizerScope() {
 #if !SANITIZER_GO
-  if (const ThreadContext *tctx = FindThreadByUidLocked(unique_tid))
-    AddThread(tctx, suppressable);
+    ThreadState* thr = cur_thread();
+    thr->in_symbolizer++;
+    thr->ignore_funcs_++;
+#endif
+  }
+  ~SymbolizerScope() {
+#if !SANITIZER_GO
+    ThreadState* thr = cur_thread();
+    thr->in_symbolizer--;
+    thr->ignore_funcs_--;
+#endif
+  }
+  ScopedIgnoreInterceptors ignore;
+};
+
+void SymbolizeReport(ReportDesc* rep) {
+  // Symbolizer makes lots of intercepted calls. If we try to process them,
+  // at best it will cause deadlocks on internal mutexes.
+  SymbolizerScope scope;
+
+  for (uptr i = 0; i < rep->stacks.Size(); i++)
+    SymbolizeStack(rep->stacks[i]);
+  for (uptr i = 0; i < rep->mops.Size(); i++)
+    SymbolizeStack(&rep->mops[i]->stack);
+  for (uptr i = 0; i < rep->locs.Size(); i++) {
+    if (rep->locs[i]->type == ReportLocationInvalid)
+      SymbolizeData(rep->locs[i]->global.start, rep->locs[i]);
+    SymbolizeStack(&rep->locs[i]->stack);
+  }
+  for (uptr i = 0; i < rep->mutexes.Size(); i++)
+    SymbolizeStack(&rep->mutexes[i]->stack);
+  for (uptr i = 0; i < rep->threads.Size(); i++)
+    SymbolizeStack(&rep->threads[i]->stack);
+  SymbolizeStack(rep->sleep);
+}
+
+uptr RestoreAddr(uptr addr) {
+#if SANITIZER_GO
+  return addr;
+#else
+  const uptr kRegionIndicator = 0x060000000000ull;
+  switch (addr & kRegionIndicator) {
+  case Mapping::kLoAppMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx lo -> 0x%zx\n", addr, addr);
+    return addr;
+  case Mapping::kHiAppMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx hi -> 0x%zx\n", addr, addr | 0x780000000000ull);
+    return addr | 0x780000000000ull;
+  case Mapping::kHeapMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx heap -> 0x%zx\n", addr, addr |
+    // 0x780000000000ull);
+    return addr | 0x780000000000ull;
+  case Mapping::kMidAppMemBeg& kRegionIndicator:
+    //!!! this does not restore full range up to kMidAppMemEnd.
+    // It has 0x56 which matches kHiAppMemBeg above.
+    // Printf("XXX: addr=0x%zx mid -> 0x%zx\n", addr, addr | 0x500000000000ull);
+    return addr | 0x500000000000ull;
+  }
+  CHECK(0);
+  return addr;
 #endif
 }
 
-void ScopedReportBase::AddMutex(const SyncVar *s) {
-  for (uptr i = 0; i < rep_->mutexes.Size(); i++) {
-    if (rep_->mutexes[i]->id == s->uid)
+uptr RestorePC(uptr addr, bool isExternal) {
+#if SANITIZER_GO
+  return addr;
+#else
+  const uptr kRegionIndicator = 0x060000000000ull;
+  switch (addr & kRegionIndicator) {
+  case Mapping::kLoAppMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx lo -> 0x%zx\n", addr, addr);
+    return addr;
+  case Mapping::kHiAppMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx hi -> 0x%zx\n", addr, addr | 0x780000000000ull);
+    return addr | 0x500000000000ull;
+  case Mapping::kHeapMemBeg& kRegionIndicator:
+    // Printf("XXX: addr=0x%zx heap -> 0x%zx\n", addr, addr |
+    // 0x780000000000ull);
+    return addr | 0x780000000000ull;
+  case Mapping::kMidAppMemBeg& kRegionIndicator:
+    //!!! this does not restore full range up to kMidAppMemEnd.
+    // It has 0x56 which matches kHiAppMemBeg above.
+    // Printf("XXX: addr=0x%zx mid -> 0x%zx\n", addr, addr | 0x500000000000ull);
+    return addr | 0x500000000000ull;
+  }
+  CHECK(0);
+  return addr;
+#endif
+
+  //!!! return RestoreAddr(pc) | (isExternal ? kExternalPCBit : 0);
+}
+
+template <typename Func>
+void TraceReplay(TracePart* first, TracePart* last, Event* last_pos,
+                 Epoch epoch, Func f) {
+  Tid evTid = kInvalidTid;
+  Epoch evEpoch = kEpochZero;
+  TracePart* part = first;
+  for (;;) {
+    // Note: an event can't start in the last element.
+    // Since an event can take up to 2 elements,
+    // we ensure we have at least 2 before adding an event.
+    Event* end = &part->events[ARRAY_SIZE(part->events) - 1];
+    if (part == last)
+      end = last_pos;
+    for (Event* evp = &part->events[0]; evp < end; evp++) {
+      Event* evp0 = evp;
+      if (!evp->isAccess) {
+        switch (evp->type) {
+        case EventTypeAttach: {
+          auto ev = reinterpret_cast<EventAttach*>(evp);
+          evTid = static_cast<Tid>(ev->tid);
+        }
+          [[fallthrough]];
+        case EventTypeRelease:
+          CHECK_NE(evTid, kInvalidTid);
+          evEpoch = EpochInc(evEpoch);
+          if (evEpoch > epoch)
+            return;
+          break;
+        case EventTypeAccessEx:
+          [[fallthrough]];
+        case EventTypeLock:
+          [[fallthrough]];
+        case EventTypeRLock:
+          evp++;
+        }
+      }
+      f(evTid, evEpoch, evp0);
+    }
+    if (part == last)
       return;
+    part = part->next;
+    CHECK(part);
   }
-  void *mem = internal_alloc(MBlockReportMutex, sizeof(ReportMutex));
-  ReportMutex *rm = new(mem) ReportMutex;
-  rep_->mutexes.PushBack(rm);
-  rm->id = s->uid;
-  rm->addr = s->addr;
-  rm->destroyed = false;
-  rm->stack = SymbolizeStackId(s->creation_stack_id);
+  CHECK(0);
 }
 
-u64 ScopedReportBase::AddMutex(u64 id) {
-  u64 uid = 0;
-  u64 mid = id;
-  uptr addr = SyncVar::SplitId(id, &uid);
-  SyncVar *s = ctx->metamap.GetIfExistsAndLock(addr, true);
-  // Check that the mutex is still alive.
-  // Another mutex can be created at the same address,
-  // so check uid as well.
-  if (s && s->CheckId(uid)) {
-    mid = s->uid;
-    AddMutex(s);
-  } else {
-    AddDeadMutex(id);
-  }
-  if (s)
-    s->mtx.Unlock();
-  return mid;
+Tid RestoreTid(TracePart* first, TracePart* last, Event* last_pos,
+               Epoch epoch) {
+  Tid tid = kInvalidTid;
+  TraceReplay(first, last, last_pos, epoch,
+              [&](Tid evTid, Epoch evEpoch, Event* evp) {
+                if (evEpoch == epoch)
+                  tid = evTid;
+              });
+  return tid;
 }
 
-void ScopedReportBase::AddDeadMutex(u64 id) {
-  for (uptr i = 0; i < rep_->mutexes.Size(); i++) {
-    if (rep_->mutexes[i]->id == id)
-      return;
-  }
-  void *mem = internal_alloc(MBlockReportMutex, sizeof(ReportMutex));
-  ReportMutex *rm = new(mem) ReportMutex;
-  rep_->mutexes.PushBack(rm);
-  rm->id = id;
-  rm->addr = 0;
-  rm->destroyed = true;
-  rm->stack = 0;
-}
-
-void ScopedReportBase::AddLocation(uptr addr, uptr size) {
-  if (addr == 0)
-    return;
-#if !SANITIZER_GO
-  int fd = -1;
-  int creat_tid = kInvalidTid;
-  u32 creat_stack = 0;
-  if (FdLocation(addr, &fd, &creat_tid, &creat_stack)) {
-    ReportLocation *loc = ReportLocation::New(ReportLocationFD);
-    loc->fd = fd;
-    loc->tid = creat_tid;
-    loc->stack = SymbolizeStackId(creat_stack);
-    rep_->locs.PushBack(loc);
-    ThreadContext *tctx = FindThreadByUidLocked(creat_tid);
-    if (tctx)
-      AddThread(tctx);
-    return;
-  }
-  MBlock *b = 0;
-  Allocator *a = allocator();
-  if (a->PointerIsMine((void*)addr)) {
-    void *block_begin = a->GetBlockBegin((void*)addr);
-    if (block_begin)
-      b = ctx->metamap.GetBlock((uptr)block_begin);
-  }
-  if (b != 0) {
-    ThreadContext *tctx = FindThreadByTidLocked(b->tid);
-    ReportLocation *loc = ReportLocation::New(ReportLocationHeap);
-    loc->heap_chunk_start = (uptr)allocator()->GetBlockBegin((void *)addr);
-    loc->heap_chunk_size = b->siz;
-    loc->external_tag = b->tag;
-    loc->tid = tctx ? tctx->tid : b->tid;
-    loc->stack = SymbolizeStackId(b->stk);
-    rep_->locs.PushBack(loc);
-    if (tctx)
-      AddThread(tctx);
-    return;
-  }
-  bool is_stack = false;
-  if (ThreadContext *tctx = IsThreadStackOrTls(addr, &is_stack)) {
-    ReportLocation *loc =
-        ReportLocation::New(is_stack ? ReportLocationStack : ReportLocationTLS);
-    loc->tid = tctx->tid;
-    rep_->locs.PushBack(loc);
-    AddThread(tctx);
-  }
-#endif
-  if (ReportLocation *loc = SymbolizeData(addr)) {
-    loc->suppressable = true;
-    rep_->locs.PushBack(loc);
-    return;
-  }
-}
-
-#if !SANITIZER_GO
-void ScopedReportBase::AddSleep(u32 stack_id) {
-  rep_->sleep = SymbolizeStackId(stack_id);
-}
-#endif
-
-void ScopedReportBase::SetCount(int count) { rep_->count = count; }
-
-const ReportDesc *ScopedReportBase::GetReport() const { return rep_; }
-
-ScopedReport::ScopedReport(ReportType typ, uptr tag)
-    : ScopedReportBase(typ, tag) {}
-
-ScopedReport::~ScopedReport() {}
-
-void RestoreStack(int tid, const u64 epoch, VarSizeStackTrace *stk,
-                  MutexSet *mset, uptr *tag) {
+void RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
+                  bool isRead, bool isAtomic, bool isFreed, Tid* ptid,
+                  VarSizeStackTrace* stk, MutexSet* pmset, uptr* tag) {
   // This function restores stack trace and mutex set for the thread/epoch.
   // It does so by getting stack trace and mutex set at the beginning of
   // trace part, and then replaying the trace till the given epoch.
-  Trace* trace = ThreadTrace(tid);
-  ReadLock l(&trace->mtx);
-  const int partidx = (epoch / kTracePartSize) % TraceParts();
-  TraceHeader* hdr = &trace->headers[partidx];
-  if (epoch < hdr->epoch0 || epoch >= hdr->epoch0 + kTracePartSize)
+  DPrintf2("RestoreStack: sid=%u@%u addr=0x%zx/%zu type=%u/%u/%u\n",
+           static_cast<u32>(sid), static_cast<u32>(epoch), addr, size, isRead,
+           isAtomic, isFreed);
+
+  ctx->slot_mtx.CheckLocked();
+  ctx->thread_registry.CheckLocked();
+  TidSlot* slot = &ctx->slots[static_cast<uptr>(sid)];
+  Trace* trace = &slot->trace;
+  TracePart* last_part;
+  Event* last_pos;
+  {
+    Lock lock(&trace->mtx);
+    last_part = trace->current;
+    last_pos = trace->pos;
+    if (slot->thr)
+      last_pos = (Event*)atomic_load_relaxed(&slot->thr->trace_pos);
+  }
+  Tid tid = kInvalidTid;
+  TraceReplay(trace->first, last_part, last_pos, epoch,
+              [&](Tid evTid, Epoch evEpoch, Event* evp) {
+                if (evEpoch == epoch)
+                  tid = evTid;
+              });
+  DPrintf2("RestoreStack: tid=%u\n", tid);
+  *ptid = tid;
+  if (tid == kInvalidTid)
     return;
-  CHECK_EQ(RoundDown(epoch, kTracePartSize), hdr->epoch0);
-  const u64 epoch0 = RoundDown(epoch, TraceSize());
-  const u64 eend = epoch % TraceSize();
-  const u64 ebegin = RoundDown(eend, kTracePartSize);
-  DPrintf("#%d: RestoreStack epoch=%zu ebegin=%zu eend=%zu partidx=%d\n",
-          tid, (uptr)epoch, (uptr)ebegin, (uptr)eend, partidx);
+  CHECK_NE(tid, kInvalidTid);
+
+  ThreadContext* tctx =
+      static_cast<ThreadContext*>(ctx->thread_registry.GetThreadLocked(tid));
+  CHECK(tctx);
   Vector<uptr> stack;
-  stack.Resize(hdr->stack0.size + 64);
-  for (uptr i = 0; i < hdr->stack0.size; i++) {
-    stack[i] = hdr->stack0.trace[i];
-    DPrintf2("  #%02zu: pc=%zx\n", i, stack[i]);
+  stack.Resize(tctx->startStack.size + 64);
+  for (uptr i = 0; i < tctx->startStack.size; i++) {
+    stack[i] = tctx->startStack.trace[i];
+    DPrintf2("  #%02zu: pc=%zx\n", i, tctx->startStack.trace[i]);
   }
-  if (mset)
-    *mset = hdr->mset0;
-  uptr pos = hdr->stack0.size;
-  Event *events = (Event*)GetThreadTrace(tid);
-  for (uptr i = ebegin; i <= eend; i++) {
-    Event ev = events[i];
-    EventType typ = (EventType)(ev >> kEventPCBits);
-    uptr pc = (uptr)(ev & ((1ull << kEventPCBits) - 1));
-    DPrintf2("  %zu typ=%d pc=%zx\n", i, typ, pc);
-    if (typ == EventTypeMop) {
-      stack[pos] = pc;
-    } else if (typ == EventTypeFuncEnter) {
-      if (stack.Size() < pos + 2)
-        stack.Resize(pos + 2);
-      stack[pos++] = pc;
-    } else if (typ == EventTypeFuncExit) {
-      if (pos > 0)
-        pos--;
-    }
-    if (mset) {
-      if (typ == EventTypeLock) {
-        mset->Add(pc, true, epoch0 + i);
-      } else if (typ == EventTypeUnlock) {
-        mset->Del(pc, true);
-      } else if (typ == EventTypeRLock) {
-        mset->Add(pc, false, epoch0 + i);
-      } else if (typ == EventTypeRUnlock) {
-        mset->Del(pc, false);
-      }
-    }
-    for (uptr j = 0; j <= pos; j++)
-      DPrintf2("      #%zu: %zx\n", j, stack[j]);
-  }
-  if (pos == 0 && stack[0] == 0)
-    return;
-  pos++;
-  stk->Init(&stack[0], pos);
+  uptr pos = tctx->startStack.size;
+  uptr prev_pc = 0;
+  MutexSet mset = tctx->startMutexSet;
+  TraceReplay(
+      trace->first, last_part, last_pos, epoch,
+      [&](Tid evTid, Epoch evEpoch, Event* evp) {
+        if (evTid != tid)
+          return;
+        if (evp->isAccess) {
+          auto ev = reinterpret_cast<EventAccess*>(evp);
+          //!!! also check access size and type (read/atomic).
+          uptr evAddr = RestoreAddr(ev->addr);
+          uptr evSize = 1 << ev->sizeLog;
+          uptr evPC = (prev_pc & ~kExternalPCBit) + ev->pcDelta - (1 << 14);
+          evPC = RestorePC(evPC, ev->isExternalPC); //!!! is this fine?
+          prev_pc = evPC;
+          DPrintf2("  Access: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n", evPC,
+                   evAddr, evSize, ev->isRead, ev->isAtomic);
+          if (type == EventTypeAccessEx && evEpoch == epoch && addr >= evAddr &&
+              addr + size <= evAddr + evSize && isRead == ev->isRead &&
+              isAtomic == ev->isAtomic && !isFreed) {
+            DPrintf2("    MATCHED\n");
+            stack[pos] = evPC;
+            stk->Init(&stack[0], pos + 1);
+            *pmset = mset;
+          }
+          return;
+        }
+        switch (evp->type) {
+        case EventTypeAccessEx: {
+          auto ev = reinterpret_cast<EventAccessEx*>(evp);
+          uptr evAddr = RestoreAddr(ev->addr);
+          uptr evSize = (ev->sizeHi << 13) + ev->sizeLo;
+          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
+          prev_pc = evPC;
+          DPrintf2(
+              "  AccessEx: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu/%llu\n",
+              evPC, evAddr, evSize, ev->isRead, ev->isAtomic, ev->isFreed);
+          //!!! also check access size and type (read/atomic).
+          if (type == EventTypeAccessEx && evEpoch == epoch && addr >= evAddr &&
+              addr + size <= evAddr + evSize && isRead == ev->isRead &&
+              isAtomic == ev->isAtomic && isFreed == ev->isFreed) {
+            DPrintf2("    MATCHED\n");
+            stack[pos] = evPC;
+            stk->Init(&stack[0], pos + 1);
+            *pmset = mset;
+          }
+          break;
+        }
+        case EventTypeFuncEnter: {
+          auto ev = reinterpret_cast<EventPC*>(evp);
+          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
+          DPrintf2("  FuncEnter: pc=0x%zx\n", evPC);
+          if (stack.Size() < pos + 2)
+            stack.Resize(pos + 2);
+          stack[pos++] = evPC;
+          break;
+        }
+        case EventTypeFuncExit:
+          DPrintf2("  FuncExit\n");
+          CHECK_GT(pos, 0);
+          pos--;
+          break;
+        case EventTypeLock:
+          [[fallthrough]];
+        case EventTypeRLock: {
+          auto ev = reinterpret_cast<EventLock*>(evp);
+          bool isWrite = ev->type == EventTypeLock;
+          uptr evAddr = RestoreAddr(ev->addr);
+          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
+          StackID stackID =
+              static_cast<StackID>((ev->stackIDHi << 16) + ev->stackIDLo);
+          DPrintf2("  Lock: pc=0x%zx addr=0x%llx stack=%u write=%d\n", evPC,
+                   evAddr, stackID, isWrite);
+          mset.Add(evAddr, stackID, isWrite);
+          if (type == EventTypeLock && evEpoch == epoch && addr == evAddr) {
+            DPrintf2("    MATCHED\n");
+            stack[pos] = evPC;
+            stk->Init(&stack[0], pos + 1);
+            *pmset = mset;
+          }
+          break;
+        }
+        case EventTypeUnlock: {
+          auto ev = reinterpret_cast<EventUnlock*>(evp);
+          uptr evAddr = RestoreAddr(ev->addr);
+          DPrintf2("  Unlock: addr=0x%llx\n", evAddr);
+          mset.Del(evAddr);
+          break;
+        }
+        }
+      });
   ExtractTagFromStack(stk, tag);
 }
 
@@ -475,6 +519,14 @@ static bool HandleRacyStacks(ThreadState *thr, VarSizeStackTrace traces[2]) {
   if (FindRacyStacks(hash))
     return true;
   ctx->racy_stacks.PushBack(hash);
+  return false;
+}
+
+bool RacyStacks::operator==(const RacyStacks& other) const {
+  if (hash[0] == other.hash[0] && hash[1] == other.hash[1])
+    return true;
+  if (hash[0] == other.hash[1] && hash[1] == other.hash[0])
+    return true;
   return false;
 }
 
@@ -507,28 +559,28 @@ static bool HandleRacyAddress(ThreadState *thr, uptr addr_min, uptr addr_max) {
   return false;
 }
 
-bool OutputReport(ThreadState *thr, const ScopedReport &srep) {
+bool OutputReport(ThreadState* thr, ReportDesc* rep) {
   // These should have been checked in ShouldReport.
   // It's too late to check them here, we have already taken locks.
   CHECK(flags()->report_bugs);
   CHECK(!thr->suppress_reports);
+  SymbolizeReport(rep);
   atomic_store_relaxed(&ctx->last_symbolize_time_ns, NanoTime());
-  const ReportDesc *rep = srep.GetReport();
   CHECK_EQ(thr->current_report, nullptr);
   thr->current_report = rep;
   Suppression *supp = 0;
   uptr pc_or_addr = 0;
   for (uptr i = 0; pc_or_addr == 0 && i < rep->mops.Size(); i++)
-    pc_or_addr = IsSuppressed(rep->typ, rep->mops[i]->stack, &supp);
+    pc_or_addr = IsSuppressed(rep->typ, &rep->mops[i]->stack, &supp);
   for (uptr i = 0; pc_or_addr == 0 && i < rep->stacks.Size(); i++)
     pc_or_addr = IsSuppressed(rep->typ, rep->stacks[i], &supp);
   for (uptr i = 0; pc_or_addr == 0 && i < rep->threads.Size(); i++)
-    pc_or_addr = IsSuppressed(rep->typ, rep->threads[i]->stack, &supp);
+    pc_or_addr = IsSuppressed(rep->typ, &rep->threads[i]->stack, &supp);
   for (uptr i = 0; pc_or_addr == 0 && i < rep->locs.Size(); i++)
     pc_or_addr = IsSuppressed(rep->typ, rep->locs[i], &supp);
   if (pc_or_addr != 0) {
     Lock lock(&ctx->fired_suppressions_mtx);
-    FiredSuppression s = {srep.GetReport()->typ, pc_or_addr, supp};
+    FiredSuppression s = {rep->typ, pc_or_addr, supp};
     ctx->fired_suppressions.push_back(s);
   }
   {
@@ -541,8 +593,16 @@ bool OutputReport(ThreadState *thr, const ScopedReport &srep) {
       return false;
     }
   }
+  //!!! hack, but these do user callbacks
+  int in_runtime = atomic_load_relaxed(&thr->in_runtime);
+  atomic_store_relaxed(&thr->in_runtime, 0);
   PrintReport(rep);
-  __tsan_on_report(rep);
+  {
+    ExternalCallback cb;
+    __tsan_on_report(rep);
+  }
+  atomic_store_relaxed(&thr->in_runtime, in_runtime);
+
   ctx->nreported++;
   if (flags()->halt_on_error)
     Die();
@@ -582,144 +642,127 @@ static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
   return false;
 }
 
-static bool RaceBetweenAtomicAndFree(ThreadState *thr) {
-  Shadow s0(thr->racy_state[0]);
-  Shadow s1(thr->racy_state[1]);
-  CHECK(!(s0.IsAtomic() && s1.IsAtomic()));
-  if (!s0.IsAtomic() && !s1.IsAtomic())
+static bool RaceBetweenAtomicAndFree(ThreadState* thr, Shadow cur, Shadow old) {
+  CHECK(!(cur.IsAtomic() && old.IsAtomic()));
+  if (!cur.IsAtomic() && !old.IsAtomic())
     return true;
-  if (s0.IsAtomic() && s1.IsFreed())
+  if (cur.IsAtomic() && old.IsFreed())
     return true;
-  if (s1.IsAtomic() && thr->is_freeing)
+  if (old.IsAtomic() && thr->is_freeing)
     return true;
   return false;
 }
 
-void ReportRace(ThreadState *thr) {
-  CheckNoLocks(thr);
-
-  // Symbolizer makes lots of intercepted calls. If we try to process them,
-  // at best it will cause deadlocks on internal mutexes.
-  ScopedIgnoreInterceptors ignore;
-
+void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
+                Shadow old) {
   if (!ShouldReport(thr, ReportTypeRace))
     return;
-  if (!flags()->report_atomic_races && !RaceBetweenAtomicAndFree(thr))
+  if (!flags()->report_atomic_races && !RaceBetweenAtomicAndFree(thr, cur, old))
     return;
-
-  bool freed = false;
-  {
-    Shadow s(thr->racy_state[1]);
-    freed = s.GetFreedAndReset();
-    thr->racy_state[1] = s.raw();
-  }
-
-  uptr addr = ShadowToMem((uptr)thr->racy_shadow_addr);
-  uptr addr_min = 0;
-  uptr addr_max = 0;
-  {
-    uptr a0 = addr + Shadow(thr->racy_state[0]).addr0();
-    uptr a1 = addr + Shadow(thr->racy_state[1]).addr0();
-    uptr e0 = a0 + Shadow(thr->racy_state[0]).size();
-    uptr e1 = a1 + Shadow(thr->racy_state[1]).size();
-    addr_min = min(a0, a1);
-    addr_max = max(e0, e1);
-    if (IsExpectedReport(addr_min, addr_max - addr_min))
+#if !SANITIZER_GO
+  // Don't report more than one race in the same range access.
+  // First, it's just unnecessary and can produce lots of reports.
+  // Second, thr->trace_prev_pc that we use below may become invalid.
+  // The scenario where this happens is rather elaborate and requires
+  // an instrumented __sanitizer_report_error_summary callback and
+  // a __tsan_symbolize_external callback and a race during a range memory
+  // access larger than 8 bytes. MemoryAccessRange adds the current PC to
+  // the trace and starts processing memory accesses. A first memory access
+  // triggers a race, we report it and call the instrumented
+  // __sanitizer_report_error_summary, which adds more stuff to the trace
+  // since it is intrumented. Then a second memory access in MemoryAccessRange
+  // also triggers a race and we get here and use thr->trace_prev_pc
+  // which is incorrect now.
+  // test/tsan/double_race.cpp contains a test case for this.
+  if (thr->range_access_race) {
+    if (thr->range_access_race > 1)
       return;
+    thr->range_access_race++;
   }
+#endif
+
+  const uptr kMop = 2;
+  Shadow s[kMop] = {cur, old};
+  uptr addr = ShadowToMem((uptr)shadow_mem);
+  uptr addr0 = addr + s[0].addr0();
+  uptr addr1 = addr + s[1].addr0();
+  uptr end0 = addr0 + s[0].size();
+  uptr end1 = addr1 + s[1].size();
+  uptr addr_min = min(addr0, addr1);
+  uptr addr_max = max(end0, end1);
+  if (IsExpectedReport(addr_min, addr_max - addr_min))
+    return;
   if (HandleRacyAddress(thr, addr_min, addr_max))
     return;
 
-  ReportType typ = ReportTypeRace;
-  if (thr->is_vptr_access && freed)
-    typ = ReportTypeVptrUseAfterFree;
+  VarSizeStackTrace traces[kMop];
+  ReportDesc rep;
+  rep.typ = ReportTypeRace;
+  if (thr->is_vptr_access && s[1].IsFreed())
+    rep.typ = ReportTypeVptrUseAfterFree;
   else if (thr->is_vptr_access)
-    typ = ReportTypeVptrRace;
-  else if (freed)
-    typ = ReportTypeUseAfterFree;
+    rep.typ = ReportTypeVptrRace;
+  else if (s[1].IsFreed())
+    rep.typ = ReportTypeUseAfterFree;
 
-  if (IsFiredSuppression(ctx, typ, addr))
+  if (IsFiredSuppression(ctx, rep.typ, addr))
     return;
 
-  const uptr kMop = 2;
-  VarSizeStackTrace traces[kMop];
-  uptr tags[kMop] = {kExternalTagNone};
-  uptr toppc = TraceTopPC(thr);
-  if (toppc >> kEventPCBits) {
-    // This is a work-around for a known issue.
-    // The scenario where this happens is rather elaborate and requires
-    // an instrumented __sanitizer_report_error_summary callback and
-    // a __tsan_symbolize_external callback and a race during a range memory
-    // access larger than 8 bytes. MemoryAccessRange adds the current PC to
-    // the trace and starts processing memory accesses. A first memory access
-    // triggers a race, we report it and call the instrumented
-    // __sanitizer_report_error_summary, which adds more stuff to the trace
-    // since it is intrumented. Then a second memory access in MemoryAccessRange
-    // also triggers a race and we get here and call TraceTopPC to get the
-    // current PC, however now it contains some unrelated events from the
-    // callback. Most likely, TraceTopPC will now return a EventTypeFuncExit
-    // event. Later we subtract -1 from it (in GetPreviousInstructionPc)
-    // and the resulting PC has kExternalPCBit set, so we pass it to
-    // __tsan_symbolize_external_ex. __tsan_symbolize_external_ex is within its
-    // rights to crash since the PC is completely bogus.
-    // test/tsan/double_race.cpp contains a test case for this.
-    toppc = 0;
-  }
-  ObtainCurrentStack(thr, toppc, &traces[0], &tags[0]);
-  if (IsFiredSuppression(ctx, typ, traces[0]))
+  Tid tids[kMop] = {thr->tid, kInvalidTid};
+  uptr tags[kMop] = {kExternalTagNone, kExternalTagNone};
+
+  ObtainCurrentStack(thr, thr->trace_prev_pc, &traces[0], &tags[0]);
+  if (IsFiredSuppression(ctx, rep.typ, traces[0]))
     return;
 
   // MutexSet is too large to live on stack.
   Vector<u64> mset_buffer;
   mset_buffer.Resize(sizeof(MutexSet) / sizeof(u64) + 1);
-  MutexSet *mset2 = new(&mset_buffer[0]) MutexSet();
+  MutexSet* mset1 = new (&mset_buffer[0]) MutexSet();
+  MutexSet* mset[kMop] = {&thr->mset, mset1};
 
-  Shadow s2(thr->racy_state[1]);
-  RestoreStack(s2.tid(), s2.epoch(), &traces[1], mset2, &tags[1]);
-  if (IsFiredSuppression(ctx, typ, traces[1]))
+  //!!! re slot_mtx: how atomic is this? if we detect a bug, then reset happens,
+  //!traces reset,
+  // then we try to report and fail to restore traces
+  ReportScope report_scope;
+
+  RestoreStack(EventTypeAccessEx, s[1].sid(), s[1].epoch(), addr1, s[1].size(),
+               s[1].IsRead(), s[1].IsAtomic(), s[1].IsFreed(), &tids[1],
+               &traces[1], mset[1], &tags[1]);
+  if (IsFiredSuppression(ctx, rep.typ, traces[1]))
     return;
 
   if (HandleRacyStacks(thr, traces))
     return;
 
   // If any of the accesses has a tag, treat this as an "external" race.
-  uptr tag = kExternalTagNone;
   for (uptr i = 0; i < kMop; i++) {
     if (tags[i] != kExternalTagNone) {
-      typ = ReportTypeExternalRace;
-      tag = tags[i];
+      rep.typ = ReportTypeExternalRace;
+      rep.tag = tags[i];
       break;
     }
   }
 
-  ThreadRegistryLock l0(ctx->thread_registry);
-  ScopedReport rep(typ, tag);
-  for (uptr i = 0; i < kMop; i++) {
-    Shadow s(thr->racy_state[i]);
-    rep.AddMemoryAccess(addr, tags[i], s, traces[i],
-                        i == 0 ? &thr->mset : mset2);
-  }
+  for (uptr i = 0; i < kMop; i++)
+    rep.AddMemoryAccess(addr, tags[i], s[i], tids[i], traces[i], mset[i]);
 
   for (uptr i = 0; i < kMop; i++) {
-    FastState s(thr->racy_state[i]);
-    ThreadContext *tctx = static_cast<ThreadContext*>(
-        ctx->thread_registry->GetThreadLocked(s.tid()));
-    if (s.epoch() < tctx->epoch0 || s.epoch() > tctx->epoch1)
+    if (tids[i] == kInvalidTid) //!!! should not happen
       continue;
+    ThreadContext* tctx = static_cast<ThreadContext*>(
+        ctx->thread_registry.GetThreadLocked(tids[i]));
     rep.AddThread(tctx);
   }
 
   rep.AddLocation(addr_min, addr_max - addr_min);
 
 #if !SANITIZER_GO
-  {
-    Shadow s(thr->racy_state[1]);
-    if (s.epoch() <= thr->last_sleep_clock.get(s.tid()))
-      rep.AddSleep(thr->last_sleep_stack_id);
-  }
+  if (!s[1].IsFreed() && s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
+    rep.AddSleep(thr->last_sleep_stack_id);
 #endif
 
-  OutputReport(thr, rep);
+  OutputReport(thr, &rep);
 }
 
 void PrintCurrentStack(ThreadState *thr, uptr pc) {
@@ -738,9 +781,7 @@ void PrintCurrentStack(ThreadState *thr, uptr pc) {
 ALWAYS_INLINE USED void PrintCurrentStackSlow(uptr pc) {
 #if !SANITIZER_GO
   uptr bp = GET_CURRENT_FRAME();
-  BufferedStackTrace *ptrace =
-      new(internal_alloc(MBlockStackTrace, sizeof(BufferedStackTrace)))
-          BufferedStackTrace();
+  auto ptrace = New<BufferedStackTrace>();
   ptrace->Unwind(pc, bp, nullptr, false);
 
   for (uptr i = 0; i < ptrace->size / 2; i++) {

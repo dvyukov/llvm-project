@@ -69,7 +69,7 @@ class LeakSuppressionContext {
   bool parsed = false;
   SuppressionContext context;
   bool suppressed_stacks_sorted = true;
-  InternalMmapVector<u32> suppressed_stacks;
+  InternalMmapVector<StackID> suppressed_stacks;
 
   Suppression *GetSuppressionForAddr(uptr addr);
   void LazyInit();
@@ -79,9 +79,9 @@ class LeakSuppressionContext {
                          int suppression_types_num)
       : context(supprression_types, suppression_types_num) {}
 
-  Suppression *GetSuppressionForStack(u32 stack_trace_id);
+  Suppression *GetSuppressionForStack(StackID stack_trace_id);
 
-  const InternalMmapVector<u32> &GetSortedSuppressedStacks() {
+  const InternalMmapVector<StackID> &GetSortedSuppressedStacks() {
     if (!suppressed_stacks_sorted) {
       suppressed_stacks_sorted = true;
       SortAndDedup(suppressed_stacks);
@@ -453,8 +453,8 @@ static void IgnoredSuppressedCb(uptr chunk, void *arg) {
   if (!m.allocated() || m.tag() == kIgnored)
     return;
 
-  const InternalMmapVector<u32> &suppressed =
-      *static_cast<const InternalMmapVector<u32> *>(arg);
+  const auto &suppressed =
+      *static_cast<const InternalMmapVector<StackID> *>(arg);
   uptr idx = InternalLowerBound(suppressed, m.stack_trace_id());
   if (idx >= suppressed.size() || m.stack_trace_id() != suppressed[idx])
     return;
@@ -477,8 +477,8 @@ static void CollectIgnoredCb(uptr chunk, void *arg) {
   }
 }
 
-static uptr GetCallerPC(u32 stack_id, StackDepotReverseMap *map) {
-  CHECK(stack_id);
+static uptr GetCallerPC(StackID stack_id, StackDepotReverseMap *map) {
+  CHECK_NE(stack_id, kInvalidStackID);
   StackTrace stack = map->Get(stack_id);
   // The top frame is our malloc/calloc/etc. The next frame is the caller.
   if (stack.size >= 2)
@@ -500,9 +500,9 @@ static void MarkInvalidPCCb(uptr chunk, void *arg) {
   chunk = GetUserBegin(chunk);
   LsanMetadata m(chunk);
   if (m.allocated() && m.tag() != kReachable && m.tag() != kIgnored) {
-    u32 stack_id = m.stack_trace_id();
+    StackID stack_id = m.stack_trace_id();
     uptr caller_pc = 0;
-    if (stack_id > 0)
+    if (stack_id != kInvalidStackID)
       caller_pc = GetCallerPC(stack_id, param->stack_depot_reverse_map);
     // If caller_pc is unknown, this chunk may be allocated in a coroutine. Mark
     // it as reachable, as we can't properly report its allocation stack anyway.
@@ -547,11 +547,11 @@ void ProcessPC(Frontier *frontier) {
 // Sets the appropriate tag on each chunk.
 static void ClassifyAllChunks(SuspendedThreadsList const &suspended_threads,
                               Frontier *frontier) {
-  const InternalMmapVector<u32> &suppressed_stacks =
+  const InternalMmapVector<StackID> &suppressed_stacks =
       GetSuppressionContext()->GetSortedSuppressedStacks();
   if (!suppressed_stacks.empty()) {
     ForEachChunk(IgnoredSuppressedCb,
-                 const_cast<InternalMmapVector<u32> *>(&suppressed_stacks));
+                 const_cast<InternalMmapVector<StackID> *>(&suppressed_stacks));
   }
   ForEachChunk(CollectIgnoredCb, frontier);
   ProcessGlobalRegions(frontier);
@@ -584,8 +584,8 @@ static void ResetTagsCb(uptr chunk, void *arg) {
     m.set_tag(kDirectlyLeaked);
 }
 
-static void PrintStackTraceById(u32 stack_trace_id) {
-  CHECK(stack_trace_id);
+static void PrintStackTraceById(StackID stack_trace_id) {
+  CHECK_NE(stack_trace_id, kInvalidStackID);
   StackDepotGet(stack_trace_id).Print();
 }
 
@@ -599,7 +599,7 @@ static void CollectLeaksCb(uptr chunk, void *arg) {
   if (!m.allocated()) return;
   if (m.tag() == kDirectlyLeaked || m.tag() == kIndirectlyLeaked) {
     u32 resolution = flags()->resolution;
-    u32 stack_trace_id = 0;
+    StackID stack_trace_id = kInvalidStackID;
     if (resolution > 0) {
       StackTrace stack = StackDepotGet(m.stack_trace_id());
       stack.size = Min(stack.size, resolution);
@@ -780,7 +780,7 @@ Suppression *LeakSuppressionContext::GetSuppressionForAddr(uptr addr) {
 }
 
 Suppression *LeakSuppressionContext::GetSuppressionForStack(
-    u32 stack_trace_id) {
+    StackID stack_trace_id) {
   LazyInit();
   StackTrace stack = StackDepotGet(stack_trace_id);
   for (uptr i = 0; i < stack.size; i++) {
@@ -804,7 +804,7 @@ Suppression *LeakSuppressionContext::GetSuppressionForStack(
 // use a hash table.
 const uptr kMaxLeaksConsidered = 5000;
 
-void LeakReport::AddLeakedChunk(uptr chunk, u32 stack_trace_id,
+void LeakReport::AddLeakedChunk(uptr chunk, StackID stack_trace_id,
                                 uptr leaked_size, ChunkTag tag) {
   CHECK(tag == kDirectlyLeaked || tag == kIndirectlyLeaked);
   bool is_directly_leaked = (tag == kDirectlyLeaked);

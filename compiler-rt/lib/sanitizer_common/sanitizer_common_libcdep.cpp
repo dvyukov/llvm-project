@@ -39,7 +39,7 @@ void *BackgroundThread(void *arg) {
   bool reached_soft_rss_limit = false;
   uptr rss_during_last_reported_profile = 0;
   while (true) {
-    SleepForMillis(100);
+    internal_usleep(100 * 1000);
     const uptr current_rss_mb = GetRSS() >> 20;
     if (Verbosity()) {
       // If RSS has grown 10% since last time, print some information.

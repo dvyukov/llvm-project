@@ -175,6 +175,7 @@ void StatOutput(u64 *stat) {
   name[StatMtxRacy]                      = "  RacyStacks                      ";
   name[StatMtxFD]                        = "  FD                              ";
   name[StatMtxGlobalProc]                = "  GlobalProc                      ";
+  name[StatMtxTraceAlloc                 = "  TraceAlloc                      ";
 
   Printf("Statistics:\n");
   for (int i = 0; i < StatCnt; i++)

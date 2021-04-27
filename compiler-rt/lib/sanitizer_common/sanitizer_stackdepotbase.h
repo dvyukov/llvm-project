@@ -30,7 +30,7 @@ class StackDepotBase {
   // Maps stack trace to an unique id.
   handle_type Put(args_type args, bool *inserted = nullptr);
   // Retrieves a stored stack trace by the id.
-  args_type Get(u32 id);
+  args_type Get(StackID id);
 
   StackDepotStats *GetStats() { return &stats; }
 
@@ -127,7 +127,7 @@ StackDepotBase<Node, kReservedBits, kTabSizeLog>::Put(args_type args,
   uptr memsz = Node::storage_size(args);
   s = (Node *)PersistentAlloc(memsz);
   stats.allocated += memsz;
-  s->id = id;
+  s->id = static_cast<StackID>(id);
   s->store(args, h);
   s->link = s2;
   unlock(p, s);
@@ -137,10 +137,11 @@ StackDepotBase<Node, kReservedBits, kTabSizeLog>::Put(args_type args,
 
 template <class Node, int kReservedBits, int kTabSizeLog>
 typename StackDepotBase<Node, kReservedBits, kTabSizeLog>::args_type
-StackDepotBase<Node, kReservedBits, kTabSizeLog>::Get(u32 id) {
-  if (id == 0) {
+StackDepotBase<Node, kReservedBits, kTabSizeLog>::Get(StackID id0) {
+  if (id0 == kInvalidStackID) {
     return args_type();
   }
+  u32 id = static_cast<u32>(id0);
   CHECK_EQ(id & (((u32)-1) >> kReservedBits), id);
   // High kPartBits contain part id, so we need to scan at most kPartSize lists.
   uptr part = id >> kPartShift;
@@ -151,7 +152,7 @@ StackDepotBase<Node, kReservedBits, kTabSizeLog>::Get(u32 id) {
     uptr v = atomic_load(p, memory_order_consume);
     Node *s = (Node *)(v & ~1);
     for (; s; s = s->link) {
-      if (s->id == id) {
+      if (s->id == id0) {
         return s->load();
       }
     }

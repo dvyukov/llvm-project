@@ -27,41 +27,48 @@
 #include "tsan_platform.h"
 #include "tsan_rtl.h"
 
-#include <fcntl.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <sys/mman.h>
-#if SANITIZER_LINUX
-#include <sys/personality.h>
-#include <setjmp.h>
-#endif
-#include <sys/syscall.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <sched.h>
-#include <dlfcn.h>
-#if SANITIZER_LINUX
-#define __need_res_state
-#include <resolv.h>
-#endif
+#  include <errno.h>
+#  include <fcntl.h>
+#  include <link.h>
+#  include <pthread.h>
+#  include <signal.h>
+#  include <stdarg.h>
+#  include <stdio.h>
+#  include <stdlib.h>
+#  include <string.h>
+#  include <sys/mman.h>
+#  if SANITIZER_LINUX
+#    include <sys/personality.h>
+#    include <setjmp.h>
+#  endif
+#  include <sys/syscall.h>
+#  include <sys/socket.h>
+#  include <sys/time.h>
+#  include <sys/types.h>
+#  include <sys/resource.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#  include <sched.h>
+#  include <dlfcn.h>
+#  if SANITIZER_LINUX
+#    define __need_res_state
+#    include <resolv.h>
+#  endif
 
-#ifdef sa_handler
-# undef sa_handler
-#endif
+// p_type from resolv.h conflicts with Elf_Phdr.p_type in link.h.
+#  ifdef p_type
+#    undef p_type
+#  endif
 
-#ifdef sa_sigaction
-# undef sa_sigaction
-#endif
+#  ifdef sa_handler
+#    undef sa_handler
+#  endif
 
-#if SANITIZER_FREEBSD
+#  ifdef sa_sigaction
+#    undef sa_sigaction
+#  endif
+
+#  if SANITIZER_FREEBSD
 extern "C" void *__libc_stack_end;
 void *__libc_stack_end = 0;
 #endif
@@ -91,15 +98,14 @@ uptr vmaSize;
 #endif
 
 enum {
-  MemTotal  = 0,
-  MemShadow = 1,
-  MemMeta   = 2,
-  MemFile   = 3,
-  MemMmap   = 4,
-  MemTrace  = 5,
-  MemHeap   = 6,
-  MemOther  = 7,
-  MemCount  = 8,
+  MemTotal,
+  MemShadow,
+  MemMeta,
+  MemFile,
+  MemMmap,
+  MemHeap,
+  MemOther,
+  MemCount,
 };
 
 void FillProfileCallback(uptr p, uptr rss, bool file,
@@ -120,8 +126,6 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
   else if (p >= AppMemBeg() && p < AppMemEnd())
     mem[file ? MemFile : MemMmap] += rss;
 #endif
-  else if (p >= TraceMemBeg() && p < TraceMemEnd())
-    mem[MemTrace] += rss;
   else
     mem[MemOther] += rss;
 }
@@ -132,13 +136,13 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
   __sanitizer::GetMemoryProfile(FillProfileCallback, mem, 7);
   StackDepotStats *stacks = StackDepotGetStats();
   internal_snprintf(buf, buf_size,
-      "RSS %zd MB: shadow:%zd meta:%zd file:%zd mmap:%zd"
-      " trace:%zd heap:%zd other:%zd stacks=%zd[%zd] nthr=%zd/%zd\n",
-      mem[MemTotal] >> 20, mem[MemShadow] >> 20, mem[MemMeta] >> 20,
-      mem[MemFile] >> 20, mem[MemMmap] >> 20, mem[MemTrace] >> 20,
-      mem[MemHeap] >> 20, mem[MemOther] >> 20,
-      stacks->allocated >> 20, stacks->n_uniq_ids,
-      nlive, nthread);
+                    "RSS %zd MB: shadow:%zd meta:%zd file:%zd mmap:%zd"
+                    " heap:%zd other:%zd stacks=%zd[%zd] nthr=%zd/%zd\n",
+                    mem[MemTotal] >> 20, mem[MemShadow] >> 20,
+                    mem[MemMeta] >> 20, mem[MemFile] >> 20, mem[MemMmap] >> 20,
+                    mem[MemHeap] >> 20, mem[MemOther] >> 20,
+                    stacks->allocated >> 20, stacks->n_uniq_ids, nlive,
+                    nthread);
 }
 
 #if SANITIZER_LINUX
@@ -178,12 +182,13 @@ static void MapRodata() {
   internal_unlink(name);  // Unlink it now, so that we can reuse the buffer.
   fd_t fd = openrv;
   // Fill the file with kShadowRodata.
-  const uptr kMarkerSize = 512 * 1024 / sizeof(u64);
-  InternalMmapVector<u64> marker(kMarkerSize);
+  const uptr kMarkerSize = 512 * 1024 / sizeof(RawShadow);
+  InternalMmapVector<RawShadow> marker(kMarkerSize);
   // volatile to prevent insertion of memset
-  for (volatile u64 *p = marker.data(); p < marker.data() + kMarkerSize; p++)
-    *p = kShadowRodata;
-  internal_write(fd, marker.data(), marker.size() * sizeof(u64));
+  for (volatile RawShadow* p = marker.data(); p < marker.data() + kMarkerSize;
+       p++)
+    *p = Shadow::kShadowRodata;
+  internal_write(fd, marker.data(), marker.size() * sizeof(RawShadow));
   // Map the file into memory.
   uptr page = internal_mmap(0, GetPageSizeCached(), PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, fd, 0);
@@ -202,10 +207,11 @@ static void MapRodata() {
       // Assume it's .rodata
       char *shadow_start = (char *)MemToShadow(segment.start);
       char *shadow_end = (char *)MemToShadow(segment.end);
-      for (char *p = shadow_start; p < shadow_end;
-           p += marker.size() * sizeof(u64)) {
-        internal_mmap(p, Min<uptr>(marker.size() * sizeof(u64), shadow_end - p),
-                      PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, 0);
+      for (char* p = shadow_start; p < shadow_end;
+           p += marker.size() * sizeof(RawShadow)) {
+        internal_mmap(
+            p, Min<uptr>(marker.size() * sizeof(RawShadow), shadow_end - p),
+            PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, 0);
       }
     }
   }
@@ -268,6 +274,78 @@ void InitializePlatformEarly() {
 #endif
 }
 
+void ThreadPreempt(ThreadState* thr) {
+  //!!! this won't work for Go
+  DPrintf("#%d: peempting\n", thr->tid);
+  siginfo_t info;
+  internal_memset(&info, 0, sizeof(info));
+  info.si_code = -66;
+  info.si_pid = internal_getpid();
+  info.si_value.sival_ptr = (void*)0x1234;
+  if (syscall(SYS_rt_tgsigqueueinfo, info.si_pid, thr->tctx->os_id, SIGUSR1,
+              &info)) {
+    Printf("ThreadSanitizer: rt_tgsigqueueinfo failed (%d)\n", errno);
+    Die();
+  }
+}
+
+#  if TSAN_FAST_FLAT
+uptr flat_start = -1;
+uptr flat_end = 0;
+#  endif
+
+void PreemptHijack() {
+#  if !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  DPrintf("#%d: PreemptHijack\n", thr->tid);
+  //!!! only if still requested
+  CompleteReset(thr);
+#  endif
+}
+
+bool HandlePreemptSignal(ThreadState* thr, int sig, void* info1, void* ctx) {
+#  if !SANITIZER_GO
+  siginfo_t* info = (siginfo_t*)info1;
+  if (thr->unwind_abort) {
+    PrintCurrentStack(thr, 0);
+    return true;
+  }
+  if (sig != SIGUSR1 || info->si_pid != (int)internal_getpid() ||
+      info->si_code != -66 || info->si_value.sival_ptr != (void*)0x1234)
+    return false;
+  DPrintf("#%d: PreemptHandler\n", thr->tid);
+#    if TSAN_FAST_FLAT
+  ucontext_t* uctx = (ucontext_t*)ctx;
+  uptr pc = uctx->uc_mcontext.gregs[REG_RIP];
+  if (pc >= flat_start && pc < flat_end) {
+    uptr sp = uctx->uc_mcontext.gregs[REG_RSP];
+    DPrintf("#%d: PreemptHandler: flat pc=%p sp=%p\n", thr->tid, pc, sp);
+    ((void**)sp)[-1] = (void*)PreemptHijack;
+    uctx->uc_mcontext.gregs[REG_RSP] = sp - sizeof(void*);
+    return true;
+  }
+#    endif
+  //!!! only if still requested
+  if (atomic_load_relaxed(&thr->in_runtime)) {
+    atomic_store_relaxed(&thr->reset_pending, 1); //!!! where do we reset it?
+    return true;
+  }
+  //!!! the thread may not own a slot at all (e.g. blocking call or finished).
+  //!!! only if still requested
+  CompleteReset(thr);
+#  endif
+  return true;
+}
+
+void PreemptHandler(int sig, siginfo_t* info, void* ctx) {
+#  if !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  CHECK(HandlePreemptSignal(thr, sig, info, ctx));
+#  endif
+}
+
+void* TsanFlatStart();
+
 void InitializePlatform() {
   DisableCoreDumperIfNecessary();
 
@@ -317,9 +395,36 @@ void InitializePlatform() {
       ReExec();
   }
 
-  CheckAndProtect();
+  MappingCheckAndProtect();
   InitTlsSize();
 #endif  // !SANITIZER_GO
+
+#  if TSAN_FAST_FLAT
+  for (void** flat = flat_funcs; *flat; flat++) {
+    Dl_info info = {};
+    Elf64_Sym* sym = nullptr;
+    if (!dladdr1(*flat, &info, (void**)&sym, RTLD_DL_SYMENT)) {
+      Printf("ThreadSanitizer: dladdr(%p) failed\n", *flat);
+      Die();
+    }
+    if (flat_start > sym->st_value)
+      flat_start = sym->st_value;
+    if (flat_end < sym->st_value + sym->st_size)
+      flat_end = sym->st_value + sym->st_size;
+  }
+  DPrintf("flat region: %p-%p (%p)\n", flat_start, flat_end,
+          flat_end - flat_start);
+#  endif
+
+  __sanitizer_sigaction act;
+  internal_memset(&act, 0, sizeof(act));
+  act.sigaction = (__sanitizer_sigactionhandler_ptr)PreemptHandler;
+  act.sa_flags = SA_SIGINFO;
+  internal_sigfillset(&act.sa_mask);
+  if (internal_sigaction(SIGUSR1, &act, nullptr)) {
+    Printf("ThreadSanitizer: sigaction(SIGUSR1) failed\n");
+    Die();
+  }
 }
 
 #if !SANITIZER_GO
@@ -494,7 +599,7 @@ ThreadState *cur_thread() {
       if (dead_thread_state == nullptr) {
         dead_thread_state = reinterpret_cast<ThreadState*>(
             MmapOrDie(sizeof(ThreadState), "ThreadState"));
-        dead_thread_state->fast_state.SetIgnoreBit();
+        dead_thread_state->ignore_enabled_ = true;
         dead_thread_state->ignore_interceptors = 1;
         dead_thread_state->is_dead = true;
         *const_cast<u32*>(&dead_thread_state->tid) = -1;

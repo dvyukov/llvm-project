@@ -125,6 +125,7 @@ const int SIGBUS = 10;
 const int SIGSYS = 12;
 #else
 const int SIGBUS = 7;
+const int SIGUSR1 = 10;
 const int SIGSYS = 31;
 #endif
 void *const MAP_FAILED = (void*)-1;
@@ -160,7 +161,6 @@ const int SIG_SETMASK = 2;
 namespace __tsan {
 struct SignalDesc {
   bool armed;
-  bool sigaction;
   __sanitizer_siginfo siginfo;
   ucontext_t ctx;
 };
@@ -241,7 +241,7 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   ThreadSignalContext *ctx = (ThreadSignalContext*)thr->signal_ctx;
   if (ctx == 0 && !thr->is_dead) {
     ctx = (ThreadSignalContext*)MmapOrDie(sizeof(*ctx), "ThreadSignalContext");
-    MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
+    // MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
     thr->signal_ctx = ctx;
   }
   return ctx;
@@ -252,8 +252,11 @@ ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
     : thr_(thr), pc_(pc), in_ignored_lib_(false), ignoring_(false) {
   Initialize(thr);
   if (!thr_->is_inited) return;
-  if (!thr_->ignore_interceptors) FuncEntry(thr, pc);
-  DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
+  if (!thr_->ignore_interceptors) {
+    ScopedRuntime rt(thr_);
+    FuncEntry(thr, pc);
+  }
+  // DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
   ignoring_ =
       !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
                                 libignore()->IsIgnored(pc, &in_ignored_lib_));
@@ -265,8 +268,11 @@ ScopedInterceptor::~ScopedInterceptor() {
   DisableIgnores();
   if (!thr_->ignore_interceptors) {
     ProcessPendingSignals(thr_);
-    FuncExit(thr_);
-    CheckNoLocks(thr_);
+    {
+      ScopedRuntime rt(thr_);
+      FuncExit(thr_);
+    }
+    CheckNoLocks();
   }
 }
 
@@ -515,8 +521,11 @@ static void LongJmp(ThreadState *thr, uptr *env) {
     if (buf->sp == sp) {
       CHECK_GE(thr->shadow_stack_pos, buf->shadow_stack_pos);
       // Unwind the stack.
-      while (thr->shadow_stack_pos > buf->shadow_stack_pos)
-        FuncExit(thr);
+      {
+        ScopedRuntime rt(thr);
+        while (thr->shadow_stack_pos > buf->shadow_stack_pos)
+          FuncExit(thr);
+      }
       ThreadSignalContext *sctx = SigCtx(thr);
       if (sctx) {
         sctx->int_signal_send = buf->int_signal_send;
@@ -780,7 +789,7 @@ static void *mmap_interceptor(ThreadState *thr, uptr pc, Mmap real_mmap,
       Die();
     }
     if (fd > 0) FdAccess(thr, pc, fd);
-    MemoryRangeImitateWriteOrResetRange(thr, pc, (uptr)res, sz);
+    MemoryRangeImitateWriteOrReset(thr, pc, (uptr)res, sz);
   }
   return res;
 }
@@ -933,7 +942,7 @@ static void thread_finalize(void *v) {
 struct ThreadParam {
   void* (*callback)(void *arg);
   void *param;
-  atomic_uintptr_t tid;
+  atomic_uint32_t tid;
 };
 
 extern "C" void *__tsan_thread_start_func(void *arg) {
@@ -959,7 +968,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
       internal_sched_yield();
     Processor *proc = ProcCreate();
     ProcWire(proc, thr);
-    ThreadStart(thr, tid, GetTid(), ThreadType::Regular);
+    ThreadStart(thr, static_cast<Tid>(tid), GetTid(), ThreadType::Regular);
     atomic_store(&p->tid, 0, memory_order_release);
   }
   void *res = callback(param);
@@ -1009,7 +1018,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     ThreadIgnoreEnd(thr, pc);
   }
   if (res == 0) {
-    int tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
+    Tid tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
     CHECK_NE(tid, 0);
     // Synchronization on p.tid serves two purposes:
     // 1. ThreadCreate must finish before the new thread starts.
@@ -1018,7 +1027,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     // 2. ThreadStart must finish before this thread continues.
     //    Otherwise, this thread can call pthread_detach and reset thr->sync
     //    before the new thread got a chance to acquire from it in ThreadStart.
-    atomic_store(&p.tid, tid, memory_order_release);
+    atomic_store(&p.tid, static_cast<int>(tid), memory_order_release);
     while (atomic_load(&p.tid, memory_order_acquire) != 0)
       internal_sched_yield();
   }
@@ -1029,7 +1038,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
 
 TSAN_INTERCEPTOR(int, pthread_join, void *th, void **ret) {
   SCOPED_INTERCEPTOR_RAW(pthread_join, th, ret);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_join)(th, ret);
   ThreadIgnoreEnd(thr, pc);
@@ -1043,7 +1052,7 @@ DEFINE_REAL_PTHREAD_FUNCTIONS
 
 TSAN_INTERCEPTOR(int, pthread_detach, void *th) {
   SCOPED_INTERCEPTOR_RAW(pthread_detach, th);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   int res = REAL(pthread_detach)(th);
   if (res == 0) {
     ThreadDetach(thr, pc, tid);
@@ -1064,7 +1073,7 @@ TSAN_INTERCEPTOR(void, pthread_exit, void *retval) {
 #if SANITIZER_LINUX
 TSAN_INTERCEPTOR(int, pthread_tryjoin_np, void *th, void **ret) {
   SCOPED_INTERCEPTOR_RAW(pthread_tryjoin_np, th, ret);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = REAL(pthread_tryjoin_np)(th, ret);
   ThreadIgnoreEnd(thr, pc);
@@ -1078,7 +1087,7 @@ TSAN_INTERCEPTOR(int, pthread_tryjoin_np, void *th, void **ret) {
 TSAN_INTERCEPTOR(int, pthread_timedjoin_np, void *th, void **ret,
                  const struct timespec *abstime) {
   SCOPED_INTERCEPTOR_RAW(pthread_timedjoin_np, th, ret, abstime);
-  int tid = ThreadConsumeTid(thr, pc, (uptr)th);
+  Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_timedjoin_np)(th, ret, abstime);
   ThreadIgnoreEnd(thr, pc);
@@ -1138,6 +1147,7 @@ struct CondMutexUnlockCtx {
   void *m;
   void *c;
   const Fn &fn;
+  bool in_ignored_lib;
 
   int Cancel() const { return fn(); }
   void Unlock() const;
@@ -1153,6 +1163,7 @@ void CondMutexUnlockCtx<Fn>::Unlock() const {
   ThreadSignalContext *ctx = SigCtx(thr);
   CHECK_EQ(atomic_load(&ctx->in_blocking_func, memory_order_relaxed), 1);
   atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+  thr->in_ignored_lib = in_ignored_lib;
   MutexPostLock(thr, pc, (uptr)m, MutexFlagDoPreLockOnPostLock);
   // Undo BlockingCall ctor effects.
   thr->ignore_interceptors--;
@@ -1178,13 +1189,18 @@ int cond_wait(ThreadState *thr, uptr pc, ScopedInterceptor *si, const Fn &fn,
   {
     // Enable signal delivery while the thread is blocked.
     BlockingCall bc(thr);
-    CondMutexUnlockCtx<Fn> arg = {si, thr, pc, m, c, fn};
+    CondMutexUnlockCtx<Fn> arg = {si, thr, pc, m, c, fn, thr->in_ignored_lib};
+    // pthread_cond_wait may call pthread_once before calling the cancel
+    // callback, we need to ignore it because we don't have tid slot attached
+    // and can't process synchronization.
+    thr->in_ignored_lib = true;
     res = call_pthread_cancel_with_cleanup(
         [](void *arg) -> int {
           return ((const CondMutexUnlockCtx<Fn> *)arg)->Cancel();
         },
         [](void *arg) { ((const CondMutexUnlockCtx<Fn> *)arg)->Unlock(); },
         &arg);
+    thr->in_ignored_lib = arg.in_ignored_lib;
   }
   if (res == errno_EOWNERDEAD) MutexRepair(thr, pc, (uptr)m);
   MutexPostLock(thr, pc, (uptr)m, MutexFlagDoPreLockOnPostLock);
@@ -1303,7 +1319,7 @@ TSAN_INTERCEPTOR(int, pthread_mutex_trylock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_mutex_timedlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_mutex_timedlock, m, abstime);
-  int res = REAL(pthread_mutex_timedlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_mutex_timedlock)(m, abstime);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m, MutexFlagTryLock);
   }
@@ -1333,7 +1349,7 @@ TSAN_INTERCEPTOR(int, pthread_spin_destroy, void *m) {
 TSAN_INTERCEPTOR(int, pthread_spin_lock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_spin_lock, m);
   MutexPreLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_spin_lock)(m);
+  int res = BLOCK_REAL(pthread_spin_lock)(m);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m);
   }
@@ -1378,7 +1394,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_destroy, void *m) {
 TSAN_INTERCEPTOR(int, pthread_rwlock_rdlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_rdlock, m);
   MutexPreReadLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_rwlock_rdlock)(m);
+  int res = BLOCK_REAL(pthread_rwlock_rdlock)(m);
   if (res == 0) {
     MutexPostReadLock(thr, pc, (uptr)m);
   }
@@ -1397,7 +1413,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_tryrdlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_rwlock_timedrdlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_timedrdlock, m, abstime);
-  int res = REAL(pthread_rwlock_timedrdlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_rwlock_timedrdlock)(m, abstime);
   if (res == 0) {
     MutexPostReadLock(thr, pc, (uptr)m);
   }
@@ -1408,7 +1424,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_timedrdlock, void *m, void *abstime) {
 TSAN_INTERCEPTOR(int, pthread_rwlock_wrlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_wrlock, m);
   MutexPreLock(thr, pc, (uptr)m);
-  int res = REAL(pthread_rwlock_wrlock)(m);
+  int res = BLOCK_REAL(pthread_rwlock_wrlock)(m);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m);
   }
@@ -1427,7 +1443,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_trywrlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_rwlock_timedwrlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_timedwrlock, m, abstime);
-  int res = REAL(pthread_rwlock_timedwrlock)(m, abstime);
+  int res = BLOCK_REAL(pthread_rwlock_timedwrlock)(m, abstime);
   if (res == 0) {
     MutexPostLock(thr, pc, (uptr)m, MutexFlagTryLock);
   }
@@ -1445,14 +1461,14 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_unlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_barrier_init, void *b, void *a, unsigned count) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_init, b, a, count);
-  MemoryWrite(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryWrite(thr, pc, (uptr)b, kSizeLog1);
   int res = REAL(pthread_barrier_init)(b, a, count);
   return res;
 }
 
 TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_destroy, b);
-  MemoryWrite(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryWrite(thr, pc, (uptr)b, kSizeLog1);
   int res = REAL(pthread_barrier_destroy)(b);
   return res;
 }
@@ -1460,9 +1476,9 @@ TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
 TSAN_INTERCEPTOR(int, pthread_barrier_wait, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_wait, b);
   Release(thr, pc, (uptr)b);
-  MemoryRead(thr, pc, (uptr)b, kSizeLog1);
-  int res = REAL(pthread_barrier_wait)(b);
-  MemoryRead(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryRead(thr, pc, (uptr)b, kSizeLog1);
+  int res = BLOCK_REAL(pthread_barrier_wait)(b);
+  RtMemoryRead(thr, pc, (uptr)b, kSizeLog1);
   if (res == 0 || res == PTHREAD_BARRIER_SERIAL_THREAD) {
     Acquire(thr, pc, (uptr)b);
   }
@@ -1931,9 +1947,24 @@ TSAN_INTERCEPTOR(int, pthread_sigmask, int how, const __sanitizer_sigset_t *set,
 
 namespace __tsan {
 
-static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
-                                  bool sigact, int sig,
-                                  __sanitizer_siginfo *info, void *uctx) {
+void ReportErrnoSpoiling(ThreadState* thr, uptr pc) {
+  VarSizeStackTrace stack;
+  // StackTrace::GetNestInstructionPc(pc) is used because return address is
+  // expected, OutputReport() will undo this.
+  ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
+  ReportDesc rep;
+  ScopedRuntime rt(thr);
+  ReportScope report_scope;
+  rep.typ = ReportTypeErrnoInSignal;
+  if (IsFiredSuppression(ctx, rep.typ, stack))
+    return;
+  rep.AddStack(stack, true);
+  OutputReport(thr, &rep);
+}
+
+void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
+                           __sanitizer_siginfo* info, void* uctx) {
+  CHECK(thr->slot);
   __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
@@ -1944,9 +1975,14 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   int ignore_reads_and_writes = thr->ignore_reads_and_writes;
   int ignore_interceptors = thr->ignore_interceptors;
   int ignore_sync = thr->ignore_sync;
+  //!!! in_runtime can happen inside of BlockingCall.
+  // Ideally, we reset in_runtime inside of BlockingCall.
+  int in_runtime = atomic_load_relaxed(&thr->in_runtime);
+  // Note: slot can be changed after this line.
+  atomic_store_relaxed(&thr->in_runtime, 0);
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_reads_and_writes = 0;
-    thr->fast_state.ClearIgnoreBit();
+    thr->ignore_enabled_ = false;
     thr->ignore_interceptors = 0;
     thr->ignore_sync = 0;
   }
@@ -1956,18 +1992,16 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // This code races with sigaction. Be careful to not read sa_sigaction twice.
   // Also need to remember pc for reporting before the call,
   // because the handler can reset it.
-  volatile uptr pc =
-      sigact ? (uptr)sigactions[sig].sigaction : (uptr)sigactions[sig].handler;
-  if (pc != sig_dfl && pc != sig_ign) {
-    if (sigact)
-      ((__sanitizer_sigactionhandler_ptr)pc)(sig, info, uctx);
-    else
-      ((__sanitizer_sighandler_ptr)pc)(sig);
-  }
+  volatile uptr pc = (sigactions[sig].sa_flags & SA_SIGINFO)
+                         ? (uptr)sigactions[sig].sigaction
+                         : (uptr)sigactions[sig].handler;
+  if (pc != sig_dfl && pc != sig_ign)
+    ((__sanitizer_sigactionhandler_ptr)pc)(sig, info, uctx);
+  atomic_store_relaxed(&thr->in_runtime, in_runtime);
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_reads_and_writes = ignore_reads_and_writes;
     if (ignore_reads_and_writes)
-      thr->fast_state.SetIgnoreBit();
+      thr->ignore_enabled_ = true;
     thr->ignore_interceptors = ignore_interceptors;
     thr->ignore_sync = ignore_sync;
   }
@@ -1978,23 +2012,16 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // because in async signal processing case (when handler is called directly
   // from rtl_generic_sighandler) we have not yet received the reraised
   // signal; and it looks too fragile to intercept all ways to reraise a signal.
-  if (ShouldReport(thr, ReportTypeErrnoInSignal) && !sync && sig != SIGTERM &&
-      errno != 99) {
-    VarSizeStackTrace stack;
-    // StackTrace::GetNestInstructionPc(pc) is used because return address is
-    // expected, OutputReport() will undo this.
-    ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
-    ThreadRegistryLock l(ctx->thread_registry);
-    ScopedReport rep(ReportTypeErrnoInSignal);
-    if (!IsFiredSuppression(ctx, ReportTypeErrnoInSignal, stack)) {
-      rep.AddStack(stack, true);
-      OutputReport(thr, rep);
-    }
-  }
+  if (errno != 99 && !sync && sig != SIGTERM &&
+      ShouldReport(thr, ReportTypeErrnoInSignal))
+    ReportErrnoSpoiling(thr, pc);
   errno = saved_errno;
 }
 
 void ProcessPendingSignals(ThreadState *thr) {
+  //!!! how this will work with Go?
+  CHECK_EQ(atomic_load_relaxed(&thr->in_runtime), 0);
+  CheckReset(thr);
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sctx == 0 ||
       atomic_load(&sctx->have_pending_signals, memory_order_relaxed) == 0)
@@ -2008,8 +2035,8 @@ void ProcessPendingSignals(ThreadState *thr) {
     SignalDesc *signal = &sctx->pending_signals[sig];
     if (signal->armed) {
       signal->armed = false;
-      CallUserSignalHandler(thr, false, true, signal->sigaction, sig,
-          &signal->siginfo, &signal->ctx);
+      CallUserSignalHandler(thr, false, true, sig, &signal->siginfo,
+                            &signal->ctx);
     }
   }
   res = REAL(pthread_sigmask)(SIG_SETMASK, &sctx->oldset, 0);
@@ -2026,11 +2053,11 @@ static bool is_sync_signal(ThreadSignalContext *sctx, int sig) {
          (sctx && sig == sctx->int_signal_send);
 }
 
-void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
-                                          __sanitizer_siginfo *info,
-                                          void *ctx) {
+void sighandler(int sig, __sanitizer_siginfo* info, void* ctx) {
   cur_thread_init();
   ThreadState *thr = cur_thread();
+  if (HandlePreemptSignal(thr, sig, info, ctx))
+    return;
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sig < 0 || sig >= kSigCount) {
     VPrintf(1, "ThreadSanitizer: ignoring signal %d\n", sig);
@@ -2046,7 +2073,7 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
     atomic_fetch_add(&thr->in_signal_handler, 1, memory_order_relaxed);
     if (sctx && atomic_load(&sctx->in_blocking_func, memory_order_relaxed)) {
       atomic_store(&sctx->in_blocking_func, 0, memory_order_relaxed);
-      CallUserSignalHandler(thr, sync, true, sigact, sig, info, ctx);
+      CallUserSignalHandler(thr, sync, true, sig, info, ctx);
       atomic_store(&sctx->in_blocking_func, 1, memory_order_relaxed);
     } else {
       // Be very conservative with when we do acquire in this case.
@@ -2055,7 +2082,7 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
       // SIGSYS looks relatively safe -- it's synchronous and can actually
       // need some global state.
       bool acq = (sig == SIGSYS);
-      CallUserSignalHandler(thr, sync, acq, sigact, sig, info, ctx);
+      CallUserSignalHandler(thr, sync, acq, sig, info, ctx);
     }
     atomic_fetch_add(&thr->in_signal_handler, -1, memory_order_relaxed);
     return;
@@ -2066,21 +2093,10 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
   SignalDesc *signal = &sctx->pending_signals[sig];
   if (signal->armed == false) {
     signal->armed = true;
-    signal->sigaction = sigact;
-    if (info)
-      internal_memcpy(&signal->siginfo, info, sizeof(*info));
-    if (ctx)
-      internal_memcpy(&signal->ctx, ctx, sizeof(signal->ctx));
+    internal_memcpy(&signal->siginfo, info, sizeof(*info));
+    internal_memcpy(&signal->ctx, ctx, sizeof(signal->ctx));
     atomic_store(&sctx->have_pending_signals, 1, memory_order_relaxed);
   }
-}
-
-static void rtl_sighandler(int sig) {
-  rtl_generic_sighandler(false, sig, 0, 0);
-}
-
-static void rtl_sigaction(int sig, __sanitizer_siginfo *info, void *ctx) {
-  rtl_generic_sighandler(true, sig, info, ctx);
 }
 
 TSAN_INTERCEPTOR(int, raise, int sig) {
@@ -2205,7 +2221,8 @@ struct dl_iterate_phdr_data {
 };
 
 static bool IsAppNotRodata(uptr addr) {
-  return IsAppMem(addr) && *(u64*)MemToShadow(addr) != kShadowRodata;
+  return IsAppMem(addr) &&
+         *(RawShadow*)MemToShadow(addr) != Shadow::kShadowRodata;
 }
 
 static int dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,
@@ -2344,8 +2361,8 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \
   ThreadSetName(((TsanInterceptorContext *) ctx)->thr, name)
 
-#define COMMON_INTERCEPTOR_SET_PTHREAD_NAME(ctx, thread, name) \
-  __tsan::ctx->thread_registry->SetThreadNameByUserId(thread, name)
+#define COMMON_INTERCEPTOR_SET_PTHREAD_NAME(ctx, thread, name)                 \
+  __tsan::ctx->thread_registry.SetThreadNameByUserId(thread, name)
 
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
 
@@ -2441,22 +2458,18 @@ int sigaction_impl(int sig, const __sanitizer_sigaction *act,
 #endif
     internal_memcpy(&newact, act, sizeof(newact));
     internal_sigfillset(&newact.sa_mask);
-    if ((uptr)act->handler != sig_ign && (uptr)act->handler != sig_dfl) {
-      if (newact.sa_flags & SA_SIGINFO)
-        newact.sigaction = rtl_sigaction;
-      else
-        newact.handler = rtl_sighandler;
+    newact.sa_flags |= SA_SIGINFO;
+    // Need to always handle SIGUSR1 as it's used in ThreadPreempt.
+    if (sig == SIGUSR1 ||
+        ((uptr)act->handler != sig_ign && (uptr)act->handler != sig_dfl)) {
+      newact.sigaction = sighandler;
+      ReleaseStore(thr, pc, (uptr)&sigactions[sig]);
     }
-    ReleaseStore(thr, pc, (uptr)&sigactions[sig]);
     act = &newact;
   }
   int res = REAL(sigaction)(sig, act, old);
-  if (res == 0 && old) {
-    uptr cb = (uptr)old->sigaction;
-    if (cb == (uptr)rtl_sigaction || cb == (uptr)rtl_sighandler) {
-      internal_memcpy(old, &old_stored, sizeof(*old));
-    }
-  }
+  if (res == 0 && old && old->sigaction == sighandler)
+    internal_memcpy(old, &old_stored, sizeof(*old));
   return res;
 }
 
@@ -2527,22 +2540,22 @@ static USED void syscall_fd_release(uptr pc, int fd) {
   FdRelease(thr, pc, fd);
 }
 
-static void syscall_pre_fork(uptr pc) { ForkBefore(cur_thread(), pc); }
+static void syscall_pre_fork(uptr pc) {
+  ThreadState* thr = cur_thread();
+  ForkBefore(thr, pc);
+}
 
 static void syscall_post_fork(uptr pc, int pid) {
   ThreadState *thr = cur_thread();
-  if (pid == 0) {
-    // child
-    ForkChildAfter(thr, pc);
-    FdOnFork(thr, pc);
-  } else if (pid > 0) {
-    // parent
+  if (pid) {
     ForkParentAfter(thr, pc);
-  } else {
-    // error
-    ForkParentAfter(thr, pc);
+    return;
   }
+  // child
+  ForkChildAfter(thr, pc);
+  FdOnFork(thr, pc);
 }
+
 #endif
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) \
@@ -2598,8 +2611,9 @@ static void syscall_post_fork(uptr pc, int pid) {
 TSAN_INTERCEPTOR(void *, __tls_get_addr, void *arg) {
   void *res = REAL(__tls_get_addr)(arg);
   ThreadState *thr = cur_thread();
-  if (!thr)
+  if (!thr || thr->is_dead)
     return res;
+  //!!! ScopedRuntime sr(thr);
   DTLS::DTV *dtv = DTLS_on_tls_get_addr(arg, res, thr->tls_addr,
                                         thr->tls_addr + thr->tls_size);
   if (!dtv)
@@ -2906,13 +2920,14 @@ void __tsan_testonly_barrier_init(u64 *barrier, u32 count) {
 
 extern "C" SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_testonly_barrier_wait(u64 *barrier) {
+  DPrintf("#%d: barrier_wait\n", cur_thread()->tid);
   unsigned old = __atomic_fetch_add(barrier, 1 << 8, __ATOMIC_RELAXED);
   unsigned old_epoch = (old >> 8) / (old & 0xff);
   for (;;) {
     unsigned cur = __atomic_load_n(barrier, __ATOMIC_RELAXED);
     unsigned cur_epoch = (cur >> 8) / (cur & 0xff);
     if (cur_epoch != old_epoch)
-      return;
+      break;
     internal_sched_yield();
   }
 }

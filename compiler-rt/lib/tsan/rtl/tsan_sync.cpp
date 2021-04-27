@@ -18,47 +18,39 @@ namespace __tsan {
 
 void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s);
 
-SyncVar::SyncVar()
-    : mtx(MutexTypeSyncVar, StatMtxSyncVar) {
-  Reset(0);
+SyncVar::SyncVar() : mtx(MutexTypeSyncVar) {
+  Reset();
 }
 
-void SyncVar::Init(ThreadState *thr, uptr pc, uptr addr, u64 uid) {
+void SyncVar::Init(ThreadState* thr, uptr pc, uptr addr, bool save_stack) {
   this->addr = addr;
-  this->uid = uid;
   this->next = 0;
-
-  creation_stack_id = 0;
-  if (!SANITIZER_GO)  // Go does not use them
+  creation_stack_id = kInvalidStackID;
+  // Go does not use stacks.
+  if (!SANITIZER_GO && save_stack)
     creation_stack_id = CurrentStackId(thr, pc);
   if (common_flags()->detect_deadlocks)
     DDMutexInit(thr, pc, this);
 }
 
-void SyncVar::Reset(Processor *proc) {
-  uid = 0;
-  creation_stack_id = 0;
+void SyncVar::Reset() {
+  creation_stack_id = kInvalidStackID;
   owner_tid = kInvalidTid;
   last_lock = 0;
   recursion = 0;
   atomic_store_relaxed(&flags, 0);
-
-  if (proc == 0) {
-    CHECK_EQ(clock.size(), 0);
-    CHECK_EQ(read_clock.size(), 0);
-  } else {
-    clock.Reset(&proc->clock_cache);
-    read_clock.Reset(&proc->clock_cache);
-  }
+  Free(clock);
+  Free(read_clock);
 }
 
 MetaMap::MetaMap()
-    : block_alloc_(LINKER_INITIALIZED, "heap block allocator"),
-      sync_alloc_(LINKER_INITIALIZED, "sync allocator") {
-  atomic_store(&uid_gen_, 0, memory_order_relaxed);
+    : block_alloc_("heap block allocator"), sync_alloc_("sync allocator") {
 }
 
 void MetaMap::AllocBlock(ThreadState *thr, uptr pc, uptr p, uptr sz) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   u32 idx = block_alloc_.Alloc(&thr->proc()->block_cache);
   MBlock *b = block_alloc_.Map(idx);
   b->siz = sz;
@@ -80,6 +72,9 @@ uptr MetaMap::FreeBlock(Processor *proc, uptr p) {
 }
 
 bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   bool has_something = false;
   u32 *meta = MemToMeta(p);
   u32 *end = MemToMeta(p + sz);
@@ -101,7 +96,7 @@ bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
         DCHECK(idx & kFlagSync);
         SyncVar *s = sync_alloc_.Map(idx & ~kFlagMask);
         u32 next = s->next;
-        s->Reset(proc);
+        s->Reset();
         sync_alloc_.Free(&proc->sync_cache, idx & ~kFlagMask);
         idx = next;
       } else {
@@ -179,6 +174,14 @@ void MetaMap::ResetRange(Processor *proc, uptr p, uptr sz) {
     Die();
 }
 
+void MetaMap::Reset() {
+  sync_alloc_.ForEach([](SyncVar* s) {
+    Free(s->clock);
+    Free(s->read_clock);
+    s->last_lock = 0;
+  });
+}
+
 MBlock* MetaMap::GetBlock(uptr p) {
   u32 *meta = MemToMeta(p);
   u32 idx = *meta;
@@ -193,17 +196,20 @@ MBlock* MetaMap::GetBlock(uptr p) {
   }
 }
 
-SyncVar* MetaMap::GetOrCreateAndLock(ThreadState *thr, uptr pc,
-                              uptr addr, bool write_lock) {
-  return GetAndLock(thr, pc, addr, write_lock, true);
+SyncVar* MetaMap::GetOrCreate(ThreadState* thr, uptr pc, uptr addr,
+                              bool save_stack) {
+  return GetImpl(thr, pc, addr, true, save_stack);
 }
 
-SyncVar* MetaMap::GetIfExistsAndLock(uptr addr, bool write_lock) {
-  return GetAndLock(0, 0, addr, write_lock, false);
+SyncVar* MetaMap::GetIfExists(uptr addr) {
+  return GetImpl(0, 0, addr, false, false);
 }
 
-SyncVar* MetaMap::GetAndLock(ThreadState *thr, uptr pc,
-                             uptr addr, bool write_lock, bool create) {
+SyncVar* MetaMap::GetImpl(ThreadState* thr, uptr pc, uptr addr, bool create,
+                          bool save_stack) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   u32 *meta = MemToMeta(addr);
   u32 idx0 = *meta;
   u32 myidx = 0;
@@ -219,13 +225,9 @@ SyncVar* MetaMap::GetAndLock(ThreadState *thr, uptr pc,
       SyncVar * s = sync_alloc_.Map(idx & ~kFlagMask);
       if (s->addr == addr) {
         if (myidx != 0) {
-          mys->Reset(thr->proc());
+          mys->Reset();
           sync_alloc_.Free(&thr->proc()->sync_cache, myidx);
         }
-        if (write_lock)
-          s->mtx.Lock();
-        else
-          s->mtx.ReadLock();
         return s;
       }
       idx = s->next;
@@ -238,20 +240,14 @@ SyncVar* MetaMap::GetAndLock(ThreadState *thr, uptr pc,
     }
 
     if (myidx == 0) {
-      const u64 uid = atomic_fetch_add(&uid_gen_, 1, memory_order_relaxed);
       myidx = sync_alloc_.Alloc(&thr->proc()->sync_cache);
       mys = sync_alloc_.Map(myidx);
-      mys->Init(thr, pc, addr, uid);
+      mys->Init(thr, pc, addr, save_stack);
     }
     mys->next = idx0;
     if (atomic_compare_exchange_strong((atomic_uint32_t*)meta, &idx0,
-        myidx | kFlagSync, memory_order_release)) {
-      if (write_lock)
-        mys->mtx.Lock();
-      else
-        mys->mtx.ReadLock();
+                                       myidx | kFlagSync, memory_order_release))
       return mys;
-    }
   }
 }
 

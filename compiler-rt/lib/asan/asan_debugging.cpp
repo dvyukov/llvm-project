@@ -55,11 +55,13 @@ uptr AsanGetStack(uptr addr, uptr *trace, u32 size, u32 *thread_id,
   if (alloc_stack) {
     if (chunk.AllocTid() == kInvalidTid) return 0;
     stack = chunk.GetAllocStack();
-    if (thread_id) *thread_id = chunk.AllocTid();
+    if (thread_id)
+      *thread_id = static_cast<u32>(chunk.AllocTid());
   } else {
     if (chunk.FreeTid() == kInvalidTid) return 0;
     stack = chunk.GetFreeStack();
-    if (thread_id) *thread_id = chunk.FreeTid();
+    if (thread_id)
+      *thread_id = static_cast<u32>(chunk.FreeTid());
   }
 
   if (trace && size) {

@@ -19,54 +19,104 @@
 
 namespace __tsan {
 
-const int kTracePartSizeBits = 13;
-const int kTracePartSize = 1 << kTracePartSizeBits;
-const int kTraceParts = 2 * 1024 * 1024 / kTracePartSize;
-const int kTraceSize = kTracePartSize * kTraceParts;
-
-// Must fit into 3 bits.
 enum EventType {
-  EventTypeMop,
+  EventTypeAccessEx,
   EventTypeFuncEnter,
   EventTypeFuncExit,
   EventTypeLock,
-  EventTypeUnlock,
   EventTypeRLock,
-  EventTypeRUnlock
+  EventTypeUnlock,
+  EventTypeRelease,
+  EventTypeAttach,
 };
 
-// Represents a thread event (from most significant bit):
-// u64 typ  : 3;   // EventType.
-// u64 addr : 61;  // Associated pc.
-typedef u64 Event;
-
-const uptr kEventPCBits = 61;
-
-struct TraceHeader {
-#if !SANITIZER_GO
-  BufferedStackTrace stack0;  // Start stack for the trace.
-#else
-  VarSizeStackTrace stack0;
-#endif
-  u64        epoch0;  // Start epoch for the trace.
-  MutexSet   mset0;
-
-  TraceHeader() : stack0(), epoch0() {}
+struct Event {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 _ : 60;
 };
+static_assert(sizeof(Event) == 8, "bad Event size");
+static constexpr Event NopEvent = {1, 0, 0};
+
+struct EventAccess {
+  u64 isAccess : 1;
+  u64 isRead : 1;
+  u64 isAtomic : 1;
+  u64 isExternalPC : 1;
+  u64 sizeLog : 2;
+  u64 pcDelta : 15;
+  u64 addr : 43;
+};
+static_assert(sizeof(EventAccess) == 8, "bad MopEvent size");
+
+struct EventAccessEx {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 isRead : 1;
+  u64 isAtomic : 1;
+  u64 isFreed : 1;
+  u64 isExternalPC : 1;
+  u64 sizeLo : 13;
+  u64 pc : 43;
+  u64 isNotAccess : 1; //!!! do we need this?
+  u64 addr : 43;
+  u64 sizeHi : 20;
+};
+static_assert(sizeof(EventAccessEx) == 16, "bad EventAccessEx size");
+
+struct EventLock {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 isExternalPC : 1;
+  u64 pc : 43;
+  u64 stackIDLo : 16;
+  u64 stackIDHi : 16;
+  u64 _ : 5;
+  u64 addr : 43;
+};
+static_assert(sizeof(EventLock) == 16, "bad EventLock size");
+
+struct EventUnlock {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 _ : 17;
+  u64 addr : 43;
+};
+static_assert(sizeof(EventUnlock) == 8, "bad EventUnlock size");
+
+struct EventPC {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 isExternalPC : 1;
+  u64 _ : 16;
+  u64 pc : 43;
+};
+static_assert(sizeof(EventPC) == 8, "bad EventPC size");
+
+struct EventAttach {
+  u64 isAccess : 1;
+  u64 type : 3;
+  u64 _ : 28;
+  u64 tid : 32;
+};
+static_assert(sizeof(EventAttach) == 8, "bad EventPC size");
+
+struct TracePart {
+  TracePart* next;
+  static constexpr uptr kSize = 511;
+  // Note: TracePos assumes this to be the last field.
+  Event events[kSize];
+};
+static_assert(sizeof(TracePart) == (4 << 10), "bad TracePart size");
 
 struct Trace {
   Mutex mtx;
-#if !SANITIZER_GO
-  // Must be last to catch overflow as paging fault.
-  // Go shadow stack is dynamically allocated.
-  uptr shadow_stack[kShadowStackSize];
-#endif
-  // Must be the last field, because we unmap the unused part in
-  // CreateThreadContext.
-  TraceHeader headers[kTraceParts];
+  TracePart* first = nullptr;
+  TracePart* current = nullptr;
+  Event* pos = nullptr;
+  uptr prev_pc = 0;
 
-  Trace()
-    : mtx(MutexTypeTrace, StatMtxTrace) {
+  Trace() : mtx(MutexTypeTrace) {
   }
 };
 

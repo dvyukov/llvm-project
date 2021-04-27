@@ -26,61 +26,97 @@ void __tsan_init() {
 }
 
 void __tsan_flush_memory() {
-  FlushShadowMemory();
+  // FlushShadowMemory();
 }
 
 void __tsan_read16(void *addr) {
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr, kSizeLog8);
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr + 8, kSizeLog8);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  MemoryRead(thr, pc, (uptr)addr, kSizeLog8);
+  MemoryRead(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
 void __tsan_write16(void *addr) {
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr, kSizeLog8);
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr + 8, kSizeLog8);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  MemoryWrite(thr, pc, (uptr)addr, kSizeLog8);
+  MemoryWrite(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
-void __tsan_read16_pc(void *addr, void *pc) {
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, kSizeLog8);
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr + 8, kSizeLog8);
+void __tsan_read16_pc(void* addr, void* pc1) {
+  uptr pc = STRIP_PAC_PC(pc1);
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  MemoryRead(thr, pc, (uptr)addr, kSizeLog8);
+  MemoryRead(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
-void __tsan_write16_pc(void *addr, void *pc) {
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, kSizeLog8);
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr + 8, kSizeLog8);
+void __tsan_write16_pc(void* addr, void* pc1) {
+  uptr pc = STRIP_PAC_PC(pc1);
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  MemoryWrite(thr, pc, (uptr)addr, kSizeLog8);
+  MemoryWrite(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
 // __tsan_unaligned_read/write calls are emitted by compiler.
 
 void __tsan_unaligned_read2(const void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, false, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 2, false, false);
 }
 
 void __tsan_unaligned_read4(const void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, false, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 4, false, false);
 }
 
 void __tsan_unaligned_read8(const void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, false, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, false, false);
 }
 
 void __tsan_unaligned_read16(const void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 16, false, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 16, false, false);
 }
 
 void __tsan_unaligned_write2(void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, true, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 2, true, false);
 }
 
 void __tsan_unaligned_write4(void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, true, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 4, true, false);
 }
 
 void __tsan_unaligned_write8(void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, true, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, true, false);
 }
 
 void __tsan_unaligned_write16(void *addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 16, true, false);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 16, true, false);
 }
 
 // __sanitizer_unaligned_load/store are for user instrumentation.
@@ -129,29 +165,46 @@ void *__tsan_get_current_fiber() {
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void *__tsan_create_fiber(unsigned flags) {
-  return FiberCreate(cur_thread(), CALLERPC, flags);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  // ScopedRuntime sr(thr);
+  return FiberCreate(thr, pc, flags);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_destroy_fiber(void *fiber) {
-  FiberDestroy(cur_thread(), CALLERPC, static_cast<ThreadState *>(fiber));
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  // ScopedRuntime sr(thr);
+  FiberDestroy(thr, pc, static_cast<ThreadState*>(fiber));
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_switch_to_fiber(void *fiber, unsigned flags) {
-  FiberSwitch(cur_thread(), CALLERPC, static_cast<ThreadState *>(fiber), flags);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  // ScopedRuntime sr(thr);
+  FiberSwitch(thr, pc, static_cast<ThreadState*>(fiber), flags);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_set_fiber_name(void *fiber, const char *name) {
-  ThreadSetName(static_cast<ThreadState *>(fiber), name);
+  ThreadState* thr = cur_thread();
+  // ScopedRuntime sr(thr);
+  ThreadSetName(thr, name);
 }
 }  // extern "C"
 
 void __tsan_acquire(void *addr) {
-  Acquire(cur_thread(), CALLERPC, (uptr)addr);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
+  Acquire(thr, pc, (uptr)addr);
 }
 
 void __tsan_release(void *addr) {
-  Release(cur_thread(), CALLERPC, (uptr)addr);
+  uptr pc = CALLERPC;
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
+  Release(thr, pc, (uptr)addr);
 }

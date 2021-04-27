@@ -23,11 +23,11 @@ StackDepotStats *ChainedOriginDepotGetStats() {
   return chainedOriginDepot.GetStats();
 }
 
-bool ChainedOriginDepotPut(u32 here_id, u32 prev_id, u32 *new_id) {
+bool ChainedOriginDepotPut(StackID here_id, StackID prev_id, StackID *new_id) {
   return chainedOriginDepot.Put(here_id, prev_id, new_id);
 }
 
-u32 ChainedOriginDepotGet(u32 id, u32 *other) {
+StackID ChainedOriginDepotGet(StackID id, StackID *other) {
   return chainedOriginDepot.Get(id, other);
 }
 

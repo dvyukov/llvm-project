@@ -34,7 +34,6 @@ struct DDLogicalThread;
 struct DDMutex {
 #if SANITIZER_DEADLOCK_DETECTOR_VERSION == 1
   uptr id;
-  u32  stk;  // creation stack
 #elif SANITIZER_DEADLOCK_DETECTOR_VERSION == 2
   u32              id;
   u32              recursion;
@@ -42,6 +41,7 @@ struct DDMutex {
 #else
 # error "BAD SANITIZER_DEADLOCK_DETECTOR_VERSION"
 #endif
+  StackID stk;  // creation stack
   u64  ctx;
 };
 
@@ -53,10 +53,10 @@ struct DDReport {
   enum { kMaxLoopSize = 20 };
   int n;  // number of entries in loop
   struct {
-    u64 thr_ctx;   // user thread context
+    Tid thr_ctx;   // user thread context
     u64 mtx_ctx0;  // user mutex context, start of the edge
     u64 mtx_ctx1;  // user mutex context, end of the edge
-    u32 stk[2];  // stack ids for the edge
+    StackID stk[2];  // stack ids for the edge
   } loop[kMaxLoopSize];
 };
 
@@ -64,8 +64,8 @@ struct DDCallback {
   DDPhysicalThread *pt;
   DDLogicalThread  *lt;
 
-  virtual u32 Unwind() { return 0; }
-  virtual int UniqueTid() { return 0; }
+  virtual StackID Unwind() { return kInvalidStackID; }
+  virtual Tid UniqueTid() { return kInvalidTid; }
 
  protected:
   ~DDCallback() {}
@@ -77,7 +77,7 @@ struct DDetector {
   virtual DDPhysicalThread* CreatePhysicalThread() { return nullptr; }
   virtual void DestroyPhysicalThread(DDPhysicalThread *pt) {}
 
-  virtual DDLogicalThread* CreateLogicalThread(u64 ctx) { return nullptr; }
+  virtual DDLogicalThread *CreateLogicalThread(Tid tid) { return nullptr; }
   virtual void DestroyLogicalThread(DDLogicalThread *lt) {}
 
   virtual void MutexInit(DDCallback *cb, DDMutex *m) {}
