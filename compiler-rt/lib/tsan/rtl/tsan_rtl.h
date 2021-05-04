@@ -287,6 +287,9 @@ struct ThreadState {
   atomic_uintptr_t trace_pos; // Event*
   uptr trace_prev_pc;
 
+  atomic_sint32_t in_runtime;
+  atomic_sint32_t reset_pending;
+
   // Technically `current` should be a separate THREADLOCAL variable;
   // but it is placed here in order to share cache line with previous fields.
   ThreadState* current;
@@ -633,7 +636,8 @@ void PrintMatchedBenignRaces();
 
 #else
 # define DPrintf Printf
-# define DPrintf2 Printf
+//# define DPrintf2 Printf
+# define DPrintf2(...) do {} while(0)
 #endif
 
 StackID CurrentStackId(ThreadState *thr, uptr pc);
@@ -848,13 +852,31 @@ ALWAYS_INLINE uptr HeapEnd() {
 
 void SlotAttach(ThreadState *thr);
 void SlotDetach(ThreadState *thr);
-void GlobalReset(ThreadState *thr);
+void ThreadPreempt(ThreadState *thr);
+bool HandlePreemptSignal(ThreadState *thr, int sig, void* info, void* ctx);
 void CompleteReset(ThreadState *thr);
 ALWAYS_INLINE void CheckReset(ThreadState *thr) {
-  if (UNLIKELY(atomic_load_relaxed(&ctx->reset_pending)/* ||
-      atomic_load_relaxed(&ctx->reset_scheduled)*/))
+  if (UNLIKELY(atomic_load_relaxed(&ctx->reset_pending)))
     CompleteReset(thr);
 }
+extern void* flat_funcs[];
+
+struct ScopedRuntime {
+  ScopedRuntime(ThreadState* thr) : thr_(thr) {
+    DCHECK(!atomic_load_relaxed(&thr_->in_runtime));
+    atomic_store_relaxed(&thr_->in_runtime, 1);
+    atomic_signal_fence(memory_order_seq_cst);
+  }
+  ~ScopedRuntime() {
+    atomic_signal_fence(memory_order_seq_cst);
+    DCHECK(atomic_load_relaxed(&thr_->in_runtime));
+    atomic_store_relaxed(&thr_->in_runtime, 0);
+    atomic_signal_fence(memory_order_seq_cst);
+    if (UNLIKELY(atomic_load_relaxed(&thr_->reset_pending)))
+      CompleteReset(thr_);  
+  }
+  ThreadState* thr_;
+};
 
 ThreadState *FiberCreate(ThreadState *thr, uptr pc, unsigned flags);
 void FiberDestroy(ThreadState *thr, uptr pc, ThreadState *fiber);

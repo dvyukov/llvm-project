@@ -483,6 +483,7 @@ static morder convert_morder(morder mo) {
 
 #define SCOPED_ATOMIC(func, ...) \
     ThreadState *const thr = cur_thread(); \
+    ScopedRuntime sr(thr); \
     if (UNLIKELY(thr->ignore_sync || thr->ignore_interceptors)) { \
       ProcessPendingSignals(thr); \
       return NoTsanAtomic##func(__VA_ARGS__); \
@@ -501,7 +502,7 @@ class ScopedAtomic {
                morder mo, const char *func)
       : thr_(thr) {
     FuncEntry(thr_, pc);
-    DPrintf("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
+    DPrintf2("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
   }
   ~ScopedAtomic() {
     ProcessPendingSignals(thr_);
