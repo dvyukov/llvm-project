@@ -247,6 +247,7 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
         CHECK(!slot.reset_wait);
         slot.reset_wait = true;
         pending++;
+        ThreadPreempt(slot.thr);
       }
       if (!pending) {
         DoReset();
@@ -329,23 +330,7 @@ void SlotDetach(ThreadState *thr) {
     atomic_store_relaxed(&ctx->reset_pending, pending);
     if (!pending)
       DoReset();
-  } /* else if (atomic_load_relaxed(&ctx->reset_scheduled)) {
-    atomic_store_relaxed(&ctx->reset_scheduled, 0);
-    DPrintf("#%d: InitiateReset\n", thr->tid);
-    int pending = 0;
-    for (auto& slot : ctx->slots) {
-      if (!slot.thr)
-        continue;
-      DPrintf("#%d: InitiateReset waiting for %d\n", thr->tid, slot.sid);
-      CHECK(!slot.reset_wait);
-      slot.reset_wait = true;
-      pending++;
-    }
-    if (!pending)
-      DoReset();
-    else
-      atomic_store_relaxed(&ctx->reset_pending, pending);
-  } */
+  }
 }
 
 Context::Context()
@@ -733,10 +718,6 @@ int Finalize(ThreadState* thr) {
 
   if (common_flags()->print_suppressions)
     PrintMatchedSuppressions();
-#if !SANITIZER_GO
-  if (flags()->print_benign)
-    PrintMatchedBenignRaces();
-#endif
 
   failed = OnFinalize(failed);
 

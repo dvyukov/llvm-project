@@ -30,9 +30,11 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <link.h>
 #include <stdarg.h>
 #include <sys/mman.h>
 #if SANITIZER_LINUX
@@ -265,6 +267,64 @@ void InitializePlatformEarly() {
 #endif
 }
 
+void ThreadPreempt(ThreadState *thr) {
+  DPrintf("#%d: peempting\n", thr->tid);
+  siginfo_t info;
+  internal_memset(&info, 0, sizeof(info));
+  info.si_code = -66;
+  info.si_pid = internal_getpid();
+  info.si_value.sival_ptr = (void*)0x1234;
+  if (syscall(SYS_rt_tgsigqueueinfo, info.si_pid, thr->tctx->os_id, SIGUSR1, &info)) {
+    Printf("ThreadSanitizer: rt_tgsigqueueinfo failed (%d)\n", errno);
+    Die();
+  }
+}
+
+uptr flat_start = -1;
+uptr flat_end = 0;
+
+
+
+void PreemptHijack() {
+  ThreadState* thr = cur_thread();
+  DPrintf("#%d: PreemptHijack\n", thr->tid);
+  //!!! only if still requested
+  SlotDetach(thr);
+  SlotAttach(thr);
+}
+
+bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
+  siginfo_t* info = (siginfo_t*)info1;
+  ucontext_t* uctx = (ucontext_t*)ctx;
+  if (sig != SIGUSR1 || info->si_pid != (int)internal_getpid() || info->si_code != -66 || info->si_value.sival_ptr != (void*)0x1234)
+    return false;
+  DPrintf("#%d: PreemptHandler\n", thr->tid);
+  uptr pc = uctx->uc_mcontext.gregs[REG_RIP];
+  if (pc >= flat_start && pc < flat_end) {
+    uptr sp = uctx->uc_mcontext.gregs[REG_RSP];
+    DPrintf("#%d: PreemptHandler: flat pc=%p sp=%p\n", thr->tid, pc, sp);
+    ((void**)sp)[-1] = (void*)PreemptHijack;
+    uctx->uc_mcontext.gregs[REG_RSP] = sp - sizeof(void*);
+    return true;
+  }
+  //!!! only if still requested
+  if (atomic_load_relaxed(&thr->in_runtime)) {
+    atomic_store_relaxed(&thr->reset_pending, 1);
+    return true;
+  }
+  //!!! only if still requested
+  SlotDetach(thr);
+  SlotAttach(thr);
+  return true;
+}
+
+void PreemptHandler(int sig, siginfo_t *info, void *ctx) {
+  ThreadState* thr = cur_thread();
+  CHECK(HandlePreemptSignal(thr, sig, info, ctx));
+}
+
+void* TsanFlatStart();
+
 void InitializePlatform() {
   DisableCoreDumperIfNecessary();
 
@@ -317,6 +377,53 @@ void InitializePlatform() {
   CheckAndProtect();
   InitTlsSize();
 #endif  // !SANITIZER_GO
+
+  /*
+  dl_iterate_phdr([](struct dl_phdr_info *info, size_t size, void *data)->int {
+    Printf("NAME: %s\n", info->dlpi_name);
+    for (unsigned i = 0; i != info->dlpi_phnum; ++i) {
+      const Elf64_Phdr* phr = &info->dlpi_phdr[i];
+      
+      //if (info->dlpi_phdr[i].p_type != PT_LOAD || info->dlpi_phdr[i].p_flags != (PF_X | PF_R))
+      //  continue;
+#undef p_type
+      Printf("  type=%llu offset=%llu vaddr=%llu paddr=%llu\n", phr->p_type, info->dlpi_phdr[i].p_offset, info->dlpi_phdr[i].p_vaddr, info->dlpi_phdr[i].p_paddr);
+    }
+    return 0;
+  }, nullptr);
+*/
+/*
+  int fd = 
+  ../../sanitizer_common/sanitizer_posix.cpp-bool ReadFromFile(fd_t fd, void *buff, uptr buff_size, uptr *bytes_read,
+../../sanitizer_common/sanitizer_posix.cpp-                  error_t *error_p) {
+
+
+  Elf64_Ehdr
+*/
+
+  for (void** flat = flat_funcs; *flat; flat++) {
+    Dl_info info = {};
+    Elf64_Sym* sym = nullptr;
+    if (!dladdr1(*flat, &info, (void**)&sym, RTLD_DL_SYMENT)) {
+      Printf("ThreadSanitizer: dladdr(%p) failed\n", *flat);
+      Die();
+    }
+    if (flat_start > sym->st_value)
+      flat_start = sym->st_value;
+    if (flat_end < sym->st_value + sym->st_size)
+      flat_end = sym->st_value + sym->st_size;
+  }
+  DPrintf("flat region: %p-%p (%p)\n", flat_start, flat_end, flat_end-flat_start);
+
+  __sanitizer_sigaction act;
+  internal_memset(&act, 0, sizeof(act));
+  act.sigaction = (__sanitizer_sigactionhandler_ptr)PreemptHandler;
+  act.sa_flags = SA_SIGINFO;
+  internal_sigfillset(&act.sa_mask);
+  if (internal_sigaction(SIGUSR1, &act, nullptr)) {
+    Printf("ThreadSanitizer: sigaction(SIGUSR1) failed\n");
+    Die();
+  }
 }
 
 #if !SANITIZER_GO

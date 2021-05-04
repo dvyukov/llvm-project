@@ -2047,6 +2047,8 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
                                           void *ctx) {
   cur_thread_init();
   ThreadState *thr = cur_thread();
+  if (HandlePreemptSignal(thr, sig, info, ctx))
+    return;
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sig < 0 || sig >= kSigCount) {
     VPrintf(1, "ThreadSanitizer: ignoring signal %d\n", sig);
@@ -2494,6 +2496,7 @@ static __sanitizer_sighandler_ptr signal_impl(int sig,
   ThreadState *thr = cur_thread(); \
   if (thr->ignore_interceptors) \
     return; \
+  ScopedRuntime sr(thr); \
   ScopedSyscall scoped_syscall(thr) \
 /**/
 
