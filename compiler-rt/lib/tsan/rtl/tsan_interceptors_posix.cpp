@@ -241,7 +241,7 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   ThreadSignalContext *ctx = (ThreadSignalContext*)thr->signal_ctx;
   if (ctx == 0 && !thr->is_dead) {
     ctx = (ThreadSignalContext*)MmapOrDie(sizeof(*ctx), "ThreadSignalContext");
-    MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
+    // MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
     thr->signal_ctx = ctx;
   }
   return ctx;
@@ -949,6 +949,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
   {
     cur_thread_init();
     ThreadState *thr = cur_thread();
+    ScopedRuntime sr(thr);
     // Thread-local state is not initialized yet.
     ScopedIgnoreInterceptors ignore;
 #if !SANITIZER_MAC && !SANITIZER_NETBSD && !SANITIZER_FREEBSD
@@ -1948,6 +1949,7 @@ namespace __tsan {
 static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
                                   bool sigact, int sig,
                                   __sanitizer_siginfo *info, void *uctx) {
+  CHECK(thr->slot);
   __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
@@ -2548,10 +2550,15 @@ static USED void syscall_fd_release(uptr pc, int fd) {
   FdRelease(thr, pc, fd);
 }
 
-static void syscall_pre_fork(uptr pc) { ForkBefore(cur_thread(), pc); }
+static void syscall_pre_fork(uptr pc) {
+  ThreadState* thr = cur_thread();
+  ScopedRuntime sr(thr);
+  ForkBefore(thr, pc);
+}
 
 static void syscall_post_fork(uptr pc, int pid) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime sr(thr);
   if (pid == 0) {
     // child
     ForkChildAfter(thr, pc);
@@ -2649,8 +2656,9 @@ static void syscall_post_block(ThreadState* thr, uptr pc) {
 TSAN_INTERCEPTOR(void *, __tls_get_addr, void *arg) {
   void *res = REAL(__tls_get_addr)(arg);
   ThreadState *thr = cur_thread();
-  if (!thr)
+  if (!thr || thr->is_dead)
     return res;
+  ScopedRuntime sr(thr);
   DTLS::DTV *dtv = DTLS_on_tls_get_addr(arg, res, thr->tls_addr,
                                         thr->tls_addr + thr->tls_size);
   if (!dtv)

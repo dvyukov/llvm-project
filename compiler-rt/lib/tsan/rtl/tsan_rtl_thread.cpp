@@ -313,6 +313,7 @@ void ThreadSetName(ThreadState *thr, const char *name) {
 
 void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr,
                        uptr size, bool is_write) { //!!! change all is_write to isRead
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   if (size == 0)
     return;
 

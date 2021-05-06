@@ -23,19 +23,15 @@ namespace __tsan {
 
 void EnterSymbolizer() {
   ThreadState *thr = cur_thread();
-  CHECK(!thr->in_symbolizer);
-  thr->in_symbolizer = true;
-  CHECK(!thr->ignore_funcs_);
-  thr->ignore_funcs_ = true;
+  thr->in_symbolizer++;
+  thr->ignore_funcs_++;
   thr->ignore_interceptors++;
 }
 
 void ExitSymbolizer() {
   ThreadState *thr = cur_thread();
-  CHECK(thr->in_symbolizer);
-  thr->in_symbolizer = false;
-  CHECK(thr->ignore_funcs_);
-  thr->ignore_funcs_ = false;
+  thr->in_symbolizer--;
+  thr->ignore_funcs_--;
   thr->ignore_interceptors--;
 }
 

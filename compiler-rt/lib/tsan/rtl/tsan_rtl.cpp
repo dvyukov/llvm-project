@@ -34,6 +34,19 @@ extern "C" void __tsan_resume() {
   __tsan_resumed = 1;
 }
 
+extern "C" void __tsan_dump() {
+  using namespace __tsan;
+  Printf("DUMP: reset_pending=%u\n", atomic_load_relaxed(&ctx->reset_pending));
+  for (auto& slot: ctx->slots) {
+    if (!slot.thr && !slot.reset_wait)
+      continue;
+    Printf("  slot %u: reset_wait=%u tid=%d pid=%d\n",
+      (u32)slot.sid, slot.reset_wait,
+      slot.thr ? (int)slot.thr->tid: -1,
+      slot.thr && slot.thr->tctx ? slot.thr->tctx->os_id : -1);
+  }
+}
+
 namespace __tsan {
 
 #if !SANITIZER_GO && !SANITIZER_MAC
@@ -72,7 +85,7 @@ static TracePart* TracePartAlloc() {
   {
     Lock l(&ctx->trace_part_mtx);
     //!!! we can affect the thread by resetting thr->trace_pos, but there are some events where we can't switch (under lock)
-    // could we set something else that affects accesses/func entry/exit?    
+    // could we set something else that affects accesses/func entry/exit?
     //!!! when do we reset for real?
     if (ctx->trace_part_count > kMaxSid * 2)
       return nullptr;
@@ -172,6 +185,7 @@ void DoReset() {
 }
 
 void CompleteReset(ThreadState *thr) {
+  if (thr->in_symbolizer) return; //!!!
   SlotDetach(thr);
   SlotAttach(thr);
 }
@@ -230,6 +244,7 @@ bool InitTrace(Trace* trace) {
 
 TidSlot& FindAttachSlot(ThreadState* thr) {
   CHECK(!thr->slot);
+  int dump = -1;
   for (;;) {
     DPrintf2("#%d: FindAttachSlot: reset_pending=%d\n", thr->tid, atomic_load_relaxed(&ctx->reset_pending));
     if (!atomic_load_relaxed(&ctx->reset_pending)) {
@@ -253,15 +268,28 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
         DoReset();
         continue;
       }
+      dump = 50000;
       atomic_store_relaxed(&ctx->reset_pending, pending);
     }
     ctx->thread_registry.Unlock();
     internal_usleep(100);
+    if (dump && !--dump) {
+      __tsan_dump();
+  for (auto& slot: ctx->slots) {
+    if (!slot.thr && !slot.reset_wait)
+      continue;
+      slot.thr->unwind_abort = true;
+      ThreadPreempt(slot.thr);
+  }
+  internal_usleep(5*1000*1000);
+       Die();
+    }
     ctx->thread_registry.Lock();
   }
 }
 
 void SlotAttach(ThreadState *thr) {
+  CheckNoLocks();
   ThreadRegistryLock lock(&ctx->thread_registry);
   TidSlot& slot = FindAttachSlot(thr);
   DPrintf("#%d: SlotAttach: slot=%u\n", thr->tid, slot.sid);
@@ -810,6 +838,7 @@ StackID CurrentStackId(ThreadState* thr, uptr pc) {
 
 NOINLINE
 void TraceSwitch(ThreadState* thr) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime));
   auto part = thr->slot->trace.current;
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   Event* end = &part->events[TracePart::kSize];
@@ -852,7 +881,7 @@ ALWAYS_INLINE void StoreShadow(RawShadow* sp, RawShadow s) {
 ALWAYS_INLINE
 void StoreAndZero(RawShadow* sp, RawShadow* s) {
   StoreShadow(sp, *s);
-  //*s = 0;
+  // *s = 0;
 }
 
 ALWAYS_INLINE
@@ -864,6 +893,7 @@ ALWAYS_INLINE
 void MemoryAccessImpl1(ThreadState* thr, uptr addr,
                        u32 kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic, RawShadow* shadow_mem,
                        Shadow cur) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   StatInc(thr, StatMop);
   StatInc(thr, kAccessIsWrite ? StatMopWrite : StatMopRead);
   StatInc(thr, (StatType)(StatMop1 + kAccessSizeLog));
@@ -911,6 +941,7 @@ RACE:
 
 void UnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr, int size,
                            bool kAccessIsWrite, bool kIsAtomic) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   while (size) {
     int size1 = 1;
     int kAccessSizeLog = kSizeLog1;
@@ -1050,6 +1081,7 @@ bool TraceMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr sizeLog, bool 
 
 static NOINLINE
 void TraceRestartMemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic) {
+  ScopedRuntime sr(thr);
   TraceSwitch(thr);
   MemoryAccess(thr, pc, addr, kAccessSizeLog, kAccessIsWrite, kIsAtomic);
 }
@@ -1253,6 +1285,7 @@ RACE:
 ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
                                          u32 kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic,
                                          RawShadow* shadow_mem, Shadow cur) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   char memBuf[4][64];
   (void)memBuf;
   DPrintf2("    Access:%p access=0x%x"
@@ -1276,6 +1309,7 @@ ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
 
 static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
                            RawShadow val) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   (void)thr;
   (void)pc;
   if (size == 0)
@@ -1343,6 +1377,7 @@ void MemoryResetRange(ThreadState* thr, uptr pc, uptr addr, uptr size) {
 }
 
 void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
+  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
   // Processing more than 1k (4k of shadow) is expensive,
@@ -1408,6 +1443,7 @@ void TraceRelease(ThreadState *thr) {
 
 static NOINLINE
 void TraceRestartFuncEntry(ThreadState* thr, uptr pc) {
+  ScopedRuntime sr(thr);
   TraceSwitch(thr);
   FuncEntry(thr, pc);
 }
@@ -1433,6 +1469,7 @@ void FuncEntry(ThreadState* thr, uptr pc) {
 
 static NOINLINE
 void TraceRestartFuncExit(ThreadState* thr) {
+  ScopedRuntime sr(thr);
   TraceSwitch(thr);
   FuncExit(thr);
 }
