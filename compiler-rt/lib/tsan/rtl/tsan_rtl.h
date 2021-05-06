@@ -279,7 +279,7 @@ struct TidSlot { //!!! pad/align to cache line
 struct ThreadState {
   Shadow fast_state;
   bool ignore_enabled_;
-  bool ignore_funcs_;
+  int ignore_funcs_;
 
   uptr *shadow_stack_pos;
   uptr *shadow_stack_end;
@@ -324,10 +324,11 @@ struct ThreadState {
   int ignore_interceptors;
   int range_access_race;
   bool range_race;
-  bool in_symbolizer;
+  int in_symbolizer;
   bool in_ignored_lib;
   bool is_inited;
   bool is_dead;
+  bool unwind_abort;
 #endif
 #if TSAN_COLLECT_STATS
   u64 stat[StatCnt];
@@ -863,17 +864,20 @@ extern void* flat_funcs[];
 
 struct ScopedRuntime {
   ScopedRuntime(ThreadState* thr) : thr_(thr) {
-    DCHECK(!atomic_load_relaxed(&thr_->in_runtime));
-    atomic_store_relaxed(&thr_->in_runtime, 1);
+    //CHECK(thr_->slot); //!!!
+    int v = atomic_load_relaxed(&thr_->in_runtime);
+    atomic_store_relaxed(&thr_->in_runtime, v + 1);
     atomic_signal_fence(memory_order_seq_cst);
   }
   ~ScopedRuntime() {
+    //CHECK(thr_->slot); //!!!
     atomic_signal_fence(memory_order_seq_cst);
-    DCHECK(atomic_load_relaxed(&thr_->in_runtime));
-    atomic_store_relaxed(&thr_->in_runtime, 0);
+    int v = atomic_load_relaxed(&thr_->in_runtime);
+    CHECK(v); //!!!
+    atomic_store_relaxed(&thr_->in_runtime, v - 1);
     atomic_signal_fence(memory_order_seq_cst);
     if (UNLIKELY(atomic_load_relaxed(&thr_->reset_pending)))
-      CompleteReset(thr_);  
+      CompleteReset(thr_);
   }
   ThreadState* thr_;
 };

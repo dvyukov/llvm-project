@@ -54,8 +54,7 @@ ExternalCallback::ExternalCallback() {
 #if !SANITIZER_GO
   ThreadState *thr = cur_thread();
   //!!! should also ignore annotations
-  CHECK(!thr->ignore_funcs_);
-  thr->ignore_funcs_ = true;
+  thr->ignore_funcs_++;
   thr->ignore_interceptors++;
   ThreadIgnoreBegin(thr, 0, false);
 #endif
@@ -65,7 +64,7 @@ ExternalCallback::~ExternalCallback() {
 #if !SANITIZER_GO
   ThreadState *thr = cur_thread();
   CHECK(thr->ignore_funcs_);
-  thr->ignore_funcs_ = false;
+  thr->ignore_funcs_--;
   thr->ignore_interceptors--;
   ThreadIgnoreEnd(thr, 0);
 #endif
@@ -405,8 +404,32 @@ uptr RestoreAddr(uptr addr) {
 #endif
 }
 
-uptr RestorePC(uptr pc, bool isExternal) {
-  return RestoreAddr(pc) | (isExternal ? kExternalPCBit : 0);
+uptr RestorePC(uptr addr, bool isExternal) {
+#if SANITIZER_GO
+  return addr;
+#else
+  const uptr kRegionIndicator = 0x060000000000ull;
+  switch (addr & kRegionIndicator) {
+  case Mapping::kLoAppMemBeg & kRegionIndicator:
+//Printf("XXX: addr=0x%zx lo -> 0x%zx\n", addr, addr);
+    return addr;
+  case Mapping::kHiAppMemBeg & kRegionIndicator:
+//Printf("XXX: addr=0x%zx hi -> 0x%zx\n", addr, addr | 0x780000000000ull);
+    return addr | 0x500000000000ull;
+  case Mapping::kHeapMemBeg & kRegionIndicator:
+//Printf("XXX: addr=0x%zx heap -> 0x%zx\n", addr, addr | 0x780000000000ull);
+    return addr | 0x780000000000ull;
+  case Mapping::kMidAppMemBeg & kRegionIndicator:
+    //!!! this does not restore full range up to kMidAppMemEnd.
+    // It has 0x56 which matches kHiAppMemBeg above.
+//Printf("XXX: addr=0x%zx mid -> 0x%zx\n", addr, addr | 0x500000000000ull);
+    return addr | 0x500000000000ull;
+  }
+  CHECK(0);
+  return addr;
+#endif
+
+  //!!! return RestoreAddr(pc) | (isExternal ? kExternalPCBit : 0);
 }
 
 template<typename Func>
@@ -489,8 +512,10 @@ void RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size, bo
       tid = evTid;
   });
   DPrintf2("RestoreStack: tid=%u\n", tid);
-  CHECK_NE(tid, kInvalidTid);
   *ptid = tid;
+  if (tid == kInvalidTid)
+    return;
+  CHECK_NE(tid, kInvalidTid);
 
   ctx->thread_registry.Lock();
   ThreadContext *tctx = static_cast<ThreadContext*>(
@@ -750,12 +775,24 @@ static bool RaceBetweenAtomicAndFree(ThreadState *thr, Shadow cur, Shadow old) {
   return false;
 }
 
+char* DumpShadow(char* buf, RawShadow raw);
+
+struct ScopedInSymbolizer {
+  ScopedInSymbolizer() {
+    EnterSymbolizer();
+  }
+  ~ScopedInSymbolizer() {
+    ExitSymbolizer();
+  }
+};
+
 void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old) {
   CheckNoLocks();
 
   // Symbolizer makes lots of intercepted calls. If we try to process them,
   // at best it will cause deadlocks on internal mutexes.
   ScopedIgnoreInterceptors ignore;
+  ScopedInSymbolizer sis;
 
   if (!ShouldReport(thr, ReportTypeRace))
     return;
@@ -782,6 +819,11 @@ void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old)
     thr->range_access_race++;
   }
 #endif
+
+  Printf("CUR: sid=%u epoch=%u\n", (u32)thr->fast_state.sid(), (u32)thr->fast_state.epoch());
+  char buf[128];
+  Printf("CUR: %s\n", DumpShadow(buf, cur.raw()));
+  Printf("OLD: %s\n", DumpShadow(buf, old.raw()));
 
   uptr addr = ShadowToMem((uptr)shadow_mem);
   const uptr kMop = 2;
@@ -845,9 +887,9 @@ void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old)
     rep.AddMemoryAccess(addr, tags[i], s[i], tids[i], traces[i], mset[i]);
 
   for (uptr i = 0; i < kMop; i++) {
-    ThreadContext *tctx = static_cast<ThreadContext*>(
-        ctx->thread_registry.GetThreadLocked(tids[i]));
-    rep.AddThread(tctx);
+    //ThreadContext *tctx = static_cast<ThreadContext*>(
+    //    ctx->thread_registry.GetThreadLocked(tids[i]));
+    //rep.AddThread(tctx);
   }
 
   rep.AddLocation(addr_min, addr_max - addr_min);

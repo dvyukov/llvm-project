@@ -283,8 +283,6 @@ void ThreadPreempt(ThreadState *thr) {
 uptr flat_start = -1;
 uptr flat_end = 0;
 
-
-
 void PreemptHijack() {
   ThreadState* thr = cur_thread();
   DPrintf("#%d: PreemptHijack\n", thr->tid);
@@ -296,9 +294,14 @@ void PreemptHijack() {
 bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
   siginfo_t* info = (siginfo_t*)info1;
   ucontext_t* uctx = (ucontext_t*)ctx;
+  if (thr->unwind_abort) {
+    PrintCurrentStack(thr, 0);
+    return true;
+  }
   if (sig != SIGUSR1 || info->si_pid != (int)internal_getpid() || info->si_code != -66 || info->si_value.sival_ptr != (void*)0x1234)
     return false;
   DPrintf("#%d: PreemptHandler\n", thr->tid);
+  //return true; //!!!
   uptr pc = uctx->uc_mcontext.gregs[REG_RIP];
   if (pc >= flat_start && pc < flat_end) {
     uptr sp = uctx->uc_mcontext.gregs[REG_RSP];
@@ -312,9 +315,10 @@ bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
     atomic_store_relaxed(&thr->reset_pending, 1);
     return true;
   }
+  //!!! the thread may not own a slot at all (e.g. blocking call or finished).
   //!!! only if still requested
-  SlotDetach(thr);
-  SlotAttach(thr);
+  //SlotDetach(thr);
+  //SlotAttach(thr);
   return true;
 }
 
