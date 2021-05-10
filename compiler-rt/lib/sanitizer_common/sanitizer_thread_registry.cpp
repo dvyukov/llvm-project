@@ -202,22 +202,19 @@ void ThreadRegistry::DetachThread(Tid tid, void *arg) {
 }
 
 void ThreadRegistry::JoinThread(Tid tid, void *arg) {
-  bool destroyed = false;
-  do {
-    {
-      BlockingMutexLock l(&mtx_);
-      ThreadContextBase *tctx = threads_[tid];
-      CHECK_NE(tctx, 0);
-      if (tctx->status == ThreadStatusInvalid) {
-        Report("%s: Join of non-existent thread\n", SanitizerToolName);
-        return;
-      }
-      if ((destroyed = tctx->GetDestroyed()))
-        tctx->SetJoined(arg);
+  for (;;internal_sched_yield()) {
+    BlockingMutexLock l(&mtx_);
+    ThreadContextBase *tctx = threads_[tid];
+    CHECK_NE(tctx, 0);
+    if (tctx->status == ThreadStatusInvalid) {
+      Report("%s: Join of non-existent thread\n", SanitizerToolName);
+      return;
     }
-    if (!destroyed)
-      internal_sched_yield();
-  } while (!destroyed);
+    if (tctx->GetDestroyed()) {
+      tctx->SetJoined(arg);
+      return;
+    }
+  }
 }
 
 // Normally this is called when the thread is about to exit.  If

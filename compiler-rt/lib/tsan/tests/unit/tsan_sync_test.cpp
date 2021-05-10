@@ -17,6 +17,7 @@ namespace __tsan {
 
 TEST(MetaMap, Basic) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime rt(thr);
   MetaMap *m = &ctx->metamap;
   u64 block[1] = {};  // fake malloc block
   m->AllocBlock(thr, 0, (uptr)&block[0], 1 * sizeof(u64));
@@ -32,6 +33,7 @@ TEST(MetaMap, Basic) {
 
 TEST(MetaMap, FreeRange) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime rt(thr);
   MetaMap *m = &ctx->metamap;
   u64 block[4] = {};  // fake malloc block
   m->AllocBlock(thr, 0, (uptr)&block[0], 1 * sizeof(u64));
@@ -49,15 +51,16 @@ TEST(MetaMap, FreeRange) {
 
 TEST(MetaMap, Sync) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime rt(thr);
   MetaMap *m = &ctx->metamap;
   u64 block[4] = {};  // fake malloc block
   m->AllocBlock(thr, 0, (uptr)&block[0], 4 * sizeof(u64));
   SyncVar *s1 = m->GetIfExists((uptr)&block[0]);
   EXPECT_EQ(s1, (SyncVar*)0);
-  s1 = m->GetOrCreate(thr, 0, (uptr)&block[0]);
+  s1 = m->GetOrCreate(thr, 0, (uptr)&block[0], true);
   EXPECT_NE(s1, (SyncVar*)0);
   EXPECT_EQ(s1->addr, (uptr)&block[0]);
-  SyncVar *s2 = m->GetOrCreate(thr, 0, (uptr)&block[1]);
+  SyncVar *s2 = m->GetOrCreate(thr, 0, (uptr)&block[1], true);
   EXPECT_NE(s2, (SyncVar*)0);
   EXPECT_EQ(s2->addr, (uptr)&block[1]);
   m->FreeBlock(thr->proc(), (uptr)&block[0]);
@@ -70,13 +73,14 @@ TEST(MetaMap, Sync) {
 
 TEST(MetaMap, MoveMemory) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime rt(thr);
   MetaMap *m = &ctx->metamap;
   u64 block1[4] = {};  // fake malloc block
   u64 block2[4] = {};  // fake malloc block
   m->AllocBlock(thr, 0, (uptr)&block1[0], 3 * sizeof(u64));
   m->AllocBlock(thr, 0, (uptr)&block1[3], 1 * sizeof(u64));
-  SyncVar *s1 = m->GetOrCreate(thr, 0, (uptr)&block1[0]);
-  SyncVar *s2 = m->GetOrCreate(thr, 0, (uptr)&block1[1]);
+  SyncVar *s1 = m->GetOrCreate(thr, 0, (uptr)&block1[0], true);
+  SyncVar *s2 = m->GetOrCreate(thr, 0, (uptr)&block1[1], true);
   m->MoveMemory((uptr)&block1[0], (uptr)&block2[0], 4 * sizeof(u64));
   MBlock *mb1 = m->GetBlock((uptr)&block1[0]);
   EXPECT_EQ(mb1, (MBlock*)0);
@@ -103,10 +107,11 @@ TEST(MetaMap, MoveMemory) {
 
 TEST(MetaMap, ResetSync) {
   ThreadState *thr = cur_thread();
+  ScopedRuntime rt(thr);
   MetaMap *m = &ctx->metamap;
   u64 block[1] = {};  // fake malloc block
   m->AllocBlock(thr, 0, (uptr)&block[0], 1 * sizeof(u64));
-  SyncVar *s = m->GetOrCreate(thr, 0, (uptr)&block[0]);
+  SyncVar *s = m->GetOrCreate(thr, 0, (uptr)&block[0], true);
   s->Reset();
   uptr sz = m->FreeBlock(thr->proc(), (uptr)&block[0]);
   EXPECT_EQ(sz, 1 * sizeof(u64));

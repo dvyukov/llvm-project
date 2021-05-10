@@ -19,22 +19,72 @@ namespace __tsan {
 // Simple reader-writer spin-mutex. Optimized for not-so-contended case.
 // Readers have preference, can possibly starvate writers.
 
-// The table fixes what mutexes can be locked under what mutexes.
-// E.g. if the row for MutexTypeThreads contains MutexTypeReport,
-// then Report mutex can be locked while under Threads mutex.
-// The leaf mutexes can be locked under any other mutexes.
-// Recursive locking is not supported.
 #if SANITIZER_DEBUG && !SANITIZER_GO
-const MutexType MutexTypeLeaf = (MutexType)-1;
-static MutexType CanLockTab[MutexTypeCount][MutexTypeCount] = {
-  /*MutexTypeInvalid*/ {},
-  /*MutexTypeReport*/ {MutexTypeSyncVar},
-  /*MutexTypeSyncVar*/ {},
-  /*MutexTypeAnnotations*/ {},
-  /*MutexTypeFired*/ {MutexTypeLeaf},
-  /*MutexTypeRacy*/ {MutexTypeLeaf},
-  /*MutexTypeGlobalProc*/ {},
-  /*MutexTypeTraceAlloc*/ {},
+struct MutexMeta {
+  MutexType type;
+  const char* name;
+  bool rt;
+  // The table fixes what mutexes can be locked under what mutexes.
+  // E.g. if the row for MutexTypeThreads contains MutexTypeReport,
+  // then Report mutex can be locked while under Threads mutex.
+  // The leaf mutexes can be locked under any other mutexes.
+  // Recursive locking is not supported.
+  MutexType can_lock[MutexTypeCount];
+};
+
+static MutexMeta mutex_meta[MutexTypeCount] = {
+  {
+    MutexTypeInvalid,
+    "Invalid",
+  },
+  {
+    MutexTypeReport,
+    "Report",
+    true,
+    {MutexTypeSyncVar},
+  },
+  {
+    MutexTypeSyncVar,
+    "SyncVar",
+    true,
+  },
+  {
+    MutexTypeAnnotations,
+    "Annotations",
+    true,
+  },
+  {
+    MutexTypeFired,
+    "Fired",
+    true,
+    {MutexTypeLeaf},
+  },
+  {
+    MutexTypeRacy,
+    "Racy",
+    true,
+    {MutexTypeLeaf},
+  },
+  {
+    MutexTypeGlobalProc,
+    "GlobalProc",
+  },
+  {
+    MutexTypeTrace,
+    "Trace",
+    true,
+  },
+  {
+    MutexTypeTraceAlloc,
+    "TraceAlloc",
+    true,
+  },
+  {
+    MutexTypeSlot,
+    "Slot",
+    true,
+    {MutexTypeTraceAlloc, MutexTypeReport, MutexTypeTrace},
+  },
 };
 
 static bool CanLockAdj[MutexTypeCount][MutexTypeCount];
@@ -47,9 +97,10 @@ void InitializeMutex() {
   const int N = MutexTypeCount;
   int cnt[N] = {};
   bool leaf[N] = {};
-  for (int i = 1; i < N; i++) {
+  for (int i = 0; i < N; i++) {
+    CHECK_EQ(i, mutex_meta[i].type);
     for (int j = 0; j < N; j++) {
-      MutexType z = CanLockTab[i][j];
+      MutexType z = mutex_meta[i].can_lock[j];
       if (z == MutexTypeInvalid)
         continue;
       if (z == MutexTypeLeaf) {
@@ -127,6 +178,7 @@ void InternalDeadlockDetector::Lock(MutexType t) {
   // Printf("LOCK %d @%zu\n", t, seq_ + 1);
   CHECK_GT(t, MutexTypeInvalid);
   CHECK_LT(t, MutexTypeCount);
+  CHECK_EQ(mutex_meta[t].rt, atomic_load_relaxed(&cur_thread()->in_runtime));
   u64 max_seq = 0;
   u64 max_idx = MutexTypeInvalid;
   for (int i = 0; i != MutexTypeCount; i++) {
@@ -143,15 +195,15 @@ void InternalDeadlockDetector::Lock(MutexType t) {
     return;
   // Printf("  last %d @%zu\n", max_idx, max_seq);
   if (!CanLockAdj[max_idx][t]) {
-    Printf("ThreadSanitizer: internal deadlock detected\n");
-    Printf("ThreadSanitizer: can't lock %d while under %zu\n",
-               t, (uptr)max_idx);
+    Printf("ThreadSanitizer: internal deadlock: can't lock %s under %s mutex\n",
+        mutex_meta[t].name, mutex_meta[max_idx].name);
     CHECK(0);
   }
 }
 
 void InternalDeadlockDetector::Unlock(MutexType t) {
   // Printf("UNLO %d @%zu #%zu\n", t, seq_, locked_[t]);
+  CHECK_EQ(mutex_meta[t].rt, atomic_load_relaxed(&cur_thread()->in_runtime));
   CHECK(locked_[t]);
   locked_[t] = 0;
 }

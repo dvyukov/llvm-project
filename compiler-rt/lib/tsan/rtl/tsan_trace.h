@@ -110,11 +110,15 @@ struct TracePart {
 static_assert(sizeof(TracePart) == (4 << 10), "bad TracePart size");
 
 struct Trace {
-  SpinMutex mtx;
-  TracePart* first;
-  TracePart* current;
-  Event* pos;
-  uptr prev_pc;
+  Mutex mtx;
+  TracePart* first = nullptr;
+  TracePart* current = nullptr;
+  Event* pos = nullptr;
+  uptr prev_pc = 0;
+
+  Trace()
+    : mtx(MutexTypeTrace) {
+  }
 };
 
 }  // namespace __tsan

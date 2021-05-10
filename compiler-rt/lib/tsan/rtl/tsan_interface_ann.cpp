@@ -32,12 +32,16 @@ class ScopedAnnotation {
  public:
   ScopedAnnotation(ThreadState *thr, const char *aname, uptr pc)
       : thr_(thr) {
-    FuncEntry(thr_, pc);
     DPrintf("#%d: annotation %s()\n", thr_->tid, aname);
+    ScopedRuntime rt(thr_);
+    FuncEntry(thr_, pc);
   }
 
   ~ScopedAnnotation() {
-    FuncExit(thr_);
+    {
+      ScopedRuntime rt(thr_);
+      FuncExit(thr_);
+    }
     CheckNoLocks();
   }
  private:
@@ -48,7 +52,6 @@ class ScopedAnnotation {
     if (!flags()->enable_annotations) \
       return ret; \
     ThreadState *thr = cur_thread(); \
-    ScopedRuntime sr(thr); \
     const uptr caller_pc = (uptr)__builtin_return_address(0); \
     StatInc(thr, StatAnnotation); \
     StatInc(thr, Stat##typ); \
@@ -241,25 +244,24 @@ void INTERFACE_ATTRIBUTE AnnotateExpectRace(
     char *f, int l, uptr mem, char *desc) {
 }
 
-static void BenignRaceImpl(
-    char *f, int l, uptr mem, uptr size, char *desc) {
+static void BenignRaceImpl(ThreadState* thr, char *f, int l, uptr mem, uptr size, char *desc) {
+  ScopedRuntime rt(thr);
   Lock lock(&dyn_ann_ctx->mtx);
   AddExpectRace(&dyn_ann_ctx->benign,
                 f, l, mem, size, desc);
   DPrintf("Add benign race: %s addr=%zx %s:%d\n", desc, mem, f, l);
 }
 
-// FIXME: Turn it off later. WTF is benign race?1?? Go talk to Hans Boehm.
 void INTERFACE_ATTRIBUTE AnnotateBenignRaceSized(
     char *f, int l, uptr mem, uptr size, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRaceSized);
-  BenignRaceImpl(f, l, mem, size, desc);
+  BenignRaceImpl(thr, f, l, mem, size, desc);
 }
 
 void INTERFACE_ATTRIBUTE AnnotateBenignRace(
     char *f, int l, uptr mem, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRace);
-  BenignRaceImpl(f, l, mem, 1, desc);
+  BenignRaceImpl(thr, f, l, mem, 1, desc);
 }
 
 void INTERFACE_ATTRIBUTE AnnotateIgnoreReadsBegin(char *f, int l) {
@@ -318,7 +320,7 @@ void INTERFACE_ATTRIBUTE WTFAnnotateHappensAfter(char *f, int l, uptr addr) {
 void INTERFACE_ATTRIBUTE WTFAnnotateBenignRaceSized(
     char *f, int l, uptr mem, uptr sz, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRaceSized);
-  BenignRaceImpl(f, l, mem, sz, desc);
+  BenignRaceImpl(thr, f, l, mem, sz, desc);
 }
 
 int INTERFACE_ATTRIBUTE RunningOnValgrind() {

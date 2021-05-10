@@ -55,6 +55,11 @@
 #include <resolv.h>
 #endif
 
+// p_type from resolv.h conflicts with Elf_Phdr.p_type in link.h.
+#ifdef p_type
+#undef p_type
+#endif
+
 #ifdef sa_handler
 # undef sa_handler
 #endif
@@ -268,6 +273,7 @@ void InitializePlatformEarly() {
 }
 
 void ThreadPreempt(ThreadState *thr) {
+  //!!! this won't work for Go
   DPrintf("#%d: peempting\n", thr->tid);
   siginfo_t info;
   internal_memset(&info, 0, sizeof(info));
@@ -280,20 +286,23 @@ void ThreadPreempt(ThreadState *thr) {
   }
 }
 
+#if TSAN_FAST_FLAT
 uptr flat_start = -1;
 uptr flat_end = 0;
+#endif
 
 void PreemptHijack() {
+#if !SANITIZER_GO
   ThreadState* thr = cur_thread();
   DPrintf("#%d: PreemptHijack\n", thr->tid);
   //!!! only if still requested
-  SlotDetach(thr);
-  SlotAttach(thr);
+  CompleteReset(thr);
+#endif
 }
 
 bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
+#if !SANITIZER_GO
   siginfo_t* info = (siginfo_t*)info1;
-  ucontext_t* uctx = (ucontext_t*)ctx;
   if (thr->unwind_abort) {
     PrintCurrentStack(thr, 0);
     return true;
@@ -301,7 +310,8 @@ bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
   if (sig != SIGUSR1 || info->si_pid != (int)internal_getpid() || info->si_code != -66 || info->si_value.sival_ptr != (void*)0x1234)
     return false;
   DPrintf("#%d: PreemptHandler\n", thr->tid);
-  //return true; //!!!
+#if TSAN_FAST_FLAT
+  ucontext_t* uctx = (ucontext_t*)ctx;
   uptr pc = uctx->uc_mcontext.gregs[REG_RIP];
   if (pc >= flat_start && pc < flat_end) {
     uptr sp = uctx->uc_mcontext.gregs[REG_RSP];
@@ -310,21 +320,24 @@ bool HandlePreemptSignal(ThreadState *thr, int sig, void* info1, void* ctx) {
     uctx->uc_mcontext.gregs[REG_RSP] = sp - sizeof(void*);
     return true;
   }
+#endif
   //!!! only if still requested
   if (atomic_load_relaxed(&thr->in_runtime)) {
-    atomic_store_relaxed(&thr->reset_pending, 1);
+    atomic_store_relaxed(&thr->reset_pending, 1); //!!! where do we reset it?
     return true;
   }
   //!!! the thread may not own a slot at all (e.g. blocking call or finished).
   //!!! only if still requested
-  //SlotDetach(thr);
-  //SlotAttach(thr);
+  CompleteReset(thr);
+#endif
   return true;
 }
 
 void PreemptHandler(int sig, siginfo_t *info, void *ctx) {
+#if !SANITIZER_GO
   ThreadState* thr = cur_thread();
   CHECK(HandlePreemptSignal(thr, sig, info, ctx));
+#endif
 }
 
 void* TsanFlatStart();
@@ -378,33 +391,11 @@ void InitializePlatform() {
       ReExec();
   }
 
-  CheckAndProtect();
+  MappingCheckAndProtect();
   InitTlsSize();
 #endif  // !SANITIZER_GO
 
-  /*
-  dl_iterate_phdr([](struct dl_phdr_info *info, size_t size, void *data)->int {
-    Printf("NAME: %s\n", info->dlpi_name);
-    for (unsigned i = 0; i != info->dlpi_phnum; ++i) {
-      const Elf64_Phdr* phr = &info->dlpi_phdr[i];
-      
-      //if (info->dlpi_phdr[i].p_type != PT_LOAD || info->dlpi_phdr[i].p_flags != (PF_X | PF_R))
-      //  continue;
-#undef p_type
-      Printf("  type=%llu offset=%llu vaddr=%llu paddr=%llu\n", phr->p_type, info->dlpi_phdr[i].p_offset, info->dlpi_phdr[i].p_vaddr, info->dlpi_phdr[i].p_paddr);
-    }
-    return 0;
-  }, nullptr);
-*/
-/*
-  int fd = 
-  ../../sanitizer_common/sanitizer_posix.cpp-bool ReadFromFile(fd_t fd, void *buff, uptr buff_size, uptr *bytes_read,
-../../sanitizer_common/sanitizer_posix.cpp-                  error_t *error_p) {
-
-
-  Elf64_Ehdr
-*/
-
+#if TSAN_FAST_FLAT
   for (void** flat = flat_funcs; *flat; flat++) {
     Dl_info info = {};
     Elf64_Sym* sym = nullptr;
@@ -418,6 +409,7 @@ void InitializePlatform() {
       flat_end = sym->st_value + sym->st_size;
   }
   DPrintf("flat region: %p-%p (%p)\n", flat_start, flat_end, flat_end-flat_start);
+#endif
 
   __sanitizer_sigaction act;
   internal_memset(&act, 0, sizeof(act));

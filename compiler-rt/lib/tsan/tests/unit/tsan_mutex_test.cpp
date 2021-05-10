@@ -94,7 +94,7 @@ static void *read_mutex_thread(void *param) {
 }
 
 TEST(Mutex, Write) {
-  Mutex mtx(MutexTypeAnnotations);
+  Mutex mtx(MutexTypeGlobalProc);
   TestData<Mutex> data(&mtx);
   pthread_t threads[kThreads];
   for (int i = 0; i < kThreads; i++)
@@ -104,7 +104,7 @@ TEST(Mutex, Write) {
 }
 
 TEST(Mutex, ReadWrite) {
-  Mutex mtx(MutexTypeAnnotations);
+  Mutex mtx(MutexTypeGlobalProc);
   TestData<Mutex> data(&mtx);
   pthread_t threads[kThreads];
   for (int i = 0; i < kThreads; i++)

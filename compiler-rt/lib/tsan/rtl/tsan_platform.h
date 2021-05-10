@@ -1025,7 +1025,7 @@ uptr ShadowToMem(uptr s) {
 
 void InitializePlatform();
 void InitializePlatformEarly();
-void CheckAndProtect();
+void MappingCheckAndProtect();
 void InitializeShadowMemoryPlatform();
 void FlushShadowMemory();
 void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive);

@@ -213,11 +213,12 @@ void __tsan_func_exit(ThreadState *thr) {
 void __tsan_malloc(ThreadState *thr, uptr pc, uptr p, uptr sz) {
   CHECK(inited);
   if (thr && pc)
-    ctx->metamap.AllocBlock(thr, pc, p, sz);
-  MemoryResetRange(0, 0, (uptr)p, sz);
+    MBlockAlloc(thr, pc, p, sz);
+  MemoryResetRange(thr, pc, (uptr)p, sz);
 }
 
 void __tsan_free(uptr p, uptr sz) {
+  //!!! MBlockFree(thr, pc, p);
   ctx->metamap.FreeRange(get_cur_proc(), p, sz);
 }
 

@@ -249,7 +249,7 @@ static uptr longjmp_xor_key = 0;
 void InitializePlatform() {
   DisableCoreDumperIfNecessary();
 #if !SANITIZER_GO
-  CheckAndProtect();
+  MappingCheckAndProtect();
 
   CHECK_EQ(main_thread_identity, 0);
   main_thread_identity = (uptr)pthread_self();

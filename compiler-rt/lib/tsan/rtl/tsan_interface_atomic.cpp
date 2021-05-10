@@ -268,7 +268,7 @@ static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
     return;
   }
   __sync_synchronize();
-  SyncVar *s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a);
+  SyncVar *s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
   {
     Lock lock(&s->mtx);
     ReleaseStoreImpl(thr, pc, &s->clock);
@@ -282,7 +282,7 @@ static T AtomicRMW(ThreadState *thr, uptr pc, volatile T *a, T v, morder mo) {
   MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
   SyncVar *s = 0;
   if (mo != mo_relaxed) {
-    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a);
+    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
     if (IsReleaseOrder(mo))
       s->mtx.Lock();
     else
@@ -413,7 +413,7 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
   SyncVar *s = 0;
   if (mo != mo_relaxed) {
-    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a);
+    s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
     if (IsReleaseOrder(mo))
       s->mtx.Lock();
     else
@@ -483,7 +483,6 @@ static morder convert_morder(morder mo) {
 
 #define SCOPED_ATOMIC(func, ...) \
     ThreadState *const thr = cur_thread(); \
-    ScopedRuntime sr(thr); \
     if (UNLIKELY(thr->ignore_sync || thr->ignore_interceptors)) { \
       ProcessPendingSignals(thr); \
       return NoTsanAtomic##func(__VA_ARGS__); \
@@ -493,6 +492,7 @@ static morder convert_morder(morder mo) {
     mo = convert_morder(mo); \
     AtomicStatInc(thr, sizeof(*a), mo, StatAtomic##func); \
     ScopedAtomic sa(thr, callpc, a, mo, __func__); \
+    ScopedRuntime sr(thr); \
     return Atomic##func(thr, pc, __VA_ARGS__); \
 /**/
 
@@ -501,12 +501,16 @@ class ScopedAtomic {
   ScopedAtomic(ThreadState *thr, uptr pc, const volatile void *a,
                morder mo, const char *func)
       : thr_(thr) {
-    FuncEntry(thr_, pc);
     DPrintf2("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
+    ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
+    FuncEntry(thr_, pc);
   }
   ~ScopedAtomic() {
     ProcessPendingSignals(thr_);
-    FuncExit(thr_);
+    {
+      ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
+      FuncExit(thr_);
+    }
     CheckNoLocks();
   }
  private:

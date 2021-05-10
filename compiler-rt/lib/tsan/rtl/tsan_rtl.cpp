@@ -40,8 +40,8 @@ extern "C" void __tsan_dump() {
   for (auto& slot: ctx->slots) {
     if (!slot.thr && !slot.reset_wait)
       continue;
-    Printf("  slot %u: reset_wait=%u tid=%d pid=%d\n",
-      (u32)slot.sid, slot.reset_wait,
+    Printf("  slot %u: reset_wait=%u/%u tid=%d pid=%d\n",
+      (u32)slot.sid, slot.reset_wait, slot.thr ? atomic_load_relaxed(&slot.thr->reset_pending) : 0,
       slot.thr ? (int)slot.thr->tid: -1,
       slot.thr && slot.thr->tctx ? slot.thr->tctx->os_id : -1);
   }
@@ -61,21 +61,20 @@ Context* ctx;
 bool OnFinalize(bool failed);
 void OnInitialize();
 #else
-#include <dlfcn.h>
 SANITIZER_WEAK_CXX_DEFAULT_IMPL
 bool OnFinalize(bool failed) {
 #if !SANITIZER_GO
-  if (auto* ptr = dlsym(RTLD_DEFAULT, "__tsan_on_finalize"))
-    return reinterpret_cast<decltype(&__tsan_on_finalize)>(ptr)(failed);
+  if (__tsan_on_finalize)
+    return reinterpret_cast<int(*)(int)>(__tsan_on_finalize)(failed);
 #endif
   return failed;
 }
+
 SANITIZER_WEAK_CXX_DEFAULT_IMPL
 void OnInitialize() {
 #if !SANITIZER_GO
-  if (auto* ptr = dlsym(RTLD_DEFAULT, "__tsan_on_initialize")) {
-    return reinterpret_cast<decltype(&__tsan_on_initialize)>(ptr)();
-  }
+  if (__tsan_on_initialize)
+    return reinterpret_cast<void(*)(void)>(__tsan_on_initialize)();
 #endif
 }
 #endif
@@ -118,28 +117,7 @@ bool SlotUsable(TidSlot* slot) {
 void DoReset() {
   VPrintf(1, "ThreadSanitizer: global reset...\n");
   CHECK(!atomic_load_relaxed(&ctx->reset_pending));
-  //!!! part new threads
-  //!!! degerister dead threads
-  //!!! this should reset slots
-  for (u32 i = ctx->thread_registry.NumThreadsLocked(); i--;) {
-    ThreadContext* tctx = (ThreadContext*)ctx->thread_registry.GetThreadLocked(static_cast<Tid>(i));
-    if (!tctx)
-      continue;
-    Free(tctx->sync);
-    if (tctx->status != ThreadStatusRunning)
-      continue;
-    //!!! do this when the thread first attaches after reset
-    ThreadState* thr = tctx->thr;
-    CHECK(!thr->slot);
-    thr->active = false;
-    thr->last_slot = nullptr;
-    thr->clock.Reset();
-#if !SANITIZER_GO
-    thr->last_sleep_stack_id = kInvalidStackID;
-    thr->last_sleep_clock.Reset();
-#endif
-    //thr->fast_state.SetEpoch(1);
-  }
+  ctx->slot_mtx.CheckLocked();
   for (auto& slot: ctx->slots) {
     CHECK(!slot.thr);
     CHECK(!slot.reset_wait);
@@ -170,7 +148,32 @@ void DoReset() {
   }
   DPrintf("Resetting meta shadow...\n");
   ctx->metamap.Reset();
-  //!!! purge all dead threads from thread_registry
+  {
+    ThreadRegistryLock lock(&ctx->thread_registry);
+    //!!! don't lock ThreadRegistry and do thread reset lazily?
+    for (u32 i = ctx->thread_registry.NumThreadsLocked(); i--;) {
+      ThreadContext* tctx = (ThreadContext*)ctx->thread_registry.GetThreadLocked(static_cast<Tid>(i));
+      if (!tctx)
+        continue;
+      Free(tctx->sync);
+      // Potentially we could purge all ThreadStatusDead threads from the registry.
+      // Since we reset all shadow, they can't race with anything anymore.
+      // However, their tid's can still be stored in some aux places (e.g. tid of thread that created something).
+      if (tctx->status != ThreadStatusRunning)
+        continue;
+      //!!! do this when the thread first attaches after reset
+      ThreadState* thr = tctx->thr;
+      CHECK(!thr->slot);
+      thr->active = false;
+      thr->last_slot = nullptr;
+      atomic_store_relaxed(&thr->reset_pending, 0);
+      thr->clock.Reset();
+#if !SANITIZER_GO
+      thr->last_sleep_stack_id = kInvalidStackID;
+      thr->last_sleep_clock.Reset();
+#endif
+    }
+  }
   /*
   DPrintf("Resuming threads...\n");
   for (u32 i = ctx->thread_registry.NumThreadsLocked(); i--;) {
@@ -185,7 +188,10 @@ void DoReset() {
 }
 
 void CompleteReset(ThreadState *thr) {
+#if !SANITIZER_GO
   if (thr->in_symbolizer) return; //!!!
+#endif
+  ScopedRuntime rt(thr);
   SlotDetach(thr);
   SlotAttach(thr);
 }
@@ -271,26 +277,29 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
       dump = 50000;
       atomic_store_relaxed(&ctx->reset_pending, pending);
     }
-    ctx->thread_registry.Unlock();
+    ctx->slot_mtx.Unlock();
     internal_usleep(100);
     if (dump && !--dump) {
       __tsan_dump();
-  for (auto& slot: ctx->slots) {
-    if (!slot.thr && !slot.reset_wait)
-      continue;
-      slot.thr->unwind_abort = true;
-      ThreadPreempt(slot.thr);
-  }
-  internal_usleep(5*1000*1000);
-       Die();
+#if !SANITIZER_GO
+      for (auto& slot: ctx->slots) {
+        if (!slot.thr && !slot.reset_wait)
+          continue;
+        slot.thr->unwind_abort = true;
+        ThreadPreempt(slot.thr);
+      }
+      internal_usleep(5*1000*1000);
+#endif
+      Die();
     }
-    ctx->thread_registry.Lock();
+    ctx->slot_mtx.Lock();
   }
 }
 
 void SlotAttach(ThreadState *thr) {
   CheckNoLocks();
-  ThreadRegistryLock lock(&ctx->thread_registry);
+  {
+  Lock lock(&ctx->slot_mtx);
   TidSlot& slot = FindAttachSlot(thr);
   DPrintf("#%d: SlotAttach: slot=%u\n", thr->tid, slot.sid);
   CHECK(!slot.thr);
@@ -318,11 +327,13 @@ void SlotAttach(ThreadState *thr) {
     thr->tctx->startMutexSet = thr->mset;
     thr->tctx->startStack.Init(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack);
   }
+  }
   TraceSlotAttach(thr);
 }
 
 void SlotDetach(ThreadState *thr) {
-  ThreadRegistryLock lock(&ctx->thread_registry);
+  CheckNoLocks();
+  Lock lock(&ctx->slot_mtx);
   CHECK(thr->slot);
   TidSlot* slot = thr->slot;
   CHECK_EQ(slot->thr, thr);  
@@ -369,6 +380,7 @@ Context::Context()
       }),
       racy_mtx(MutexTypeRacy), racy_stacks(), racy_addresses(),
       fired_suppressions_mtx(MutexTypeFired),
+      slot_mtx(MutexTypeSlot),
       trace_part_mtx(MutexTypeTraceAlloc) {
   fired_suppressions.reserve(8);
   for (uptr i = 0; i < ARRAY_SIZE(slots); i++) {
@@ -388,7 +400,6 @@ ThreadState::ThreadState(Tid tid)
 // ignore_reads_and_writes()
 // ignore_interceptors()
     : tid(tid) {
-  //clock.Set(tid, epoch);
 #if !SANITIZER_GO
   shadow_stack_pos = shadow_stack;
   shadow_stack_end = shadow_stack + kShadowStackSize;
@@ -518,6 +529,7 @@ void UnmapShadow(ThreadState* thr, uptr addr, uptr size) {
     return;
   DontNeedShadowFor(addr, size);
   ScopedGlobalProcessor sgp;
+  ScopedRuntime rt(thr);
   ctx->metamap.ResetRange(thr->proc(), addr, size);
 }
 #endif
@@ -612,6 +624,22 @@ static void TsanOnDeadlySignal(int signo, void* siginfo, void* context) {
 }
 #endif
 
+void CheckFailed() {
+  // There is high probability that interceptors will check-fail as well,
+  // on the other hand there is no sense in processing interceptors
+  // since we are going to die soon.
+  ScopedIgnoreInterceptors ignore;
+#if !SANITIZER_GO
+  ThreadState* thr = cur_thread();
+  thr->nomalloc = false;
+  thr->ignore_sync++;
+  thr->ignore_reads_and_writes++;
+#endif
+  PrintCurrentStackSlow(StackTrace::GetCurrentPc());
+  Printf("\n");
+  __tsan_dump(); //!!!
+}
+
 void Initialize(ThreadState* thr) {
   // Thread safe because done before all threads exist.
   static bool is_initialized = false;
@@ -622,7 +650,7 @@ void Initialize(ThreadState* thr) {
   ScopedIgnoreInterceptors ignore;
   SanitizerToolName = "ThreadSanitizer";
   // Install tool-specific callbacks in sanitizer_common.
-  SetCheckFailedCallback(CheckFailed);
+  SetCheckFailedCallback(__tsan::CheckFailed);
 
   ctx = new (ctx_placeholder) Context;
   const char* env_name = SANITIZER_GO ? "GORACE" : "TSAN_OPTIONS";
@@ -667,7 +695,7 @@ void Initialize(ThreadState* thr) {
           (int)internal_getpid());
 
   // Initialize thread 0.
-  Tid tid = ThreadCreate(thr, 0, 0, true);
+  Tid tid = ThreadCreate(nullptr, 0, 0, true);
   CHECK_EQ(tid, 0);
   ThreadStart(thr, tid, GetTid(), ThreadType::Regular);
 #if TSAN_CONTAINS_UBSAN
@@ -717,10 +745,12 @@ int Finalize(ThreadState* thr) {
   if (flags()->atexit_sleep_ms > 0 && ThreadCount(thr) > 1)
     internal_usleep(u64(flags()->atexit_sleep_ms)*1000);
 
-  // Wait for pending reports.
-  ctx->report_mtx.Lock();
-  { ScopedErrorReportLock l; }
-  ctx->report_mtx.Unlock();
+  {
+    // Wait for pending reports.
+    ScopedRuntime rt(thr);
+    Lock lock1(&ctx->report_mtx);
+    ScopedErrorReportLock lock2;
+  }
 
 #if !SANITIZER_GO
   if (Verbosity())
@@ -759,6 +789,8 @@ int Finalize(ThreadState* thr) {
 
 #if !SANITIZER_GO
 void ForkBefore(ThreadState* thr, uptr pc) {
+  ScopedRuntime::Enter(thr);
+  ctx->slot_mtx.Lock();
   ctx->thread_registry.Lock();
   ctx->report_mtx.Lock();
   // Suppress all reports in the pthread_atfork callbacks.
@@ -773,12 +805,15 @@ void ForkParentAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ctx->report_mtx.Unlock();
   ctx->thread_registry.Unlock();
+  ctx->slot_mtx.Unlock();
+  ScopedRuntime::Leave(thr);
 }
 
 void ForkChildAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ctx->report_mtx.Unlock();
   ctx->thread_registry.Unlock();
+  ctx->slot_mtx.Unlock();
 
   uptr nthread = 0;
   ctx->thread_registry.GetNumberOfThreads(0, 0, &nthread /* alive threads */);
@@ -797,6 +832,7 @@ void ForkChildAfter(ThreadState *thr, uptr pc) {
     ThreadIgnoreBegin(thr, pc);
     ThreadIgnoreSyncBegin(thr, pc);
   }
+  ScopedRuntime::Leave(thr);
 }
 #endif
 
@@ -862,7 +898,7 @@ void TraceSwitch(ThreadState* thr) {
     SlotAttach(thr);
     return;
   }
-  SpinMutexLock lock(&thr->slot->trace.mtx);
+  Lock lock(&thr->slot->trace.mtx);
   thr->slot->trace.current->next = part;
   thr->slot->trace.current = part;
   thr->slot->trace.pos = 0;
@@ -1047,7 +1083,7 @@ bool TraceMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr sizeLog, bool 
   if (!kCollectHistory)
     return true;
   EventAccess* ev;
-  if (!TracePosMaybe(thr, &ev))
+  if (!TraceAcquire(thr, &ev))
     return false;
   uptr pcDelta = pc - thr->trace_prev_pc + (1<<14);
   thr->trace_prev_pc = pc;
@@ -1060,7 +1096,7 @@ bool TraceMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr sizeLog, bool 
     ev->pcDelta = pcDelta;
     DCHECK_EQ(ev->pcDelta, pcDelta);
     ev->addr = addr;
-    atomic_store_relaxed(&thr->trace_pos, (uptr)(ev + 1));
+    TraceRelease(thr, ev);
     return true;
   }
   auto evex = reinterpret_cast<EventAccessEx*>(ev);
@@ -1075,13 +1111,14 @@ bool TraceMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr sizeLog, bool 
   evex->isNotAccess = 0;
   evex->addr = addr;
   evex->sizeHi = 0;
-  atomic_store_relaxed(&thr->trace_pos, (uptr)(evex + 1));
+  TraceRelease(thr, evex);
   return true;
 }
 
-static NOINLINE
+template<bool kInRuntime>
+NOINLINE
 void TraceRestartMemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic) {
-  ScopedRuntime sr(thr);
+  MaybeScopedRuntime<kInRuntime> rt(thr);
   TraceSwitch(thr);
   MemoryAccess(thr, pc, addr, kAccessSizeLog, kAccessIsWrite, kIsAtomic);
 }
@@ -1107,10 +1144,12 @@ void ReportRaceV(ThreadState* thr, RawShadow* shadow_mem, Shadow cur, u32 race_m
   ReportRace(thr, shadow_mem, cur, Shadow(old));
 }
 
+template<bool kInRuntime>
 ALWAYS_INLINE USED
 void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
                                      u32 kAccessSizeLog, bool kAccessIsWrite, //!!! change all kAccessIsWrite to isRead
                                      bool kIsAtomic) {
+  DCHECK_EQ(kInRuntime, atomic_load_relaxed(&thr->in_runtime));
   RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
   char memBuf[4][64];
   (void)memBuf;
@@ -1185,7 +1224,7 @@ void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 
   //!!! we could move this below since we store at a single point now
   if (!TraceMemoryAccess(thr, pc, addr, kAccessSizeLog, !kAccessIsWrite, kIsAtomic))
-    return TraceRestartMemoryAccess(thr, pc, addr, kAccessSizeLog, kAccessIsWrite, kIsAtomic);
+    return TraceRestartMemoryAccess<kInRuntime>(thr, pc, addr, kAccessSizeLog, kAccessIsWrite, kIsAtomic);
 
   //!!! handle is freed
 
@@ -1281,6 +1320,9 @@ RACE:
   */
 }
 
+template void MemoryAccess<false>(ThreadState*, uptr, uptr, u32, bool, bool);
+template void MemoryAccess<true>(ThreadState*, uptr, uptr, u32, bool, bool);
+
 // Called by MemoryAccessRange in tsan_rtl_thread.cpp
 ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
                                          u32 kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic,
@@ -1309,7 +1351,7 @@ ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
 
 static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
                            RawShadow val) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
+  CHECK(/*!thr ||*/ atomic_load_relaxed(&thr->in_runtime)); //!!!
   (void)thr;
   (void)pc;
   if (size == 0)
@@ -1371,13 +1413,13 @@ static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
 }
 
 void MemoryResetRange(ThreadState* thr, uptr pc, uptr addr, uptr size) {
+  ScopedRuntime sr(thr);
   addr = RoundDown(addr, kShadowCell);
   size = RoundUp(size, kShadowCell);
   MemoryRangeSet(thr, pc, addr, size, 0);
 }
 
 void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
   // Processing more than 1k (4k of shadow) is expensive,
@@ -1389,27 +1431,26 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   thr->is_freeing = true;
   MemoryAccessRange(thr, pc, addr, size, true);
   thr->is_freeing = false;
-  TraceMemoryAccessRange(thr, pc, addr, size, false, true);
-  Shadow s(thr->fast_state);
-  s.SetAccess(0, kSizeLog8, false, false, true);
-  //s.MarkAsFreed();
-  //s.SetWrite(true);
-  //s.SetAddr0AndSizeLog(0, kSizeLog8);
-  MemoryRangeSet(thr, pc, addr, size, s.raw());
+  {
+    ScopedRuntime rt(thr);
+    TraceMemoryAccessRange(thr, pc, addr, size, false, true);
+    Shadow s(thr->fast_state);
+    s.SetAccess(0, kSizeLog8, false, false, true);
+    MemoryRangeSet(thr, pc, addr, size, s.raw());
+  }
 }
 
 void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
+  ScopedRuntime rt(thr);
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
   TraceMemoryAccessRange(thr, pc, addr, size, false, false);
   Shadow s(thr->fast_state);
   s.SetAccess(0, kSizeLog8, false, false, false);
-  //s.SetWrite(true);
-  //s.SetAddr0AndSizeLog(0, kSizeLog8);
   MemoryRangeSet(thr, pc, addr, size, s.raw());
 }
 
-void MemoryRangeImitateWriteOrResetRange(ThreadState* thr, uptr pc, uptr addr,
+void MemoryRangeImitateWriteOrReset(ThreadState* thr, uptr pc, uptr addr,
                                          uptr size) {
   if (thr->ignore_reads_and_writes == 0)
     MemoryRangeImitateWrite(thr, pc, addr, size);
@@ -1417,45 +1458,111 @@ void MemoryRangeImitateWriteOrResetRange(ThreadState* thr, uptr pc, uptr addr,
     MemoryResetRange(thr, pc, addr, size);
 }
 
+void MBlockAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz) {
+  ScopedRuntime sr(thr);
+  ctx->metamap.AllocBlock(thr, pc, p, sz);
+}
+
+uptr MBlockFree(ThreadState *thr, uptr pc, uptr p) {
+  ScopedRuntime sr(thr);
+  return ctx->metamap.FreeBlock(thr->proc(), p);
+}
+
 ALWAYS_INLINE WARN_UNUSED_RESULT
-bool TraceEvent(ThreadState *thr, EventType type, uptr pc = 0) {
-  DCHECK(type == EventTypeFuncEnter || type == EventTypeFuncExit || type == EventTypeRelease);
+bool TraceFunc(ThreadState *thr, EventType type, uptr pc = 0) {
+  DCHECK(type == EventTypeFuncEnter || type == EventTypeFuncExit);
   if (!kCollectHistory)
     return true;
   EventPC* ev;
-  if (!TracePosMaybe(thr, &ev))
+  if (!TraceAcquire(thr, &ev))
     return false;
   ev->isAccess = 0;
   ev->type = type;
   ev->isExternalPC = 0;
   ev->_ = 0;
   ev->pc = pc;
-  atomic_store_relaxed(&thr->trace_pos, (uptr)(ev + 1));
+  TraceRelease(thr, ev);
   return true;
 }
 
-void TraceRelease(ThreadState *thr) {
-  if (TraceEvent(thr, EventTypeRelease, 0))
+void TraceMemoryAccessRange(ThreadState *thr, uptr pc, uptr addr, uptr size, bool isRead, bool isFreed) {
+  if (!kCollectHistory)
     return;
-  TraceSwitch(thr);
-  CHECK(TraceEvent(thr, EventTypeRelease, 0));
+  thr->trace_prev_pc = pc;
+  EventAccessEx ev = {};
+  ev.type = EventTypeAccessEx;
+  ev.isRead = isRead;
+  ev.isAtomic = 0;
+  ev.isFreed = isFreed;
+  ev.isExternalPC = 0; //!!!
+  ev.sizeLo = size;
+  ev.pc = pc;
+  ev.isNotAccess = 0;
+  ev.addr = addr;
+  ev.sizeHi = size >> 13;
+  //!!! CHECK_EQ(ev->sizeLo + (ev->sizeHi << 13), size);
+  TraceEvent(thr, ev);
 }
 
-static NOINLINE
+void TraceMutexLock(ThreadState *thr, EventType type, uptr pc, uptr addr, StackID stk) {
+  DCHECK(type == EventTypeLock || type == EventTypeRLock);
+  if (!kCollectHistory)
+    return;
+  //!!! should these events set trace_prev_pc as well?
+  EventLock ev = {};
+  ev.type = type;
+  ev.isExternalPC = 0; //!!! handle
+  ev.pc = pc;
+  ev.stackIDLo = static_cast<u64>(stk);
+  ev.stackIDHi = static_cast<u64>(stk) >> 16;
+  ev.addr = addr;
+  TraceEvent(thr, ev);
+}
+
+void TraceMutexUnlock(ThreadState *thr, uptr addr) {
+  if (!kCollectHistory)
+    return;
+  EventUnlock ev = {};
+  ev.type = EventTypeUnlock;
+  ev.addr = addr;
+  TraceEvent(thr, ev);
+}
+
+void TraceRelease(ThreadState *thr) {
+  if (!kCollectHistory)
+    return;
+  EventPC ev = {};
+  ev.type = EventTypeRelease;
+  TraceEvent(thr, ev);
+}
+
+void TraceSlotAttach(ThreadState *thr) {
+  if (!kCollectHistory)
+    return;
+  EventAttach ev = {};
+  ev.type = EventTypeAttach;
+  ev.tid = static_cast<u64>(thr->tid);
+  TraceEvent(thr, ev);
+}
+
+template<bool kInRuntime>
+NOINLINE
 void TraceRestartFuncEntry(ThreadState* thr, uptr pc) {
-  ScopedRuntime sr(thr);
+  MaybeScopedRuntime<kInRuntime> rt(thr);
   TraceSwitch(thr);
   FuncEntry(thr, pc);
 }
 
+template<bool kInRuntime>
 ALWAYS_INLINE USED
 void FuncEntry(ThreadState* thr, uptr pc) {
+  DCHECK_EQ(kInRuntime, atomic_load_relaxed(&thr->in_runtime));
   StatInc(thr, StatFuncEnter);
   DPrintf2("#%d: FuncEntry %p\n", (int)thr->fast_state.sid(), (void*)pc);
   if (thr->ignore_funcs_) //!!! combine with TracePos check?
     return;
-  if (!TraceEvent(thr, EventTypeFuncEnter, pc))
-    return TraceRestartFuncEntry(thr, pc);
+  if (!TraceFunc(thr, EventTypeFuncEnter, pc))
+    return TraceRestartFuncEntry<kInRuntime>(thr, pc);
   DCHECK_GE(thr->shadow_stack_pos, thr->shadow_stack);
 #if !SANITIZER_GO
   DCHECK_LT(thr->shadow_stack_pos, thr->shadow_stack_end);
@@ -1467,27 +1574,36 @@ void FuncEntry(ThreadState* thr, uptr pc) {
   thr->shadow_stack_pos++;
 }
 
-static NOINLINE
+template void FuncEntry<false>(ThreadState*, uptr pc);
+template void FuncEntry<true>(ThreadState*, uptr pc);
+
+template<bool kInRuntime>
+NOINLINE
 void TraceRestartFuncExit(ThreadState* thr) {
-  ScopedRuntime sr(thr);
+  MaybeScopedRuntime<kInRuntime> rt(thr);
   TraceSwitch(thr);
   FuncExit(thr);
 }
 
+template<bool kInRuntime>
 ALWAYS_INLINE USED
 void FuncExit(ThreadState* thr) {
+  DCHECK_EQ(kInRuntime, atomic_load_relaxed(&thr->in_runtime));
   StatInc(thr, StatFuncExit);
   DPrintf2("#%d: FuncExit\n", (int)thr->fast_state.sid());
   if (thr->ignore_funcs_) //!!! combine with TracePos check?
     return;
-  if (!TraceEvent(thr, EventTypeFuncExit, 0))
-    return TraceRestartFuncExit(thr);
+  if (!TraceFunc(thr, EventTypeFuncExit, 0))
+    return TraceRestartFuncExit<kInRuntime>(thr);
   DCHECK_GT(thr->shadow_stack_pos, thr->shadow_stack);
 #if !SANITIZER_GO
   DCHECK_LT(thr->shadow_stack_pos, thr->shadow_stack_end);
 #endif
   thr->shadow_stack_pos--;
 }
+
+template void FuncExit<false>(ThreadState*);
+template void FuncExit<true>(ThreadState*);
 
 void ThreadIgnoreBegin(ThreadState* thr, uptr pc, bool save_stack) {
   DPrintf("#%d: ThreadIgnoreBegin\n", thr->tid);

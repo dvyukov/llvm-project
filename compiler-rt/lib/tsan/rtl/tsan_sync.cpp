@@ -23,12 +23,12 @@ SyncVar::SyncVar()
   Reset();
 }
 
-void SyncVar::Init(ThreadState *thr, uptr pc, uptr addr) {
+void SyncVar::Init(ThreadState *thr, uptr pc, uptr addr, bool save_stack) {
   this->addr = addr;
   this->next = 0;
   creation_stack_id = kInvalidStackID;
-  //!!! don't do this for atomic vars
-  if (!SANITIZER_GO)  // Go does not use them
+  // Go does not use stacks.
+  if (!SANITIZER_GO && save_stack)
     creation_stack_id = CurrentStackId(thr, pc);
   if (common_flags()->detect_deadlocks)
     DDMutexInit(thr, pc, this);
@@ -50,6 +50,9 @@ MetaMap::MetaMap()
 }
 
 void MetaMap::AllocBlock(ThreadState *thr, uptr pc, uptr p, uptr sz) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   u32 idx = block_alloc_.Alloc(&thr->proc()->block_cache);
   MBlock *b = block_alloc_.Map(idx);
   b->siz = sz;
@@ -71,6 +74,9 @@ uptr MetaMap::FreeBlock(Processor *proc, uptr p) {
 }
 
 bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   bool has_something = false;
   u32 *meta = MemToMeta(p);
   u32 *end = MemToMeta(p + sz);
@@ -192,15 +198,18 @@ MBlock* MetaMap::GetBlock(uptr p) {
   }
 }
 
-SyncVar* MetaMap::GetOrCreate(ThreadState *thr, uptr pc, uptr addr) {
-  return GetImpl(thr, pc, addr, true);
+SyncVar* MetaMap::GetOrCreate(ThreadState *thr, uptr pc, uptr addr, bool save_stack) {
+  return GetImpl(thr, pc, addr, true, save_stack);
 }
 
 SyncVar* MetaMap::GetIfExists(uptr addr) {
-  return GetImpl(0, 0, addr, false);
+  return GetImpl(0, 0, addr, false, false);
 }
 
-SyncVar* MetaMap::GetImpl(ThreadState *thr, uptr pc, uptr addr, bool create) {
+SyncVar* MetaMap::GetImpl(ThreadState *thr, uptr pc, uptr addr, bool create, bool save_stack) {
+#if !SANITIZER_GO
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+#endif
   u32 *meta = MemToMeta(addr);
   u32 idx0 = *meta;
   u32 myidx = 0;
@@ -233,7 +242,7 @@ SyncVar* MetaMap::GetImpl(ThreadState *thr, uptr pc, uptr addr, bool create) {
     if (myidx == 0) {
       myidx = sync_alloc_.Alloc(&thr->proc()->sync_cache);
       mys = sync_alloc_.Map(myidx);
-      mys->Init(thr, pc, addr);
+      mys->Init(thr, pc, addr, save_stack);
     }
     mys->next = idx0;
     if (atomic_compare_exchange_strong((atomic_uint32_t*)meta, &idx0,
