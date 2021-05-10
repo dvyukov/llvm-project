@@ -27,29 +27,6 @@
 
 namespace __tsan {
 
-using namespace __sanitizer;
-
-static ReportStack *SymbolizeStack(StackTrace trace);
-
-void CheckFailed(const char *file, int line, const char *cond,
-                     u64 v1, u64 v2) {
-  // There is high probability that interceptors will check-fail as well,
-  // on the other hand there is no sense in processing interceptors
-  // since we are going to die soon.
-  ScopedIgnoreInterceptors ignore;
-#if !SANITIZER_GO
-  ThreadState* thr = cur_thread();
-  thr->nomalloc = false;
-  thr->ignore_sync++;
-  thr->ignore_reads_and_writes++;
-#endif
-  Printf("FATAL: ThreadSanitizer CHECK failed: "
-         "%s:%d \"%s\" (0x%zx, 0x%zx)\n",
-         file, line, cond, (uptr)v1, (uptr)v2);
-  PrintCurrentStackSlow(StackTrace::GetCurrentPc());
-  Die();
-}
-
 ExternalCallback::ExternalCallback() {
 #if !SANITIZER_GO
   ThreadState *thr = cur_thread();
@@ -127,16 +104,7 @@ static void StackStripMain(SymbolizedStack *frames) {
 #endif
 }
 
-ReportStack *SymbolizeStackId(StackID stack_id) {
-  if (stack_id == kInvalidStackID)
-    return nullptr;
-  StackTrace stack = StackDepotGet(stack_id);
-  if (stack.trace == nullptr)
-    return nullptr;
-  return SymbolizeStack(stack);
-}
-
-static ReportStack *SymbolizeStack(StackTrace trace) {
+ReportStack *SymbolizeStack(StackTrace trace) {
   if (trace.size == 0)
     return 0;
   SymbolizedStack *top = nullptr;
@@ -163,6 +131,15 @@ static ReportStack *SymbolizeStack(StackTrace trace) {
   auto stack = New<ReportStack>();
   stack->frames = top;
   return stack;
+}
+
+ReportStack *SymbolizeStackId(StackID stack_id) {
+  if (stack_id == kInvalidStackID)
+    return nullptr;
+  StackTrace stack = StackDepotGet(stack_id);
+  if (stack.trace == nullptr)
+    return nullptr;
+  return SymbolizeStack(stack);
 }
 
 bool ShouldReport(ThreadState *thr, ReportType typ) {
@@ -195,6 +172,7 @@ bool ShouldReport(ThreadState *thr, ReportType typ) {
 
 ScopedReportBase::ScopedReportBase(ReportType typ, uptr tag) {
   ctx->thread_registry.CheckLocked();
+  ctx->slot_mtx.CheckLocked();
   rep_ = New<ReportDesc>();
   rep_->typ = typ;
   rep_->tag = tag;
@@ -495,12 +473,13 @@ void RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size, bo
       static_cast<u32>(sid), static_cast<u32>(epoch),
       addr, size, isRead, isAtomic, isFreed);
 
+  ctx->slot_mtx.CheckLocked();
   TidSlot* slot = &ctx->slots[static_cast<uptr>(sid)];
   Trace* trace = &slot->trace;
   TracePart* last_part;
   Event* last_pos;
   {
-    SpinMutexLock lock(&trace->mtx);
+    Lock lock(&trace->mtx);
     last_part = trace->current;
     last_pos = trace->pos;
     if (slot->thr)
@@ -720,11 +699,16 @@ bool OutputReport(ThreadState *thr, const ScopedReport &srep) {
       return false;
     }
   }
+  //!!! hack, but these do user callbacks
+  int in_runtime = atomic_load_relaxed(&thr->in_runtime);
+  atomic_store_relaxed(&thr->in_runtime, 0);
   PrintReport(rep);
   {
     ExternalCallback cb;
     __tsan_on_report(rep);
   }
+  atomic_store_relaxed(&thr->in_runtime, in_runtime);
+
   ctx->nreported++;
   if (flags()->halt_on_error)
     Die();
@@ -779,16 +763,18 @@ char* DumpShadow(char* buf, RawShadow raw);
 
 struct ScopedInSymbolizer {
   ScopedInSymbolizer() {
+#if !SANITIZER_GO
     EnterSymbolizer();
+#endif
   }
   ~ScopedInSymbolizer() {
+#if !SANITIZER_GO
     ExitSymbolizer();
+#endif
   }
 };
 
 void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old) {
-  CheckNoLocks();
-
   // Symbolizer makes lots of intercepted calls. If we try to process them,
   // at best it will cause deadlocks on internal mutexes.
   ScopedIgnoreInterceptors ignore;
@@ -820,10 +806,9 @@ void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old)
   }
 #endif
 
-  Printf("CUR: sid=%u epoch=%u\n", (u32)thr->fast_state.sid(), (u32)thr->fast_state.epoch());
-  char buf[128];
-  Printf("CUR: %s\n", DumpShadow(buf, cur.raw()));
-  Printf("OLD: %s\n", DumpShadow(buf, old.raw()));
+  //char buf[128];
+  //Printf("CUR: %s\n", DumpShadow(buf, cur.raw()));
+  //Printf("OLD: %s\n", DumpShadow(buf, old.raw()));
 
   uptr addr = ShadowToMem((uptr)shadow_mem);
   const uptr kMop = 2;
@@ -864,6 +849,10 @@ void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old)
   MutexSet* mset1 = new(&mset_buffer[0]) MutexSet();
   MutexSet *mset[2] = {&thr->mset, mset1};
 
+  //!!! how atomic is this? if we detect a bug, then reset happens, traces reset,
+  // then we try to report and fail to restore traces
+  Lock slot_lock(&ctx->slot_mtx);
+
   RestoreStack(EventTypeAccessEx, s[1].sid(), s[1].epoch(), addr1, s[1].size(), s[1].IsRead(), s[1].IsAtomic(), s[1].IsFreed(), &tids[1], &traces[1], mset[1], &tags[1]);
   if (IsFiredSuppression(ctx, typ, traces[1]))
     return;
@@ -887,9 +876,11 @@ void ReportRace(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow old)
     rep.AddMemoryAccess(addr, tags[i], s[i], tids[i], traces[i], mset[i]);
 
   for (uptr i = 0; i < kMop; i++) {
-    //ThreadContext *tctx = static_cast<ThreadContext*>(
-    //    ctx->thread_registry.GetThreadLocked(tids[i]));
-    //rep.AddThread(tctx);
+    if (tids[i] == kInvalidTid) //!!! should not happen
+      continue;
+    ThreadContext *tctx = static_cast<ThreadContext*>(
+        ctx->thread_registry.GetThreadLocked(tids[i]));
+    rep.AddThread(tctx);
   }
 
   rep.AddLocation(addr_min, addr_max - addr_min);
@@ -915,7 +906,7 @@ void PrintCurrentStack(ThreadState *thr, uptr pc) {
 // However, this solution is not reliable enough, please see dvyukov's comment
 // http://reviews.llvm.org/D19148#406208
 // Also see PR27280 comment 2 and 3 for breaking examples and analysis.
-ALWAYS_INLINE
+ALWAYS_INLINE USED
 void PrintCurrentStackSlow(uptr pc) {
 #if !SANITIZER_GO
   uptr bp = GET_CURRENT_FRAME();

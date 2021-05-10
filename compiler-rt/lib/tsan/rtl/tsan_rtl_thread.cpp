@@ -36,78 +36,12 @@ void ThreadContext::OnDead() {
   CHECK_EQ(sync, nullptr);
 }
 
-void ThreadContext::OnJoined(void *arg) {
-  ThreadState *caller_thr = static_cast<ThreadState *>(arg);
-  AcquireImpl(caller_thr, 0, sync);
-  Free(sync);
-}
-
-struct OnCreatedArgs {
-  ThreadState *thr;
-  uptr pc;
-};
-
-void ThreadContext::OnCreated(void *arg) {
-  thr = 0;
-  if (tid == kMainTid)
-    return;
-  OnCreatedArgs *args = static_cast<OnCreatedArgs *>(arg);
-  if (!args->thr)  // GCD workers don't have a parent thread.
-    return;
-  ReleaseStoreImpl(args->thr, 0, &sync);
-  creation_stack_id = CurrentStackId(args->thr, args->pc);
-}
-
 void ThreadContext::OnReset() {
   CHECK(!sync);
 }
 
 void ThreadContext::OnDetached(void *arg) {
   Free(sync);
-}
-
-struct OnStartedArgs {
-  ThreadState *thr;
-  /*
-  uptr stk_addr;
-  uptr stk_size;
-  uptr tls_addr;
-  uptr tls_size;
-  */
-};
-
-void ThreadContext::OnStarted(void *arg) {
-  OnStartedArgs *args = static_cast<OnStartedArgs*>(arg);
-  thr = args->thr;
-  DPrintf("#%d: ThreadStart\n", tid);
-  new(thr) ThreadState(tid);
-  if (common_flags()->detect_deadlocks)
-    thr->dd_lt = ctx->dd->CreateLogicalThread(tid);
-#if !SANITIZER_GO
-  thr->is_inited = true;
-#endif
-  thr->tctx = this;
-}
-
-void ThreadContext::OnFinished() {
-#if SANITIZER_GO
-  Free(thr->shadow_stack);
-  thr->shadow_stack_pos = nullptr;
-  thr->shadow_stack_end = nullptr;
-#endif
-  if (!detached)
-    ReleaseStoreImpl(thr, 0, &sync);
-
-  if (common_flags()->detect_deadlocks)
-    ctx->dd->DestroyLogicalThread(thr->dd_lt);
-#if !SANITIZER_GO
-  PlatformCleanUpThreadState(thr);
-#endif
-  thr->~ThreadState();
-#if TSAN_COLLECT_STATS
-  StatAggregate(ctx->stat, thr->stat);
-#endif
-  thr = 0;
 }
 
 #if !SANITIZER_GO
@@ -167,6 +101,8 @@ void ThreadFinalize(ThreadState *thr) {
 #if !SANITIZER_GO
   if (!ShouldReport(thr, ReportTypeThreadLeak))
     return;
+  ScopedRuntime rt(thr);
+  Lock slot_lock(&ctx->slot_mtx);
   ThreadRegistryLock l(&ctx->thread_registry);
   Vector<ThreadLeak> leaks;
   ctx->thread_registry.RunCallbackForEachThreadLocked(
@@ -186,26 +122,43 @@ int ThreadCount(ThreadState *thr) {
   return (int)result;
 }
 
+struct OnCreatedArgs {
+  ThreadState* thr;
+  StackID stack;
+};
+
 Tid ThreadCreate(ThreadState *thr, uptr pc, uptr uid, bool detached) {
   StatInc(thr, StatThreadCreate);
-  OnCreatedArgs args = { thr, pc };
-  Tid parent_tid = thr ? thr->tid : kInvalidTid;  // No parent for GCD workers.
-  Tid tid =
-      ctx->thread_registry.CreateThread(uid, detached, parent_tid, &args);
-  if (tid != kMainTid)
+  Tid tid;
+  // The main thread and GCD workers don't have a parent thread.
+  if (thr == nullptr) {
+    tid = ctx->thread_registry.CreateThread(uid, detached, kInvalidTid, nullptr);
+  } else {
+    OnCreatedArgs arg = { thr, CurrentStackId(thr, pc) };
+    ScopedRuntime rt(thr);
+    tid = ctx->thread_registry.CreateThread(uid, detached, thr->tid, &arg);
     IncrementEpoch(thr, pc);
+  }
   DPrintf("#%d: ThreadCreate tid=%d uid=%zu\n", parent_tid, tid, uid);
   return tid;
 }
 
+void ThreadContext::OnCreated(void *arg) {
+  if (arg == nullptr)
+    return;
+  OnCreatedArgs *args = static_cast<OnCreatedArgs *>(arg);
+  ReleaseStoreImpl(args->thr, 0, &sync);
+  creation_stack_id = args->stack;
+}
+
 void ThreadStart(ThreadState *thr, Tid tid, tid_t os_id,
                  ThreadType thread_type) {
-  OnStartedArgs args = { thr /*, stk_addr, stk_size, tls_addr, tls_size */};
-  ctx->thread_registry.StartThread(tid, os_id, thread_type, &args);
-
-  SlotAttach(thr);
-
-  AcquireImpl(thr, 0, thr->tctx->sync);
+  ctx->thread_registry.StartThread(tid, os_id, thread_type, thr);
+  {
+    ScopedRuntime sr(thr);
+    SlotAttach(thr);
+    AcquireImpl(thr, 0, thr->tctx->sync);
+  }
   Free(thr->tctx->sync);
 
   uptr stk_addr = 0;
@@ -237,6 +190,18 @@ void ThreadStart(ThreadState *thr, Tid tid, tid_t os_id,
 #endif
 }
 
+void ThreadContext::OnStarted(void *arg) {
+  thr = static_cast<ThreadState*>(arg);
+  DPrintf("#%d: ThreadStart\n", tid);
+  new(thr) ThreadState(tid);
+  if (common_flags()->detect_deadlocks)
+    thr->dd_lt = ctx->dd->CreateLogicalThread(tid);
+#if !SANITIZER_GO
+  thr->is_inited = true;
+#endif
+  thr->tctx = this;
+}
+
 void ThreadFinish(ThreadState *thr) {
   ThreadCheckIgnore(thr);
   StatInc(thr, StatThreadFinish);
@@ -247,9 +212,23 @@ void ThreadFinish(ThreadState *thr) {
 #if !SANITIZER_GO
   thr->is_dead = true;
   thr->ignore_interceptors = true;
+  PlatformCleanUpThreadState(thr);
+#endif
+#if SANITIZER_GO
+  Free(thr->shadow_stack);
+  thr->shadow_stack_pos = nullptr;
+  thr->shadow_stack_end = nullptr;
 #endif
   bool detached = thr->tctx->detached;
+  if (!detached) {
+    ScopedRuntime rt(thr);
+    ReleaseStoreImpl(thr, 0, &thr->tctx->sync);
+  }
   ctx->thread_registry.FinishThread(thr->tid);
+  thr->tctx = nullptr;
+
+  if (common_flags()->detect_deadlocks)
+    ctx->dd->DestroyLogicalThread(thr->dd_lt);
   if (!detached) {
     // at this point the thread not Running.
     //!!! IncrementEpoch(thr, 0);
@@ -258,7 +237,18 @@ void ThreadFinish(ThreadState *thr) {
     thr->need_epoch_increment = false;
 #endif
   }
-  SlotDetach(thr);
+  thr->~ThreadState();
+#if TSAN_COLLECT_STATS
+  StatAggregate(ctx->stat, thr->stat);
+#endif
+  {
+    ScopedRuntime rt(thr);
+    SlotDetach(thr);
+  }
+}
+
+void ThreadContext::OnFinished() {
+  thr = 0;
 }
 
 struct ConsumeThreadContext {
@@ -297,6 +287,13 @@ void ThreadJoin(ThreadState *thr, uptr pc, Tid tid) {
   ctx->thread_registry.JoinThread(tid, thr);
 }
 
+void ThreadContext::OnJoined(void *arg) {
+  ThreadState *caller_thr = static_cast<ThreadState *>(arg);
+  ScopedRuntime rt(caller_thr);
+  AcquireImpl(caller_thr, 0, sync);
+  Free(sync);
+}
+
 void ThreadDetach(ThreadState *thr, uptr pc, Tid tid) {
   CHECK_GT(tid, 0);
   ctx->thread_registry.DetachThread(tid, thr);
@@ -313,6 +310,7 @@ void ThreadSetName(ThreadState *thr, const char *name) {
 
 void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr,
                        uptr size, bool is_write) { //!!! change all is_write to isRead
+  ScopedRuntime sr(thr);
   CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   if (size == 0)
     return;

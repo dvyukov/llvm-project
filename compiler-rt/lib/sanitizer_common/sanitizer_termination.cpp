@@ -66,17 +66,23 @@ void SetCheckFailedCallback(CheckFailedCallbackType callback) {
 
 void NORETURN CheckFailed(const char *file, int line, const char *cond,
                           u64 v1, u64 v2) {
-  static atomic_uint32_t num_calls;
-  if (atomic_fetch_add(&num_calls, 1, memory_order_relaxed) > 10) {
+  static atomic_uint32_t first_tid;
+  u32 tid = GetTid();
+  u32 cmp = 0;
+  bool first = atomic_compare_exchange_weak(&first_tid, &cmp, tid, memory_order_relaxed) || cmp == tid;
+  Printf("%s: CHECK failed: %s:%d \"%s\" (0x%zx, 0x%zx) (tid=%u)\n",
+         SanitizerToolName, StripModuleName(file), line, cond, (uptr)v1, (uptr)v2, tid);
+  if (!first) {
+    // Let the first thread print the stack and terminate.
     internal_usleep(2*1000*1000);
     Trap();
   }
-
-  if (CheckFailedCallback) {
-    CheckFailedCallback(file, line, cond, v1, v2);
-  }
-  Report("Sanitizer CHECK failed: %s:%d %s (%lld, %lld)\n", file, line, cond,
-                                                            v1, v2);
+  static atomic_uint32_t num_calls;
+  u32 num = atomic_fetch_add(&num_calls, 1, memory_order_relaxed);
+  if (num > 10)
+    Trap(); // We are probably in an infinite recursion.
+  if (CheckFailedCallback && num == 0)
+    CheckFailedCallback();
   Die();
 }
 

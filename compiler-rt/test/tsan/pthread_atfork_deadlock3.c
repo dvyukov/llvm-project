@@ -91,8 +91,8 @@ int main() {
 // CHECK:     #0 handler
 // CHECK:   Previous write of size 8
 // CHECK:     #0 worker
-// CHECK: afterfork
+// CHECK: in afterfork
 // CHECK: in handler
-// CHECK: afterfork_child
+// CHECK: in afterfork_child
 // CHECK: CHILD
 // CHECK: PARENT

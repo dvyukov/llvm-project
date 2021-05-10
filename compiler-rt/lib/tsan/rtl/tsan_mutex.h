@@ -19,6 +19,7 @@
 namespace __tsan {
 
 enum MutexType {
+  MutexTypeLeaf = -1,
   MutexTypeInvalid,
   MutexTypeReport,
   MutexTypeSyncVar,
@@ -26,7 +27,9 @@ enum MutexType {
   MutexTypeFired,
   MutexTypeRacy,
   MutexTypeGlobalProc,
+  MutexTypeTrace,
   MutexTypeTraceAlloc,
+  MutexTypeSlot,
 
   // This must be the last.
   MutexTypeCount

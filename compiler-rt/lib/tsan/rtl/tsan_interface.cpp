@@ -45,16 +45,16 @@ void __tsan_write16(void *addr) {
   MemoryWrite(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
-void __tsan_read16_pc(void *addr, uptr pc) {
-  pc = STRIP_PAC_PC(pc);
+void __tsan_read16_pc(void *addr, void* pc1) {
+  uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
   MemoryRead(thr, pc, (uptr)addr, kSizeLog8);
   MemoryRead(thr, pc, (uptr)addr + 8, kSizeLog8);
 }
 
-void __tsan_write16_pc(void *addr, uptr pc) {
-  pc = STRIP_PAC_PC(pc);
+void __tsan_write16_pc(void *addr, void* pc1) {
+  uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
   MemoryWrite(thr, pc, (uptr)addr, kSizeLog8);
@@ -167,7 +167,7 @@ SANITIZER_INTERFACE_ATTRIBUTE
 void *__tsan_create_fiber(unsigned flags) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  //ScopedRuntime sr(thr);
   return FiberCreate(thr, pc, flags);
 }
 
@@ -175,7 +175,7 @@ SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_destroy_fiber(void *fiber) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  //ScopedRuntime sr(thr);
   FiberDestroy(thr, pc, static_cast<ThreadState *>(fiber));
 }
 
@@ -183,14 +183,14 @@ SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_switch_to_fiber(void *fiber, unsigned flags) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  //ScopedRuntime sr(thr);
   FiberSwitch(thr, pc, static_cast<ThreadState *>(fiber), flags);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_set_fiber_name(void *fiber, const char *name) {
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  //ScopedRuntime sr(thr);
   ThreadSetName(thr, name);
 }
 }  // extern "C"
@@ -198,13 +198,13 @@ void __tsan_set_fiber_name(void *fiber, const char *name) {
 void __tsan_acquire(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
   Acquire(thr, pc, (uptr)addr);
 }
 
 void __tsan_release(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr);
+  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
   Release(thr, pc, (uptr)addr);
 }

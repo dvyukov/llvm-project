@@ -315,8 +315,7 @@ bool RemoveDieCallback(DieCallbackType callback);
 
 void SetUserDieCallback(DieCallbackType callback);
 
-typedef void (*CheckFailedCallbackType)(const char *, int, const char *,
-                                       u64, u64);
+typedef void (*CheckFailedCallbackType)();
 void SetCheckFailedCallback(CheckFailedCallbackType callback);
 
 // Callback will be called if soft_rss_limit_mb is given and the limit is

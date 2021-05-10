@@ -15,11 +15,14 @@ void *Thread2(void *x) {
   return 0;
 }
 
+//!!! add create/join threads
+
 int main() {
   int fds[2];
   if (pipe(fds))
     exit((perror("pipe"), 1));
   int stop = 0;
+  ANNOTATE_BENIGN_RACE(stop);
   pthread_t t[2];
   pthread_create(&t[0], 0, Thread1, (void*)(long)fds[0]);
   pthread_create(&t[1], 0, Thread2, &stop);

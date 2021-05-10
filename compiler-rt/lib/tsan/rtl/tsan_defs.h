@@ -32,6 +32,14 @@ typedef __m128i m128;
 #define VECTOR_ALIGNED
 #endif
 
+#ifndef TSAN_FAST_FLAT
+#define TSAN_FAST_FLAT (!SANITIZER_DEBUG && !SANITIZER_GO)
+#endif
+
+#if SANITIZER_GO && TSAN_FAST_FLAT
+#error "TSAN_FAST_FLAT is not supported with SANITIZER_GO"
+#endif
+
 // Setup defaults for compile definitions.
 #ifndef TSAN_NO_HISTORY
 # define TSAN_NO_HISTORY 0
@@ -190,6 +198,12 @@ enum ExternalTag : uptr {
 struct MD5Hash {
   u64 hash[2];
   bool operator==(const MD5Hash &other) const;
+};
+
+// These need to match __tsan_switch_to_fiber_* flags defined in
+// tsan_interface.h. See documentation there as well.
+enum FiberSwitchFlags {
+  FiberSwitchFlagNoSync = 1 << 0, // __tsan_switch_to_fiber_no_sync
 };
 
 }  // namespace __tsan

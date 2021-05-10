@@ -63,7 +63,7 @@ struct SyncVar {
   VectorClock* read_clock;  // Used for rw mutexes only.
   VectorClock* clock;
 
-  void Init(ThreadState *thr, uptr pc, uptr addr);
+  void Init(ThreadState *thr, uptr pc, uptr addr, bool save_stack);
   void Reset();
 
   bool IsFlagSet(u32 f) const {
@@ -87,10 +87,9 @@ struct SyncVar {
   }
 };
 
-/* MetaMap allows to map arbitrary user pointers onto various descriptors.
-   Currently it maps pointers to heap block descriptors and sync var descs.
-   It uses 1/2 direct shadow, see tsan_platform.h.
-*/
+// MetaMap allows to map arbitrary user pointers onto various descriptors.
+// Currently it maps pointers to heap block descriptors and sync var descs.
+// It uses 1/2 direct shadow, see tsan_platform.h.
 class MetaMap {
  public:
   MetaMap();
@@ -102,7 +101,7 @@ class MetaMap {
   void Reset();
   MBlock* GetBlock(uptr p);
 
-  SyncVar* GetOrCreate(ThreadState *thr, uptr pc, uptr addr);
+  SyncVar* GetOrCreate(ThreadState *thr, uptr pc, uptr addr, bool save_stack);
   SyncVar* GetIfExists(uptr addr);
 
   void MoveMemory(uptr src, uptr dst, uptr sz);
@@ -118,7 +117,7 @@ class MetaMap {
   BlockAlloc block_alloc_;
   SyncAlloc sync_alloc_;
 
-  SyncVar* GetImpl(ThreadState *thr, uptr pc, uptr addr, bool create);
+  SyncVar* GetImpl(ThreadState *thr, uptr pc, uptr addr, bool create, bool save_stack);
 };
 
 }  // namespace __tsan
