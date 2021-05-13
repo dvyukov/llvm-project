@@ -152,11 +152,11 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   ScopedRuntime rt(thr);
   if (IsFiredSuppression(ctx, ReportTypeSignalUnsafe, stack))
     return;
-  Lock slot_lock(&ctx->slot_mtx);
-  ThreadRegistryLock l(&ctx->thread_registry);
-  ScopedReport rep(ReportTypeSignalUnsafe);
+  ReportDesc rep;
+  ReportScope report_scope;
+  rep.typ = ReportTypeSignalUnsafe;
   rep.AddStack(stack, true);
-  OutputReport(thr, rep);
+  OutputReport(thr, &rep);
 }
 
 

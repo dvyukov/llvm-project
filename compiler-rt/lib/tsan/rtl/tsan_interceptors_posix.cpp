@@ -1946,6 +1946,21 @@ TSAN_INTERCEPTOR(int, pthread_sigmask, int how, const __sanitizer_sigset_t *set,
 
 namespace __tsan {
 
+void ReportErrnoSpoiling(ThreadState *thr, uptr pc) {
+  VarSizeStackTrace stack;
+  // StackTrace::GetNestInstructionPc(pc) is used because return address is
+  // expected, OutputReport() will undo this.
+  ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
+  ReportDesc rep;
+  ScopedRuntime rt(thr);
+  ReportScope report_scope;
+  rep.typ = ReportTypeErrnoInSignal;
+  if (IsFiredSuppression(ctx, rep.typ, stack))
+  	return;
+  rep.AddStack(stack, true);
+  OutputReport(thr, &rep);
+}
+
 void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire, int sig,
                                   __sanitizer_siginfo *info, void *uctx) {
   CHECK(thr->slot);
@@ -1995,21 +2010,8 @@ void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire, int sig,
   // because in async signal processing case (when handler is called directly
   // from rtl_generic_sighandler) we have not yet received the reraised
   // signal; and it looks too fragile to intercept all ways to reraise a signal.
-  if (ShouldReport(thr, ReportTypeErrnoInSignal) && !sync && sig != SIGTERM &&
-      errno != 99) {
-    VarSizeStackTrace stack;
-    // StackTrace::GetNestInstructionPc(pc) is used because return address is
-    // expected, OutputReport() will undo this.
-    ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
-    ScopedRuntime rt(thr);
-    Lock slot_lock(&ctx->slot_mtx);
-    ThreadRegistryLock l(&ctx->thread_registry);
-    ScopedReport rep(ReportTypeErrnoInSignal);
-    if (!IsFiredSuppression(ctx, ReportTypeErrnoInSignal, stack)) {
-      rep.AddStack(stack, true);
-      OutputReport(thr, rep);
-    }
-  }
+  if (errno != 99 && !sync && sig != SIGTERM && ShouldReport(thr, ReportTypeErrnoInSignal))
+    ReportErrnoSpoiling(thr, pc);
   errno = saved_errno;
 }
 
@@ -2549,30 +2551,6 @@ static void syscall_post_fork(uptr pc, int pid) {
   FdOnFork(thr, pc);
 }
 
-//!!! we don't need this anymore
-static void syscall_pre_block(ThreadState* thr, uptr pc) {
-  ThreadSignalContext *ctx = SigCtx(thr);
-    for (;;) {
-      atomic_store(&ctx->in_blocking_func, 1, memory_order_relaxed);
-      if (atomic_load(&ctx->have_pending_signals, memory_order_relaxed) == 0)
-        break;
-      atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
-      ProcessPendingSignals(thr);
-    }
-    // When we are in a "blocking call", we process signals asynchronously
-    // (right when they arrive). In this context we do not expect to be
-    // executing any user/runtime code. The known interceptor sequence when
-    // this is not true is: pthread_join -> munmap(stack). It's fine
-    // to ignore munmap in this case -- we handle stack shadow separately.
-    thr->ignore_interceptors++;
-}
-
-static void syscall_post_block(ThreadState* thr, uptr pc) {
-  ThreadSignalContext *ctx = SigCtx(thr);
-    thr->ignore_interceptors--;
-    atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
-}
-
 #endif
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) \
@@ -2610,9 +2588,6 @@ static void syscall_post_block(ThreadState* thr, uptr pc) {
 
 #define COMMON_SYSCALL_POST_FORK(res) \
   syscall_post_fork(GET_CALLER_PC(), res)
-
-#define COMMON_SYSCALL_PRE_BLOCK() syscall_pre_block(cur_thread(), GET_CALLER_PC())
-#define COMMON_SYSCALL_POST_BLOCK() syscall_post_block(cur_thread(), GET_CALLER_PC())
 
 #include "sanitizer_common/sanitizer_common_syscalls.inc"
 #include "sanitizer_common/sanitizer_syscalls_netbsd.inc"

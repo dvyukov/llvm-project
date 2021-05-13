@@ -496,7 +496,7 @@ static void* BackgroundThread(void* arg) {
       if (last != 0 && last + flags()->flush_symbolizer_ms * kMs2Ns < now) {
         Lock l(&ctx->report_mtx);
         ScopedErrorReportLock l2;
-        SymbolizeFlush();
+        SymbolizerFlush();
         atomic_store(&ctx->last_symbolize_time_ns, 0, memory_order_relaxed);
       }
     }
@@ -688,7 +688,6 @@ void Initialize(ThreadState* thr) {
   InitializeSuppressions();
 #if !SANITIZER_GO
   InitializeLibIgnore();
-  Symbolizer::GetOrInit()->AddHooks(EnterSymbolizer, ExitSymbolizer);
 #endif
 
   VPrintf(1, "***** Running under ThreadSanitizer v3 (pid %d) *****\n",

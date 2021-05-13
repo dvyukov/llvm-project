@@ -41,7 +41,7 @@ static MutexMeta mutex_meta[MutexTypeCount] = {
     MutexTypeReport,
     "Report",
     true,
-    {MutexTypeSyncVar},
+    {MutexTypeSyncVar, MutexTypeTrace},
   },
   {
     MutexTypeSyncVar,

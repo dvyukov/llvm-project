@@ -50,8 +50,8 @@ struct ThreadLeak {
   int count;
 };
 
-static void MaybeReportThreadLeak(ThreadContextBase *tctx_base, void *arg) {
-  Vector<ThreadLeak> &leaks = *(Vector<ThreadLeak>*)arg;
+static void CollectThreadLeaks(ThreadContextBase *tctx_base, void *arg) {
+  auto &leaks = *static_cast<Vector<ThreadLeak>*>(arg);
   ThreadContext *tctx = static_cast<ThreadContext*>(tctx_base);
   if (tctx->detached || tctx->status != ThreadStatusFinished)
     return;
@@ -61,8 +61,7 @@ static void MaybeReportThreadLeak(ThreadContextBase *tctx_base, void *arg) {
       return;
     }
   }
-  ThreadLeak leak = {tctx, 1};
-  leaks.PushBack(leak);
+  leaks.PushBack({tctx, 1});
 }
 #endif
 
@@ -73,13 +72,13 @@ static void ReportIgnoresEnabled(ThreadContext *tctx, IgnoreSet *set) {
   } else {
     Printf("ThreadSanitizer: thread T%d %s finished with ignores enabled,"
       " created at:\n", tctx->tid, tctx->name);
-    PrintStack(SymbolizeStackId(tctx->creation_stack_id));
+    PrintStack(tctx->creation_stack_id);
   }
   Printf("  One of the following ignores was not ended"
       " (in order of probability)\n");
   for (uptr i = 0; i < set->Size(); i++) {
     Printf("  Ignore was enabled at:\n");
-    PrintStack(SymbolizeStackId(set->At(i)));
+    PrintStack(set->At(i));
   }
   Die();
 }
@@ -102,16 +101,21 @@ void ThreadFinalize(ThreadState *thr) {
   if (!ShouldReport(thr, ReportTypeThreadLeak))
     return;
   ScopedRuntime rt(thr);
-  Lock slot_lock(&ctx->slot_mtx);
-  ThreadRegistryLock l(&ctx->thread_registry);
+  Vector<ReportDesc*> reports;
   Vector<ThreadLeak> leaks;
+  ReportScope report_scope;
   ctx->thread_registry.RunCallbackForEachThreadLocked(
-      MaybeReportThreadLeak, &leaks);
+      CollectThreadLeaks, &leaks);
   for (uptr i = 0; i < leaks.Size(); i++) {
-    ScopedReport rep(ReportTypeThreadLeak);
-    rep.AddThread(leaks[i].tctx, true);
-    rep.SetCount(leaks[i].count);
+    auto rep = *reports.PushBack(New<ReportDesc>());
+    rep->typ = ReportTypeThreadLeak;
+    rep->AddThread(leaks[i].tctx, true);
+    rep->count = leaks[i].count;
+  }
+  for (uptr i = 0; i < reports.Size(); i++) {
+    auto rep = reports[i];
     OutputReport(thr, rep);
+    DestroyAndFree(rep);
   }
 #endif
 }

@@ -26,6 +26,8 @@ namespace __tsan {
 ALWAYS_INLINE
 void MemoryAccess(uptr pc, void *addr, int kAccessSizeLog, bool kIsWrite) {
   ThreadState *thr = cur_thread();
+  if (!TSAN_FAST_FLAT && thr->in_symbolizer)
+    return;
   MaybeScopedRuntime<TSAN_FAST_FLAT> rt(thr);
   MemoryAccess<!TSAN_FAST_FLAT>(thr, pc, (uptr)addr, kAccessSizeLog, kIsWrite, false);
 }
@@ -101,6 +103,8 @@ void __tsan_vptr_update(void **vptr_p, void *new_val) {
   if (*vptr_p == new_val)
     return;
   ThreadState *thr = cur_thread();
+  if (thr->in_symbolizer)
+    return;
   ScopedRuntime sr(thr);
   thr->is_vptr_access = true;
   MemoryWrite(thr, CALLERPC, (uptr)vptr_p, kSizeLog8);
@@ -109,6 +113,8 @@ void __tsan_vptr_update(void **vptr_p, void *new_val) {
 
 void __tsan_vptr_read(void **vptr_p) {
   ThreadState *thr = cur_thread();
+  if (thr->in_symbolizer)
+    return;
   ScopedRuntime sr(thr);
   thr->is_vptr_access = true;
   MemoryRead(thr, CALLERPC, (uptr)vptr_p, kSizeLog8);
@@ -117,15 +123,16 @@ void __tsan_vptr_read(void **vptr_p) {
 
 FLAT_SECTION void __tsan_func_entry(void *pc) {
   ThreadState *thr = cur_thread();
-  // Need to check this because of potential recursion in OutputReport -> user __tsan_on_report callback.
-  //if (thr->ignore_funcs_)
-  //  return;
+  if (!TSAN_FAST_FLAT && thr->in_symbolizer)
+    return;
   MaybeScopedRuntime<TSAN_FAST_FLAT> rt(thr);
   FuncEntry<!TSAN_FAST_FLAT>(thr, STRIP_PAC_PC(pc));
 }
 
 FLAT_SECTION void __tsan_func_exit() {
   ThreadState *thr = cur_thread();
+  if (!TSAN_FAST_FLAT && thr->in_symbolizer)
+    return;
   MaybeScopedRuntime<TSAN_FAST_FLAT> rt(thr);
   FuncExit<!TSAN_FAST_FLAT>(thr);
 }

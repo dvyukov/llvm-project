@@ -24,6 +24,7 @@ namespace __tsan {
 
 void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r);
 void ReportDestroyLocked(ThreadState *thr, uptr pc, uptr addr, u32 last_lock, StackID creation_stack_id);
+void ReportMutexMisuse(ThreadState *thr, uptr pc, ReportType typ, uptr addr, StackID creation_stack_id);
 
 struct Callback final : public DDCallback {
   ThreadState *thr;
@@ -45,25 +46,6 @@ void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s) {
   ctx->dd->MutexInit(&cb, &s->dd);
   s->dd.stk = s->creation_stack_id;
   s->dd.ctx = s->addr;
-}
-
-static void ReportMutexMisuse(ThreadState *thr, uptr pc, ReportType typ,
-    uptr addr, StackID creation_stack_id) {
-  // In Go, these misuses are either impossible, or detected by std lib,
-  // or false positives (e.g. unlock in a different thread).
-  if (SANITIZER_GO)
-    return;
-  if (!ShouldReport(thr, typ))
-    return;
-  Lock slot_lock(&ctx->slot_mtx);
-  ThreadRegistryLock l(&ctx->thread_registry);
-  ScopedReport rep(typ);
-  rep.AddMutex(addr, creation_stack_id);
-  VarSizeStackTrace trace;
-  ObtainCurrentStack(thr, pc, &trace);
-  rep.AddStack(trace, true);
-  rep.AddLocation(addr, 1);
-  OutputReport(thr, rep);
 }
 
 void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
@@ -552,9 +534,9 @@ void IncrementEpoch(ThreadState *thr, uptr pc) {
 void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r) {
   if (r == 0 || !ShouldReport(thr, ReportTypeDeadlock))
     return;
-  Lock slot_lock(&ctx->slot_mtx);
-  ThreadRegistryLock l(&ctx->thread_registry);
-  ScopedReport rep(ReportTypeDeadlock);
+  ReportDesc rep;
+  rep.typ = ReportTypeDeadlock;
+  ReportScope report_scope;
   for (int i = 0; i < r->n; i++) {
     rep.AddMutex(r->loop[i].mtx_ctx0, r->loop[i].stk[0]);
     rep.AddUniqueTid(r->loop[i].thr_ctx);
@@ -574,7 +556,7 @@ void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r) {
       }
     }
   }
-  OutputReport(thr, rep);
+  OutputReport(thr, &rep);
 }
 
 void ReportDestroyLocked(ThreadState *thr, uptr pc, uptr addr, u32 last_lock, StackID creation_stack_id) {
@@ -582,18 +564,38 @@ void ReportDestroyLocked(ThreadState *thr, uptr pc, uptr addr, u32 last_lock, St
     MutexSet mset;
     Shadow last(last_lock);
     //!!! this won't restore read lock stack because type == EventTypeLock.
-    Tid tid;
-    Lock slot_lock(&ctx->slot_mtx);
     VarSizeStackTrace trace[2];
+    ReportDesc rep;
+    rep.typ = ReportTypeMutexDestroyLocked;
+    ReportScope report_scope;
+    Tid tid;
     RestoreStack(EventTypeLock, last.sid(), last.epoch(), addr, 0, false, false, false, &tid, &trace[1], &mset);
-    ThreadRegistryLock l(&ctx->thread_registry);
-    ScopedReport rep(ReportTypeMutexDestroyLocked);
     rep.AddMutex(addr, creation_stack_id);
     ObtainCurrentStack(thr, pc, &trace[0]);
     rep.AddStack(trace[0], true);
     rep.AddStack(trace[1], true);
     rep.AddLocation(addr, 1);
-    OutputReport(thr, rep);
+    OutputReport(thr, &rep);
+}
+
+void ReportMutexMisuse(ThreadState *thr, uptr pc, ReportType typ,
+    uptr addr, StackID creation_stack_id) {
+  // In Go, these misuses are either impossible, or detected by std lib,
+  // or false positives (e.g. unlock in a different thread).
+  if (SANITIZER_GO)
+    return;
+  if (!ShouldReport(thr, typ))
+    return;
+
+  VarSizeStackTrace trace;
+  ObtainCurrentStack(thr, pc, &trace);
+  ReportDesc rep;
+  rep.typ = typ;
+  ReportScope report_scope;
+  rep.AddMutex(addr, creation_stack_id);
+  rep.AddStack(trace, true);
+  rep.AddLocation(addr, 1);
+  OutputReport(thr, &rep);
 }
 
 }  // namespace __tsan

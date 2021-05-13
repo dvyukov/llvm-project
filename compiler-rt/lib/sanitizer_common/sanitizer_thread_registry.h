@@ -94,6 +94,7 @@ class ThreadRegistry {
 
   // Should be guarded by ThreadRegistryLock.
   ThreadContextBase *GetThreadLocked(Tid tid) {
+    CheckLocked();
     return threads_[tid];
   }
 

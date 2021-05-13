@@ -21,20 +21,6 @@
 
 namespace __tsan {
 
-void EnterSymbolizer() {
-  ThreadState *thr = cur_thread();
-  thr->in_symbolizer++;
-  thr->ignore_funcs_++;
-  thr->ignore_interceptors++;
-}
-
-void ExitSymbolizer() {
-  ThreadState *thr = cur_thread();
-  thr->in_symbolizer--;
-  thr->ignore_funcs_--;
-  thr->ignore_interceptors--;
-}
-
 // Legacy API.
 // May be overriden by JIT/JAVA/etc,
 // whatever produces PCs marked with kExternalPCBit.
@@ -106,17 +92,14 @@ SymbolizedStack *SymbolizeCode(uptr addr) {
   return frame;
 }
 
-ReportLocation *SymbolizeData(uptr addr) {
-  DataInfo info;
-  if (!Symbolizer::GetOrInit()->SymbolizeData(addr, &info))
-    return nullptr;
-  auto ent = New<ReportLocation>();
-  ent->type = ReportLocationGlobal;
-  internal_memcpy(&ent->global, &info, sizeof(info));
-  return ent;
+bool SymbolizeData(uptr addr, ReportLocation* loc) {
+  if (!Symbolizer::GetOrInit()->SymbolizeData(addr, &loc->global))
+    return false;
+  loc->type = ReportLocationGlobal;
+  return true;
 }
 
-void SymbolizeFlush() {
+void SymbolizerFlush() {
   Symbolizer::GetOrInit()->Flush();
 }
 
