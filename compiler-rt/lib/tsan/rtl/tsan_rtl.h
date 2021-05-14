@@ -655,7 +655,7 @@ void ThreadPreempt(ThreadState* thr);
 bool HandlePreemptSignal(ThreadState* thr, int sig, void* info, void* ctx);
 void CompleteReset(ThreadState* thr);
 ALWAYS_INLINE void CheckReset(ThreadState* thr) {
-  CHECK(thr->slot); //!!!
+  DCHECK(thr->slot);
   if (UNLIKELY(atomic_load_relaxed(&ctx->reset_pending)))
     CompleteReset(thr);
 }
@@ -677,7 +677,7 @@ struct ScopedRuntime {
   static void Enter(ThreadState* thr) {
     //!!! CheckNoLocks();
     int v = atomic_load_relaxed(&thr->in_runtime);
-    CHECK_EQ(v, 0); //!!!
+    DCHECK_EQ(v, 0); //!!!
     atomic_store_relaxed(&thr->in_runtime, v + 1);
     atomic_signal_fence(memory_order_seq_cst);
   }
@@ -686,7 +686,7 @@ struct ScopedRuntime {
     //!!! CheckNoLocks();
     atomic_signal_fence(memory_order_seq_cst);
     int v = atomic_load_relaxed(&thr->in_runtime);
-    CHECK_EQ(v, 1); //!!!
+    DCHECK_EQ(v, 1); //!!!
     atomic_store_relaxed(&thr->in_runtime, v - 1);
     atomic_signal_fence(memory_order_seq_cst);
     if (UNLIKELY(atomic_load_relaxed(&thr->reset_pending)))

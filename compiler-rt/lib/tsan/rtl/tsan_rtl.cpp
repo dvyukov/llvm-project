@@ -88,7 +88,7 @@ static TracePart* TracePartAlloc() {
     //!some events where we can't switch (under lock)
     // could we set something else that affects accesses/func entry/exit?
     //!!! when do we reset for real?
-    if (ctx->trace_part_count > kMaxSid * 2)
+    if (ctx->trace_part_count > kMaxSid * 256)
       return nullptr;
     ctx->trace_part_count++;
     part = ctx->trace_part_cache;
@@ -269,7 +269,7 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
       //!!! if InitTrace fails we still can try other slots?
       if (slot && InitTrace(&slot->trace))
         return *slot;
-      DPrintf("#%d: InitiateReset\n", thr->tid);
+      Printf("#%d: InitiateReset: %s\n", thr->tid, slot ? "trace" : "slot");
       int pending = 0;
       for (auto& slot : ctx->slots) {
         if (!slot.thr)
@@ -884,7 +884,7 @@ StackID CurrentStackId(ThreadState* thr, uptr pc) {
 
 NOINLINE
 void TraceSwitch(ThreadState* thr) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime));
+  DCHECK(atomic_load_relaxed(&thr->in_runtime));
   auto part = thr->slot->trace.current;
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   Event* end = &part->events[TracePart::kSize];
@@ -941,7 +941,7 @@ ALWAYS_INLINE
 void MemoryAccessImpl1(ThreadState* thr, uptr addr, u32 kAccessSizeLog,
                        bool kAccessIsWrite, bool kIsAtomic,
                        RawShadow* shadow_mem, Shadow cur) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
+  DCHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   StatInc(thr, StatMop);
   StatInc(thr, kAccessIsWrite ? StatMopWrite : StatMopRead);
   StatInc(thr, (StatType)(StatMop1 + kAccessSizeLog));
@@ -990,7 +990,7 @@ RACE:
 
 void UnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr, int size,
                            bool kAccessIsWrite, bool kIsAtomic) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
+  DCHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   while (size) {
     int size1 = 1;
     int kAccessSizeLog = kSizeLog1;
@@ -1352,7 +1352,7 @@ ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
                                          u32 kAccessSizeLog,
                                          bool kAccessIsWrite, bool kIsAtomic,
                                          RawShadow* shadow_mem, Shadow cur) {
-  CHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
+  DCHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   char memBuf[4][64];
   (void)memBuf;
   DPrintf2("    Access:%p access=0x%x"
@@ -1377,7 +1377,7 @@ ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
 
 static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
                            RawShadow val) {
-  CHECK(/*!thr ||*/ atomic_load_relaxed(&thr->in_runtime)); //!!!
+  DCHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
   (void)thr;
   (void)pc;
   if (size == 0)
