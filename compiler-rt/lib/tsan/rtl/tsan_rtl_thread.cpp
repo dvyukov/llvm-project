@@ -212,8 +212,8 @@ void ThreadFinish(ThreadState *thr) {
     DontNeedShadowFor(thr->stk_addr, thr->stk_size);
   if (thr->tls_addr && thr->tls_size)
     DontNeedShadowFor(thr->tls_addr, thr->tls_size);
-#if !SANITIZER_GO
   thr->is_dead = true;
+#if !SANITIZER_GO
   thr->ignore_interceptors = true;
   PlatformCleanUpThreadState(thr);
 #endif
@@ -227,8 +227,6 @@ void ThreadFinish(ThreadState *thr) {
     ScopedRuntime rt(thr);
     ReleaseStoreImpl(thr, 0, &thr->tctx->sync);
   }
-  ctx->thread_registry.FinishThread(thr->tid);
-  thr->tctx = nullptr;
 
   if (common_flags()->detect_deadlocks)
     ctx->dd->DestroyLogicalThread(thr->dd_lt);
@@ -245,13 +243,16 @@ void ThreadFinish(ThreadState *thr) {
   StatAggregate(ctx->stat, thr->stat);
 #endif
   {
+    //!!! ScopedRuntime dtor may try to do CompleteReset->SlotDetach
     ScopedRuntime rt(thr);
     SlotDetach(thr);
   }
+  ctx->thread_registry.FinishThread(thr->tid);
 }
 
 void ThreadContext::OnFinished() {
-  thr = 0;
+  thr->tctx = nullptr;
+  thr = nullptr;
 }
 
 struct ConsumeThreadContext {

@@ -289,6 +289,7 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
     }
     ctx->slot_mtx.Unlock();
     internal_usleep(100);
+/*
     if (dump && !--dump) {
       __tsan_dump();
 #if !SANITIZER_GO
@@ -302,6 +303,7 @@ TidSlot& FindAttachSlot(ThreadState* thr) {
 #endif
       Die();
     }
+*/
     ctx->slot_mtx.Lock();
   }
 }
@@ -1548,7 +1550,8 @@ void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
 void TraceMutexUnlock(ThreadState* thr, uptr addr) {
   if (!kCollectHistory)
     return;
-  EventUnlock ev = {};
+  EventUnlock ev; //!!! = {};
+  internal_memset(&ev, 0, sizeof(ev)); //!!!
   ev.type = EventTypeUnlock;
   ev.addr = addr;
   TraceEvent(thr, ev);
@@ -1557,7 +1560,8 @@ void TraceMutexUnlock(ThreadState* thr, uptr addr) {
 void TraceRelease(ThreadState* thr) {
   if (!kCollectHistory)
     return;
-  EventPC ev = {};
+  EventPC ev; //!!! = {};
+  internal_memset(&ev, 0, sizeof(ev)); //!!!
   ev.type = EventTypeRelease;
   TraceEvent(thr, ev);
 }
@@ -1565,7 +1569,8 @@ void TraceRelease(ThreadState* thr) {
 void TraceSlotAttach(ThreadState* thr) {
   if (!kCollectHistory)
     return;
-  EventAttach ev = {};
+  EventAttach ev; //!!! = {};
+  internal_memset(&ev, 0, sizeof(ev)); //!!!
   ev.type = EventTypeAttach;
   ev.tid = static_cast<u64>(thr->tid);
   TraceEvent(thr, ev);

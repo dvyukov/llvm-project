@@ -198,13 +198,13 @@ void __tsan_set_fiber_name(void *fiber, const char *name) {
 void __tsan_acquire(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
+  //ScopedRuntime sr(thr); //!!! is this tested? This should fail...
   Acquire(thr, pc, (uptr)addr);
 }
 
 void __tsan_release(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  ScopedRuntime sr(thr); //!!! is this tested? This should fail...
+  //ScopedRuntime sr(thr); //!!! is this tested? This should fail...
   Release(thr, pc, (uptr)addr);
 }

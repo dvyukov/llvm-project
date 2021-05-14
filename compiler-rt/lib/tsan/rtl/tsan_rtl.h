@@ -180,6 +180,7 @@ struct ThreadState {
 #endif
   MutexSet mset;
   bool need_epoch_increment;
+  bool is_dead;
 #if !SANITIZER_GO
   Vector<JmpBuf> jmp_bufs;
   int ignore_interceptors;
@@ -188,7 +189,6 @@ struct ThreadState {
   int in_symbolizer;
   bool in_ignored_lib;
   bool is_inited;
-  bool is_dead;
   bool unwind_abort;
 #endif
 #if TSAN_COLLECT_STATS
@@ -655,6 +655,7 @@ void ThreadPreempt(ThreadState* thr);
 bool HandlePreemptSignal(ThreadState* thr, int sig, void* info, void* ctx);
 void CompleteReset(ThreadState* thr);
 ALWAYS_INLINE void CheckReset(ThreadState* thr) {
+  CHECK(thr->slot); //!!!
   if (UNLIKELY(atomic_load_relaxed(&ctx->reset_pending)))
     CompleteReset(thr);
 }

@@ -327,7 +327,8 @@ bool HandlePreemptSignal(ThreadState* thr, int sig, void* info1, void* ctx) {
 #    endif
   //!!! only if still requested
   if (atomic_load_relaxed(&thr->in_runtime)) {
-    atomic_store_relaxed(&thr->reset_pending, 1); //!!! where do we reset it?
+    if (!thr->is_dead)
+      atomic_store_relaxed(&thr->reset_pending, 1); //!!! where do we reset it?
     return true;
   }
   //!!! the thread may not own a slot at all (e.g. blocking call or finished).
