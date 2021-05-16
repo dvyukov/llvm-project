@@ -142,12 +142,12 @@ void AllocatorPrintStats() {
 }
 
 static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
+  ScopedRuntime rt(thr); //!!! recurses on free
   if (atomic_load_relaxed(&thr->in_signal_handler) == 0 ||
       !ShouldReport(thr, ReportTypeSignalUnsafe))
     return;
   VarSizeStackTrace stack;
   ObtainCurrentStack(thr, pc, &stack);
-  ScopedRuntime rt(thr);
   if (IsFiredSuppression(ctx, ReportTypeSignalUnsafe, stack))
     return;
   ReportDesc rep;
@@ -160,6 +160,8 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
 
 void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
                           bool signal) {
+  if (signal)
+    SignalUnsafeCall(thr, pc);
   if (sz >= kMaxAllowedMallocSize || align >= kMaxAllowedMallocSize ||
       sz > max_user_defined_malloc_size) {
     if (AllocatorMayReturnNull())
@@ -169,7 +171,13 @@ void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
     GET_STACK_TRACE_FATAL(thr, pc);
     ReportAllocationSizeTooBig(sz, malloc_limit, &stack);
   }
-  void *p = allocator()->Allocate(&thr->proc()->alloc_cache, sz, align);
+  void* p;
+  {
+    ScopedRuntime sr(thr);
+    p = allocator()->Allocate(&thr->proc()->alloc_cache, sz, align);
+    if (p && ctx && ctx->initialized)
+      OnUserAlloc(thr, pc, (uptr)p, sz, true);
+  }
   if (UNLIKELY(!p)) {
     SetAllocatorOutOfMemory();
     if (AllocatorMayReturnNull())
@@ -177,20 +185,17 @@ void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
     GET_STACK_TRACE_FATAL(thr, pc);
     ReportOutOfMemory(sz, &stack);
   }
-  if (ctx && ctx->initialized)
-    OnUserAlloc(thr, pc, (uptr)p, sz, true);
-  if (signal)
-    SignalUnsafeCall(thr, pc);
   return p;
 }
 
 void user_free(ThreadState *thr, uptr pc, void *p, bool signal) {
+  if (signal)
+    SignalUnsafeCall(thr, pc);
+  ScopedRuntime sr(thr);
   ScopedGlobalProcessor sgp;
   if (ctx && ctx->initialized)
     OnUserFree(thr, pc, (uptr)p, true);
   allocator()->Deallocate(&thr->proc()->alloc_cache, p);
-  if (signal)
-    SignalUnsafeCall(thr, pc);
 }
 
 void *user_alloc(ThreadState *thr, uptr pc, uptr sz) {
@@ -222,16 +227,17 @@ void *user_reallocarray(ThreadState *thr, uptr pc, void *p, uptr size, uptr n) {
 
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
   DPrintf("#%d: alloc(%zu) = %p\n", thr->tid, sz, p);
-  MBlockAlloc(thr, pc, p, sz);
+  ctx->metamap.AllocBlock(thr, pc, p, sz);
   //!!! find a better check for thread inited thr->trace_pos
   if (write && thr->ignore_reads_and_writes == 0 &&
       atomic_load_relaxed(&thr->trace_pos))
-    MemoryRangeImitateWrite(thr, pc, (uptr)p, sz);
+    RtMemoryRangeImitateWrite(thr, pc, (uptr)p, sz);
   else
-    MemoryResetRange(thr, pc, (uptr)p, sz);
+    RtMemoryResetRange(thr, pc, (uptr)p, sz);
 }
 
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
+  DCHECK(atomic_load_relaxed(&thr->in_runtime));
   CHECK_NE(p, nullptr);
   if (thr->is_dead)
     return; //!!! we are leaking mblock, next alloc of this block will get
@@ -239,7 +245,7 @@ void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
   if (!thr->slot)
     return; //!!! free is called from blocking func interceptor, e.g.
             //!pthread_join -> _dl_deallocate_tls
-  uptr sz = MBlockFree(thr, pc, p);
+  uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
   DPrintf("#%d: free(%p %zu) write=%d\n", thr->tid, p, sz, write);
   //!!! find a better check for thread inited thr->trace_pos
   if (write && thr->ignore_reads_and_writes == 0 &&
@@ -353,8 +359,20 @@ void* Alloc(uptr sz) {
   return InternalAlloc(sz, &thr->proc()->internal_alloc_cache);
 }
 
+void* RtAlloc(uptr sz) {
+  ThreadState *thr = cur_thread();
+  //ScopedRuntime rt(thr);
+  //!!! if we are not in runtime and preempt signal will do DoReset
+  // and DoReset will try to allocate something, it may deadlock,
+  // since we may hold internal alloc mutex.
+  // We either need to be runtime, or set nomalloc in DoReset.
+  CHECK(!thr->nomalloc);
+  return InternalAlloc(sz, &thr->proc()->internal_alloc_cache);
+}
+
 void FreeImpl(void* p) {
   ThreadState *thr = cur_thread();
+  //ScopedRuntime rt(thr);
   CHECK(!thr->nomalloc);
   InternalFree(p, &thr->proc()->internal_alloc_cache);
 }

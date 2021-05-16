@@ -168,7 +168,6 @@ struct SignalDesc {
 struct ThreadSignalContext {
   int int_signal_send;
   atomic_uintptr_t in_blocking_func;
-  atomic_uintptr_t have_pending_signals;
   SignalDesc pending_signals[kSigCount];
   // emptyset and oldset are too big for stack.
   __sanitizer_sigset_t emptyset;
@@ -247,54 +246,23 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   return ctx;
 }
 
-ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
-                                     uptr pc)
-    : thr_(thr), pc_(pc), in_ignored_lib_(false), ignoring_(false) {
-  Initialize(thr);
-  if (!thr_->is_inited) return;
-  if (!thr_->ignore_interceptors) {
-    ScopedRuntime rt(thr_);
-    FuncEntry(thr, pc);
-  }
-  // DPrintf("#%d: intercept %s()\n", thr_->tid, fname);
-  ignoring_ =
-      !thr_->in_ignored_lib && (flags()->ignore_interceptors_accesses ||
-                                libignore()->IsIgnored(pc, &in_ignored_lib_));
-  EnableIgnores();
-}
-
-ScopedInterceptor::~ScopedInterceptor() {
-  if (!thr_->is_inited) return;
-  DisableIgnores();
-  if (!thr_->ignore_interceptors) {
-    ProcessPendingSignals(thr_);
-    {
-      ScopedRuntime rt(thr_);
-      FuncExit(thr_);
-    }
-    CheckNoLocks();
-  }
-}
-
-void ScopedInterceptor::EnableIgnores() {
-  if (ignoring_) {
-    ThreadIgnoreBegin(thr_, pc_, /*save_stack=*/false);
+NOINLINE
+void ScopedInterceptor::EnableIgnoresImpl() {
+    ThreadIgnoreBegin(thr_, 0);
     if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports++;
     if (in_ignored_lib_) {
       DCHECK(!thr_->in_ignored_lib);
       thr_->in_ignored_lib = true;
     }
-  }
 }
 
-void ScopedInterceptor::DisableIgnores() {
-  if (ignoring_) {
-    ThreadIgnoreEnd(thr_, pc_);
-    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports--;
-    if (in_ignored_lib_) {
-      DCHECK(thr_->in_ignored_lib);
-      thr_->in_ignored_lib = false;
-    }
+NOINLINE
+void ScopedInterceptor::DisableIgnoresImpl() {
+  ThreadIgnoreEnd(thr_);
+  if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports--;
+  if (in_ignored_lib_) {
+    DCHECK(thr_->in_ignored_lib);
+    thr_->in_ignored_lib = false;
   }
 }
 
@@ -329,10 +297,10 @@ struct BlockingCall {
       : thr(thr)
       , ctx(SigCtx(thr)) {
     for (;;) {
-      atomic_store(&ctx->in_blocking_func, 1, memory_order_relaxed);
-      if (atomic_load(&ctx->have_pending_signals, memory_order_relaxed) == 0)
+      atomic_store_relaxed(&ctx->in_blocking_func, 1);
+      if (atomic_load_relaxed(&thr->pending_signals) == 0)
         break;
-      atomic_store(&ctx->in_blocking_func, 0, memory_order_relaxed);
+      atomic_store_relaxed(&ctx->in_blocking_func, 0);
       ProcessPendingSignals(thr);
     }
     // When we are in a "blocking call", we process signals asynchronously
@@ -417,7 +385,6 @@ TSAN_INTERCEPTOR(int, atexit, void (*f)()) {
 #endif
 
 TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
-  return 0; //!!!
   if (in_symbolizer())
     return 0;
   SCOPED_TSAN_INTERCEPTOR(__cxa_atexit, f, arg, dso);
@@ -426,7 +393,7 @@ TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
 
 static int setup_at_exit_wrapper(ThreadState *thr, uptr pc, void(*f)(),
       void *arg, void *dso) {
-  AtExitCtx *ctx = (AtExitCtx*)InternalAlloc(sizeof(AtExitCtx));
+  auto ctx = RtNew<AtExitCtx>();
   ctx->f = f;
   ctx->arg = arg;
   Release(thr, pc, (uptr)ctx);
@@ -449,7 +416,7 @@ static int setup_at_exit_wrapper(ThreadState *thr, uptr pc, void(*f)(),
   } else {
     res = REAL(__cxa_atexit)(cxa_at_exit_wrapper, ctx, dso);
   }
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   return res;
 }
 
@@ -467,7 +434,7 @@ TSAN_INTERCEPTOR(int, on_exit, void(*f)(int, void*), void *arg) {
   if (in_symbolizer())
     return 0;
   SCOPED_TSAN_INTERCEPTOR(on_exit, f, arg);
-  AtExitCtx *ctx = (AtExitCtx*)InternalAlloc(sizeof(AtExitCtx));
+  auto ctx = RtNew<AtExitCtx>();
   ctx->f = (void(*)())f;
   ctx->arg = arg;
   Release(thr, pc, (uptr)ctx);
@@ -475,7 +442,7 @@ TSAN_INTERCEPTOR(int, on_exit, void(*f)(int, void*), void *arg) {
   // because we do not see synchronization around atexit callback list.
   ThreadIgnoreBegin(thr, pc);
   int res = REAL(on_exit)(on_exit_wrapper, ctx);
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   return res;
 }
 #define TSAN_MAYBE_INTERCEPT_ON_EXIT TSAN_INTERCEPT(on_exit)
@@ -963,7 +930,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
       Printf("ThreadSanitizer: failed to set thread key\n");
       Die();
     }
-    ThreadIgnoreEnd(thr, 0);
+    ThreadIgnoreEnd(thr);
 #endif
     while ((tid = atomic_load(&p->tid, memory_order_acquire)) == 0)
       internal_sched_yield();
@@ -1016,7 +983,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     ScopedIgnoreInterceptors ignore;
     ThreadIgnoreBegin(thr, pc);
     res = REAL(pthread_create)(th, attr, __tsan_thread_start_func, &p);
-    ThreadIgnoreEnd(thr, pc);
+    ThreadIgnoreEnd(thr);
   }
   if (res == 0) {
     Tid tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
@@ -1042,7 +1009,7 @@ TSAN_INTERCEPTOR(int, pthread_join, void *th, void **ret) {
   Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_join)(th, ret);
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   if (res == 0) {
     ThreadJoin(thr, pc, tid);
   }
@@ -1077,7 +1044,7 @@ TSAN_INTERCEPTOR(int, pthread_tryjoin_np, void *th, void **ret) {
   Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = REAL(pthread_tryjoin_np)(th, ret);
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   if (res == 0)
     ThreadJoin(thr, pc, tid);
   else
@@ -1091,7 +1058,7 @@ TSAN_INTERCEPTOR(int, pthread_timedjoin_np, void *th, void **ret,
   Tid tid = ThreadConsumeTid(thr, pc, (uptr)th);
   ThreadIgnoreBegin(thr, pc);
   int res = BLOCK_REAL(pthread_timedjoin_np)(th, ret, abstime);
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   if (res == 0)
     ThreadJoin(thr, pc, tid);
   else
@@ -1462,14 +1429,14 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_unlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_barrier_init, void *b, void *a, unsigned count) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_init, b, a, count);
-  RtMemoryWrite(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryWrite(thr, pc, (uptr)b, 1);
   int res = REAL(pthread_barrier_init)(b, a, count);
   return res;
 }
 
 TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_destroy, b);
-  RtMemoryWrite(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryWrite(thr, pc, (uptr)b, 1);
   int res = REAL(pthread_barrier_destroy)(b);
   return res;
 }
@@ -1477,9 +1444,9 @@ TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
 TSAN_INTERCEPTOR(int, pthread_barrier_wait, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_wait, b);
   Release(thr, pc, (uptr)b);
-  RtMemoryRead(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryRead(thr, pc, (uptr)b, 1);
   int res = BLOCK_REAL(pthread_barrier_wait)(b);
-  RtMemoryRead(thr, pc, (uptr)b, kSizeLog1);
+  RtMemoryRead(thr, pc, (uptr)b, 1);
   if (res == 0 || res == PTHREAD_BARRIER_SERIAL_THREAD) {
     Acquire(thr, pc, (uptr)b);
   }
@@ -1949,12 +1916,14 @@ TSAN_INTERCEPTOR(int, pthread_sigmask, int how, const __sanitizer_sigset_t *set,
 namespace __tsan {
 
 void ReportErrnoSpoiling(ThreadState* thr, uptr pc) {
+  ScopedRuntime rt(thr);
+  if (!ShouldReport(thr, ReportTypeErrnoInSignal))
+    return;
   VarSizeStackTrace stack;
   // StackTrace::GetNestInstructionPc(pc) is used because return address is
   // expected, OutputReport() will undo this.
   ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
   ReportDesc rep;
-  ScopedRuntime rt(thr);
   ReportScope report_scope;
   rep.typ = ReportTypeErrnoInSignal;
   if (IsFiredSuppression(ctx, rep.typ, stack))
@@ -2013,21 +1982,18 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   // because in async signal processing case (when handler is called directly
   // from rtl_generic_sighandler) we have not yet received the reraised
   // signal; and it looks too fragile to intercept all ways to reraise a signal.
-  if (errno != 99 && !sync && sig != SIGTERM &&
-      ShouldReport(thr, ReportTypeErrnoInSignal))
+  if (errno != 99 && !sync && sig != SIGTERM)
     ReportErrnoSpoiling(thr, pc);
   errno = saved_errno;
 }
 
-void ProcessPendingSignals(ThreadState *thr) {
+void ProcessPendingSignalsImpl(ThreadState *thr) {
   //!!! how this will work with Go?
   CHECK_EQ(atomic_load_relaxed(&thr->in_runtime), 0);
-  CheckReset(thr);
+  atomic_store(&thr->pending_signals, 0, memory_order_relaxed);
   ThreadSignalContext *sctx = SigCtx(thr);
-  if (sctx == 0 ||
-      atomic_load(&sctx->have_pending_signals, memory_order_relaxed) == 0)
+  if (sctx == 0)
     return;
-  atomic_store(&sctx->have_pending_signals, 0, memory_order_relaxed);
   atomic_fetch_add(&thr->in_signal_handler, 1, memory_order_relaxed);
   internal_sigfillset(&sctx->emptyset);
   int res = REAL(pthread_sigmask)(SIG_SETMASK, &sctx->emptyset, &sctx->oldset);
@@ -2096,7 +2062,7 @@ void sighandler(int sig, __sanitizer_siginfo* info, void* ctx) {
     signal->armed = true;
     internal_memcpy(&signal->siginfo, info, sizeof(*info));
     internal_memcpy(&signal->ctx, ctx, sizeof(signal->ctx));
-    atomic_store(&sctx->have_pending_signals, 1, memory_order_relaxed);
+    atomic_store(&thr->pending_signals, 1, memory_order_relaxed);
   }
 }
 
@@ -2158,7 +2124,7 @@ TSAN_INTERCEPTOR(int, getaddrinfo, void *node, void *service,
   // inside of getaddrinfo. So ignore memory accesses.
   ThreadIgnoreBegin(thr, pc);
   int res = REAL(getaddrinfo)(node, service, hints, rv);
-  ThreadIgnoreEnd(thr, pc);
+  ThreadIgnoreEnd(thr);
   return res;
 }
 
@@ -2266,7 +2232,6 @@ static int OnExit(ThreadState *thr) {
 
 struct TsanInterceptorContext {
   ThreadState *thr;
-  const uptr caller_pc;
   const uptr pc;
 };
 
@@ -2308,13 +2273,13 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 
 #define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)      \
   SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);         \
-  TsanInterceptorContext _ctx = {thr, caller_pc, pc}; \
+  TsanInterceptorContext _ctx = {thr, pc}; \
   ctx = (void *)&_ctx;                                \
   (void) ctx;
 
 #define COMMON_INTERCEPTOR_ENTER_NOIGNORE(ctx, func, ...) \
   SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__);              \
-  TsanInterceptorContext _ctx = {thr, caller_pc, pc};     \
+  TsanInterceptorContext _ctx = {thr, pc};     \
   ctx = (void *)&_ctx;                                    \
   (void) ctx;
 
@@ -2368,7 +2333,12 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
 
 #define COMMON_INTERCEPTOR_ON_EXIT(ctx) \
-  OnExit(((TsanInterceptorContext *) ctx)->thr)
+  ({ \
+    si.DisableIgnores(); \
+    int res = OnExit(((TsanInterceptorContext *) ctx)->thr); \
+    si.EnableIgnores(); \
+    res; \
+  })
 
 #define COMMON_INTERCEPTOR_MUTEX_PRE_LOCK(ctx, m) \
   MutexPreLock(((TsanInterceptorContext *)ctx)->thr, \
@@ -2410,12 +2380,6 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
   } else {                                                                     \
     *begin = *end = 0;                                                         \
   }
-
-#define COMMON_INTERCEPTOR_USER_CALLBACK_START() \
-  SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START()
-
-#define COMMON_INTERCEPTOR_USER_CALLBACK_END() \
-  SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END()
 
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
@@ -2498,7 +2462,7 @@ struct ScopedSyscall {
 
   explicit ScopedSyscall(ThreadState *thr)
       : thr(thr) {
-    Initialize(thr);
+    InitializeMaybe(thr);
   }
 
   ~ScopedSyscall() {

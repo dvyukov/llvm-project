@@ -162,15 +162,15 @@ a128 func_cas(volatile a128 *v, a128 cmp, a128 xch) {
 #endif
 
 template<typename T>
-static int SizeLog() {
+static int AccessSize() {
   if (sizeof(T) <= 1)
-    return kSizeLog1;
+    return 1;
   else if (sizeof(T) <= 2)
-    return kSizeLog2;
+    return 2;
   else if (sizeof(T) <= 4)
-    return kSizeLog4;
+    return 4;
   else
-    return kSizeLog8;
+    return 8;
   // For 16-byte atomics we also use 8-byte memory access,
   // this leads to false negatives only in very obscure cases.
 }
@@ -224,7 +224,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
   // This fast-path is critical for performance.
   // Assume the access is atomic.
   if (!IsAcquireOrder(mo)) {
-    MemoryReadAtomic(thr, pc, (uptr)a, SizeLog<T>());
+    MemoryReadAtomic(thr, pc, (uptr)a, AccessSize<T>());
     return NoTsanAtomicLoad(a, mo);
   }
   // Don't create sync object if it does not exist yet. For example, an atomic
@@ -238,7 +238,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
     // of the value and the clock we acquire.
     v = NoTsanAtomicLoad(a, mo);
   }
-  MemoryReadAtomic(thr, pc, (uptr)a, SizeLog<T>());
+  MemoryReadAtomic(thr, pc, (uptr)a, AccessSize<T>());
   return v;
 }
 
@@ -258,7 +258,7 @@ template<typename T>
 static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
     morder mo) {
   CHECK(IsStoreOrder(mo));
-  MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
+  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
   // This fast-path is critical for performance.
   // Assume the access is atomic.
   // Strictly saying even relaxed store cuts off release sequence,
@@ -279,7 +279,7 @@ static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
 
 template<typename T, T (*F)(volatile T *v, T op)>
 static T AtomicRMW(ThreadState *thr, uptr pc, volatile T *a, T v, morder mo) {
-  MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
+  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
   SyncVar *s = 0;
   if (mo != mo_relaxed) {
     s = ctx->metamap.GetOrCreate(thr, pc, (uptr)a, false);
@@ -414,7 +414,7 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   // (mo_relaxed) when those are used.
   CHECK(IsLoadOrder(fmo));
 
-  MemoryWriteAtomic(thr, pc, (uptr)a, SizeLog<T>());
+  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
   SyncVar *s = 0;
   bool write_lock = IsReleaseOrder(mo);
 
@@ -500,30 +500,22 @@ static morder convert_morder(morder mo) {
       ProcessPendingSignals(thr);                                              \
       return NoTsanAtomic##func(__VA_ARGS__);                                  \
     }                                                                          \
-    const uptr callpc = (uptr)__builtin_return_address(0);                     \
-    uptr pc = StackTrace::GetCurrentPc();                                      \
     mo = convert_morder(mo);                                                   \
     AtomicStatInc(thr, sizeof(*a), mo, StatAtomic##func);                      \
-    ScopedAtomic sa(thr, callpc, a, mo, __func__);                             \
+    ScopedAtomic sa(thr, a, mo, __func__);                             \
     ScopedRuntime sr(thr);                                                     \
-    return Atomic##func(thr, pc, __VA_ARGS__);                                 \
+    return Atomic##func(thr, GET_CALLER_PC(), __VA_ARGS__);                                 \
     /**/
 
-class ScopedAtomic {
+class ScopedAtomic { //!!! remove/
  public:
-  ScopedAtomic(ThreadState *thr, uptr pc, const volatile void *a,
+  ScopedAtomic(ThreadState *thr, const volatile void *a,
                morder mo, const char *func)
       : thr_(thr) {
     DPrintf2("#%d: %s(%p, %d)\n", thr_->tid, func, a, mo);
-    ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
-    FuncEntry(thr_, pc);
   }
   ~ScopedAtomic() {
     ProcessPendingSignals(thr_);
-    {
-      ScopedRuntime sr(thr_); //!!! combine with ScopedRuntime in SCOPED_ATOMIC
-      FuncExit(thr_);
-    }
     CheckNoLocks();
   }
  private:

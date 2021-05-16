@@ -95,9 +95,9 @@ static void ThreadCheckIgnore(ThreadState *thr) {}
 void ThreadFinalize(ThreadState *thr) {
   ThreadCheckIgnore(thr);
 #if !SANITIZER_GO
+  ScopedRuntime rt(thr);
   if (!ShouldReport(thr, ReportTypeThreadLeak))
     return;
-  ScopedRuntime rt(thr);
   Vector<ReportDesc*> reports;
   Vector<ThreadLeak> leaks;
   ReportScope report_scope;
@@ -310,94 +310,6 @@ void ThreadNotJoined(ThreadState* thr, uptr pc, Tid tid, uptr uid) {
 
 void ThreadSetName(ThreadState *thr, const char *name) {
   ctx->thread_registry.SetThreadName(thr->tid, name);
-}
-
-void MemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size,
-                       bool is_write) { //!!! change all is_write to isRead
-  ScopedRuntime sr(thr);
-  DCHECK(atomic_load_relaxed(&thr->in_runtime)); //!!!
-  if (size == 0)
-    return;
-
-  RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
-  DPrintf2("#%d: MemoryAccessRange: @%p %p size=%d is_write=%d\n",
-      thr->tid, (void*)pc, (void*)addr,
-      (int)size, is_write);
-
-#if SANITIZER_DEBUG
-  if (!IsAppMem(addr)) {
-    Printf("Access to non app mem %zx\n", addr);
-    DCHECK(IsAppMem(addr));
-  }
-  if (!IsAppMem(addr + size - 1)) {
-    Printf("Access to non app mem %zx\n", addr + size - 1);
-    DCHECK(IsAppMem(addr + size - 1));
-  }
-  if (!IsShadowMem((uptr)shadow_mem)) {
-    Printf("Bad shadow addr %p (%zx)\n", shadow_mem, addr);
-    DCHECK(IsShadowMem((uptr)shadow_mem));
-  }
-  if (!IsShadowMem((uptr)(shadow_mem + size * kShadowCnt / 8 - 1))) {
-    Printf("Bad shadow addr %p (%zx)\n",
-               shadow_mem + size * kShadowCnt / 8 - 1, addr + size - 1);
-    DCHECK(IsShadowMem((uptr)(shadow_mem + size * kShadowCnt / 8 - 1)));
-  }
-#endif
-
-  StatInc(thr, StatMopRange);
-
-  if (*shadow_mem == Shadow::kShadowRodata) {
-    DCHECK(!is_write);
-    // Access to .rodata section, no races here.
-    // Measurements show that it can be 10-20% of all memory accesses.
-    StatInc(thr, StatMopRangeRodata);
-    return;
-  }
-
-  if (thr->ignore_enabled_)
-    return;
-
-  TraceMemoryAccessRange(thr, pc, addr, size, !is_write, false);
-
-  Shadow fast_state = thr->fast_state;
-
-#if !SANITIZER_GO
-  const bool old_range_access_race = thr->range_access_race;
-  thr->range_access_race = 1;
-#endif
-
-  bool unaligned = (addr % kShadowCell) != 0;
-
-  // Handle unaligned beginning, if any.
-  for (; addr % kShadowCell && size; addr++, size--) {
-    const u32 kAccessSizeLog = kSizeLog1;
-    Shadow cur(fast_state);
-    cur.SetAccess(addr, kAccessSizeLog, !is_write, false, false);
-    MemoryAccessImpl(thr, addr, kAccessSizeLog, is_write, false,
-        shadow_mem, cur);
-  }
-  if (unaligned)
-    shadow_mem += kShadowCnt;
-  // Handle middle part, if any.
-  for (; size >= kShadowCell; addr += kShadowCell, size -= kShadowCell) {
-    const u32 kAccessSizeLog = kSizeLog8;
-    Shadow cur(fast_state);
-    cur.SetAccess(0, kAccessSizeLog, !is_write, false, false);
-    MemoryAccessImpl(thr, addr, kAccessSizeLog, is_write, false,
-        shadow_mem, cur);
-    shadow_mem += kShadowCnt;
-  }
-  // Handle ending, if any.
-  for (; size; addr++, size--) {
-    const u32 kAccessSizeLog = kSizeLog1;
-    Shadow cur(fast_state);
-    cur.SetAccess(addr, kAccessSizeLog, !is_write, false, false);
-    MemoryAccessImpl(thr, addr, kAccessSizeLog, is_write, false,
-        shadow_mem, cur);
-  }
-#if !SANITIZER_GO
-  thr->range_access_race = old_range_access_race;
-#endif
 }
 
 #if !SANITIZER_GO

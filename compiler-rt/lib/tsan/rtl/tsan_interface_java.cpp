@@ -39,7 +39,7 @@ class ScopedJavaFunc {
  public:
   ScopedJavaFunc(ThreadState *thr, uptr pc)
       : thr_(thr) {
-    Initialize(thr_);
+    InitializeMaybe(thr_);
     {
       ScopedRuntime sr(thr_);
       FuncEntry(thr, pc);
@@ -100,7 +100,7 @@ int  __tsan_java_fini() {
 }
 
 void __tsan_java_alloc(jptr ptr, jptr size) {
-  SCOPED_JAVA_FUNC_NORT(__tsan_java_alloc);
+  SCOPED_JAVA_FUNC(__tsan_java_alloc);
   DPrintf("#%d: java_alloc(%p, %p)\n", thr->tid, ptr, size);
   CHECK_NE(jctx, 0);
   CHECK_NE(size, 0);

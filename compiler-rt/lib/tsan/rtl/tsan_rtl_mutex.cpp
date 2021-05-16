@@ -61,7 +61,7 @@ void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   if (!(flagz & MutexFlagLinkerInit) && IsAppMem(addr)) {
     CHECK(!thr->is_freeing);
     thr->is_freeing = true;
-    MemoryWrite(thr, pc, addr, kSizeLog1);
+    MemoryWrite(thr, pc, addr, 1);
     thr->is_freeing = false;
   }
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
@@ -83,7 +83,7 @@ void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   if (IsAppMem(addr)) {
     CHECK(!thr->is_freeing);
     thr->is_freeing = true;
-    MemoryWrite(thr, pc, addr, kSizeLog1);
+    MemoryWrite(thr, pc, addr, 1);
     thr->is_freeing = false;
   }
   SyncVar* s = ctx->metamap.GetIfExists(addr);
@@ -145,7 +145,7 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
   else
     rec = 1;
   if (IsAppMem(addr))
-    MemoryReadAtomic(thr, pc, addr, kSizeLog1);
+    MemoryReadAtomic(thr, pc, addr, 1);
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   TraceMutexLock(thr, EventTypeLock, pc, addr, creation_stack_id);
@@ -198,7 +198,7 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexUnlock %zx flagz=0x%x\n", thr->tid, addr, flagz);
   ScopedRuntime rt(thr);
   if (IsAppMem(addr))
-    MemoryReadAtomic(thr, pc, addr, kSizeLog1);
+    MemoryReadAtomic(thr, pc, addr, 1);
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   TraceMutexUnlock(thr, addr);
@@ -261,7 +261,7 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   StatInc(thr, StatMutexReadLock);
   ScopedRuntime rt(thr);
   if (IsAppMem(addr))
-    MemoryReadAtomic(thr, pc, addr, kSizeLog1);
+    MemoryReadAtomic(thr, pc, addr, 1);
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   //!!! Every trace can now reset state, double check that it's ok and leaves
@@ -305,7 +305,7 @@ void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
   StatInc(thr, StatMutexReadUnlock);
   ScopedRuntime rt(thr);
   if (IsAppMem(addr))
-    MemoryReadAtomic(thr, pc, addr, kSizeLog1);
+    MemoryReadAtomic(thr, pc, addr, 1);
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   TraceMutexUnlock(thr, addr);
@@ -340,7 +340,7 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadOrWriteUnlock %zx\n", thr->tid, addr);
   ScopedRuntime rt(thr);
   if (IsAppMem(addr))
-    MemoryReadAtomic(thr, pc, addr, kSizeLog1);
+    MemoryReadAtomic(thr, pc, addr, 1);
   SyncVar* s = ctx->metamap.GetOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   TraceMutexUnlock(thr, addr);

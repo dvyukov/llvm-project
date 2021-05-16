@@ -24,12 +24,12 @@
 
 namespace __tsan {
 ALWAYS_INLINE
-void MemoryAccess(uptr pc, void* addr, int kAccessSizeLog, bool kIsWrite) {
+void MemoryAccess(uptr pc, void* addr, int kAccessSize, bool kIsWrite) {
   ThreadState* thr = cur_thread();
   if (!TSAN_FAST_FLAT && thr->in_symbolizer)
     return;
   MaybeScopedRuntime<TSAN_FAST_FLAT> rt(thr);
-  MemoryAccess<!TSAN_FAST_FLAT>(thr, pc, (uptr)addr, kAccessSizeLog, kIsWrite,
+  MemoryAccess<!TSAN_FAST_FLAT>(thr, pc, (uptr)addr, kAccessSize, kIsWrite,
                                 false);
 }
 } // namespace __tsan
@@ -37,67 +37,67 @@ void MemoryAccess(uptr pc, void* addr, int kAccessSizeLog, bool kIsWrite) {
 using namespace __tsan;
 
 FLAT_SECTION void __tsan_read1(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog1, false);
+  MemoryAccess(CALLERPC, addr, 1, false);
 }
 
 FLAT_SECTION void __tsan_read2(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog2, false);
+  MemoryAccess(CALLERPC, addr, 2, false);
 }
 
 FLAT_SECTION void __tsan_read4(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog4, false);
+  MemoryAccess(CALLERPC, addr, 4, false);
 }
 
 FLAT_SECTION void __tsan_read8(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog8, false);
+  MemoryAccess(CALLERPC, addr, 8, false);
 }
 
 FLAT_SECTION void __tsan_write1(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog1, true);
+  MemoryAccess(CALLERPC, addr, 1, true);
 }
 
 FLAT_SECTION void __tsan_write2(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog2, true);
+  MemoryAccess(CALLERPC, addr, 2, true);
 }
 
 FLAT_SECTION void __tsan_write4(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog4, true);
+  MemoryAccess(CALLERPC, addr, 4, true);
 }
 
 FLAT_SECTION void __tsan_write8(void* addr) {
-  MemoryAccess(CALLERPC, addr, kSizeLog8, true);
+  MemoryAccess(CALLERPC, addr, 8, true);
 }
 
 FLAT_SECTION void __tsan_read1_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog1, false);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 1, false);
 }
 
 FLAT_SECTION void __tsan_read2_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog2, false);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 2, false);
 }
 
 FLAT_SECTION void __tsan_read4_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog4, false);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 4, false);
 }
 
 FLAT_SECTION void __tsan_read8_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog8, false);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 8, false);
 }
 
 FLAT_SECTION void __tsan_write1_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog1, true);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 1, true);
 }
 
 FLAT_SECTION void __tsan_write2_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog2, true);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 2, true);
 }
 
 FLAT_SECTION void __tsan_write4_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog4, true);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 4, true);
 }
 
 FLAT_SECTION void __tsan_write8_pc(void* addr, void* pc) {
-  MemoryAccess(STRIP_PAC_PC(pc), addr, kSizeLog8, true);
+  MemoryAccess(STRIP_PAC_PC(pc), addr, 8, true);
 }
 
 void __tsan_vptr_update(void **vptr_p, void *new_val) {
@@ -108,7 +108,7 @@ void __tsan_vptr_update(void **vptr_p, void *new_val) {
     return;
   ScopedRuntime sr(thr);
   thr->is_vptr_access = true;
-  MemoryWrite(thr, CALLERPC, (uptr)vptr_p, kSizeLog8);
+  MemoryWrite(thr, CALLERPC, (uptr)vptr_p, 8);
   thr->is_vptr_access = false;
 }
 
@@ -118,7 +118,7 @@ void __tsan_vptr_read(void **vptr_p) {
     return;
   ScopedRuntime sr(thr);
   thr->is_vptr_access = true;
-  MemoryRead(thr, CALLERPC, (uptr)vptr_p, kSizeLog8);
+  MemoryRead(thr, CALLERPC, (uptr)vptr_p, 8);
   thr->is_vptr_access = false;
 }
 
@@ -147,7 +147,7 @@ void __tsan_ignore_thread_begin() {
 void __tsan_ignore_thread_end() {
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
-  ThreadIgnoreEnd(thr, CALLERPC);
+  ThreadIgnoreEnd(thr);
 }
 
 void __tsan_read_range(void *addr, uptr size) {

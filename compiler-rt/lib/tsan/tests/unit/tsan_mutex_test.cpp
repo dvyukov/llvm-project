@@ -14,6 +14,7 @@
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_mutex.h"
 #include "tsan_mutex.h"
+#include "tsan_rtl.h"
 #include "gtest/gtest.h"
 
 namespace __tsan {
@@ -72,6 +73,7 @@ const int kIters = 64*1024;
 
 template<typename MutexType>
 static void *write_mutex_thread(void *param) {
+  ScopedRuntime rt(cur_thread());
   TestData<MutexType> *data = (TestData<MutexType>*)param;
   for (int i = 0; i < kIters; i++) {
     data->Write();
@@ -82,6 +84,7 @@ static void *write_mutex_thread(void *param) {
 
 template<typename MutexType>
 static void *read_mutex_thread(void *param) {
+  ScopedRuntime rt(cur_thread());
   TestData<MutexType> *data = (TestData<MutexType>*)param;
   for (int i = 0; i < kIters; i++) {
     if ((i % kWriteRate) == 0)

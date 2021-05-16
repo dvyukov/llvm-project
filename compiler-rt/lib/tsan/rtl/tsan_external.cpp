@@ -10,8 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 #include "tsan_rtl.h"
-#include "tsan_interceptors.h"
 #include "sanitizer_common/sanitizer_ptrauth.h"
+
+#if !SANITIZER_GO
+#include "tsan_interceptors.h"
+#endif
 
 namespace __tsan {
 
@@ -64,9 +67,8 @@ void ExternalAccess(void *addr, uptr caller_pc, void *tag, AccessFunc access) {
   if (caller_pc) FuncEntry(thr, caller_pc);
   InsertShadowStackFrameForTag(thr, (uptr)tag);
   bool in_ignored_lib;
-  if (!caller_pc || !libignore()->IsIgnored(caller_pc, &in_ignored_lib)) {
-    access(thr, CALLERPC, (uptr)addr, kSizeLog1);
-  }
+  if (!caller_pc || !libignore()->IsIgnored(caller_pc, &in_ignored_lib))
+    access(thr, CALLERPC, (uptr)addr, 1);
   FuncExit(thr);
   if (caller_pc) FuncExit(thr);
 }

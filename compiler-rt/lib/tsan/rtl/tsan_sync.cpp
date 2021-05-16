@@ -48,9 +48,7 @@ MetaMap::MetaMap()
 }
 
 void MetaMap::AllocBlock(ThreadState *thr, uptr pc, uptr p, uptr sz) {
-#if !SANITIZER_GO
-  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
-#endif
+  DCHECK(atomic_load_relaxed(&thr->in_runtime));
   u32 idx = block_alloc_.Alloc(&thr->proc()->block_cache);
   MBlock *b = block_alloc_.Map(idx);
   b->siz = sz;
@@ -191,7 +189,7 @@ MBlock* MetaMap::GetBlock(uptr p) {
     if (idx & kFlagBlock)
       return block_alloc_.Map(idx & ~kFlagMask);
     DCHECK(idx & kFlagSync);
-    SyncVar * s = sync_alloc_.Map(idx & ~kFlagMask);
+    SyncVar* s = sync_alloc_.Map(idx & ~kFlagMask);
     idx = s->next;
   }
 }

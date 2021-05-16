@@ -178,7 +178,7 @@ void InternalDeadlockDetector::Lock(MutexType t) {
   // Printf("LOCK %d @%zu\n", t, seq_ + 1);
   CHECK_GT(t, MutexTypeInvalid);
   CHECK_LT(t, MutexTypeCount);
-  CHECK_EQ(mutex_meta[t].rt, atomic_load_relaxed(&cur_thread()->in_runtime));
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
   u64 max_seq = 0;
   u64 max_idx = MutexTypeInvalid;
   for (int i = 0; i != MutexTypeCount; i++) {
@@ -203,7 +203,7 @@ void InternalDeadlockDetector::Lock(MutexType t) {
 
 void InternalDeadlockDetector::Unlock(MutexType t) {
   // Printf("UNLO %d @%zu #%zu\n", t, seq_, locked_[t]);
-  CHECK_EQ(mutex_meta[t].rt, atomic_load_relaxed(&cur_thread()->in_runtime));
+  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
   CHECK(locked_[t]);
   locked_[t] = 0;
 }
@@ -322,3 +322,11 @@ void Mutex::CheckLocked() {
 }
 
 }  // namespace __tsan
+
+#if SANITIZER_DEBUG && !SANITIZER_GO
+void __sanitizer::OnMutexLockUnlock() {
+  //using namespace __tsan;
+  //if (ctx->initialized)
+  //  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+}
+#endif

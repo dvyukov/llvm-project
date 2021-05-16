@@ -5,6 +5,7 @@
 // UNSUPPORTED: darwin
 
 #include "bench.h"
+#include <memory.h>
 
 void thread(int tid) {
   volatile long x = 0;
@@ -54,7 +55,23 @@ void thread(int tid) {
       ((volatile char *)&x)[7] = 1;
     }
     break;
+  case 9: {
+    volatile long size = sizeof(x);
+    for (int i = 0; i < bench_niter; i++)
+      memset((void*)&x, i, size);
+    break;
   }
+  case 10: {
+    volatile long data[2] = {};
+    volatile long size = sizeof(data) - 2;
+    for (int i = 0; i < bench_niter; i++)
+      memset(((char*)data) + 1, i, size);
+    break;
+  }
+  }
+  
+    
+
 }
 
 void bench() {

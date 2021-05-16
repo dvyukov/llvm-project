@@ -20,10 +20,6 @@ enum StatType {
   StatMop,
   StatMopRead,
   StatMopWrite,
-  StatMop1,  // These must be consequtive.
-  StatMop2,
-  StatMop4,
-  StatMop8,
   StatMopSame,
   StatMopIgnored,
   StatMopRange,

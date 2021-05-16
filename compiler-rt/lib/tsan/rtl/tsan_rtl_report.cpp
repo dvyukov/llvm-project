@@ -26,13 +26,13 @@
 
 namespace __tsan {
 
-ExternalCallback::ExternalCallback() {
+ExternalCallback::ExternalCallback() { //!!! get rid of this
 #if !SANITIZER_GO
   ThreadState* thr = cur_thread();
   //!!! should also ignore annotations
   thr->ignore_funcs_++;
   thr->ignore_interceptors++;
-  ThreadIgnoreBegin(thr, 0, false);
+  ThreadIgnoreBegin(thr, 0);
 #endif
 }
 
@@ -42,7 +42,7 @@ ExternalCallback::~ExternalCallback() {
   CHECK(thr->ignore_funcs_);
   thr->ignore_funcs_--;
   thr->ignore_interceptors--;
-  ThreadIgnoreEnd(thr, 0);
+  ThreadIgnoreEnd(thr);
 #endif
 }
 
@@ -62,7 +62,15 @@ void __tsan_on_report(const ReportDesc *rep) {
   (void)rep;
 }
 
-static void StackStripMain(SymbolizedStack *frames) {
+static SymbolizedStack *StackStripMain(SymbolizedStack *frames) {
+  for (; frames && frames->info.function; frames = frames->next) {
+    // Remove top inlined frames from our interceptors.
+    if (internal_strncmp(frames->info.function, "__tsan::ScopedInterceptor", sizeof("__tsan::ScopedInterceptor") - 1) == 0)
+      continue;
+    if (internal_strncmp(frames->info.function, "__sanitizer::StackTrace", sizeof("__sanitizer::StackTrace") - 1) == 0)
+      continue;
+    break;
+  }
   SymbolizedStack *last_frame = nullptr;
   SymbolizedStack *last_frame2 = nullptr;
   for (SymbolizedStack *cur = frames; cur; cur = cur->next) {
@@ -71,7 +79,7 @@ static void StackStripMain(SymbolizedStack *frames) {
   }
 
   if (last_frame2 == 0)
-    return;
+    return frames;
 #if !SANITIZER_GO
   const char *last = last_frame->info.function;
   const char *last2 = last_frame2->info.function;
@@ -101,6 +109,7 @@ static void StackStripMain(SymbolizedStack *frames) {
   last_frame->ClearAll();
   last_frame2->next = nullptr;
 #endif
+  return frames;
 }
 
 static SymbolizedStack* SymbolizeStack(StackTrace trace) {
@@ -125,8 +134,7 @@ static SymbolizedStack* SymbolizeStack(StackTrace trace) {
     last->next = top;
     top = ent;
   }
-  StackStripMain(top);
-  return top;
+  return StackStripMain(top);
 }
 
 void PrintStack(StackTrace stack) {
@@ -143,8 +151,10 @@ bool ShouldReport(ThreadState *thr, ReportType typ) {
   // If any locks are already taken, it's too late to do this check.
   CheckNoLocks();
   // For the same reason check we didn't lock thread_registry yet.
-  if (SANITIZER_DEBUG)
+  if (SANITIZER_DEBUG) {
+    DCHECK(atomic_load_relaxed(&thr->in_runtime));
     ThreadRegistryLock l(&ctx->thread_registry);
+  }
   if (!flags()->report_bugs || thr->suppress_reports)
     return false;
   switch (typ) {
@@ -564,7 +574,7 @@ bool OutputReport(ThreadState* thr, ReportDesc* rep) {
   // It's too late to check them here, we have already taken locks.
   CHECK(flags()->report_bugs);
   CHECK(!thr->suppress_reports);
-  SymbolizeReport(rep);
+  SymbolizeReport(rep); //!!! we are still in runtime scope, why don't tests fail on callbacks?
   atomic_store_relaxed(&ctx->last_symbolize_time_ns, NanoTime());
   CHECK_EQ(thr->current_report, nullptr);
   thr->current_report = rep;
@@ -598,7 +608,7 @@ bool OutputReport(ThreadState* thr, ReportDesc* rep) {
   atomic_store_relaxed(&thr->in_runtime, 0);
   PrintReport(rep);
   {
-    ExternalCallback cb;
+    ExternalCallback cb; //!!! eliminate the need for this
     __tsan_on_report(rep);
   }
   atomic_store_relaxed(&thr->in_runtime, in_runtime);

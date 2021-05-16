@@ -101,11 +101,6 @@ const uptr kMetaShadowCell = 8;
 // Size of a single meta shadow value (u32).
 const uptr kMetaShadowSize = 4;
 
-const int kSizeLog1 = 0;
-const int kSizeLog2 = 1;
-const int kSizeLog4 = 2;
-const int kSizeLog8 = 3;
-
 #if TSAN_NO_HISTORY
 const bool kCollectHistory = false;
 #else

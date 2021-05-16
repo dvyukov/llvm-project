@@ -40,18 +40,17 @@ public:
     DCHECK_EQ(epoch_, static_cast<u16>(epoch));
   }
 
-  void SetAccess(u32 addr, u32 sizeLog, bool isRead, bool isAtomic,
+  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic,
                  bool isFreed) {
     // DCHECK_EQ(raw_ & 0xff, 0);
+    DCHECK_GT(size, 0);
+    DCHECK_LE(size, 8);
     Sid sid0 = sid_;
     (void)sid0;
     u16 epoch0 = epoch_;
     (void)epoch0;
     raw_ |= (isAtomic << 31) | (isRead << 30) | (isFreed << 29) |
-            ((((1u << (1u << sizeLog)) - 1) << (addr & 0x7)) & 0xff);
-    // if (size() != 1 << sizeLog)
-    //   Printf("raw=0x%08x sizeLog=%u addr=%x\n", raw_, sizeLog, addr);
-    // DCHECK_EQ(size(), 1 << sizeLog);
+            ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
     DCHECK_EQ(addr0(), addr & 0x7);
     DCHECK_EQ(IsAtomic(), isAtomic);
     DCHECK_EQ(IsRead(), isRead);
@@ -101,7 +100,6 @@ public:
     DCHECK(access_);
     return __builtin_popcount(access_);
   }
-  // u32 ALWAYS_INLINE sizeLog() const { return size_log_; }
   bool ALWAYS_INLINE IsWrite() const {
     return !IsRead();
   }

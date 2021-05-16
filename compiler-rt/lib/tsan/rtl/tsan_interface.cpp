@@ -33,32 +33,32 @@ void __tsan_read16(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
-  MemoryRead(thr, pc, (uptr)addr, kSizeLog8);
-  MemoryRead(thr, pc, (uptr)addr + 8, kSizeLog8);
+  MemoryRead(thr, pc, (uptr)addr, 8);
+  MemoryRead(thr, pc, (uptr)addr + 8, 8);
 }
 
 void __tsan_write16(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
-  MemoryWrite(thr, pc, (uptr)addr, kSizeLog8);
-  MemoryWrite(thr, pc, (uptr)addr + 8, kSizeLog8);
+  MemoryWrite(thr, pc, (uptr)addr, 8);
+  MemoryWrite(thr, pc, (uptr)addr + 8, 8);
 }
 
 void __tsan_read16_pc(void* addr, void* pc1) {
   uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
-  MemoryRead(thr, pc, (uptr)addr, kSizeLog8);
-  MemoryRead(thr, pc, (uptr)addr + 8, kSizeLog8);
+  MemoryRead(thr, pc, (uptr)addr, 8);
+  MemoryRead(thr, pc, (uptr)addr + 8, 8);
 }
 
 void __tsan_write16_pc(void* addr, void* pc1) {
   uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
   ScopedRuntime sr(thr);
-  MemoryWrite(thr, pc, (uptr)addr, kSizeLog8);
-  MemoryWrite(thr, pc, (uptr)addr + 8, kSizeLog8);
+  MemoryWrite(thr, pc, (uptr)addr, 8);
+  MemoryWrite(thr, pc, (uptr)addr + 8, 8);
 }
 
 // __tsan_unaligned_read/write calls are emitted by compiler.

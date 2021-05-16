@@ -170,25 +170,25 @@ void __tsan_map_shadow(uptr addr, uptr size) {
 }
 
 void __tsan_read(ThreadState *thr, void *addr, void *pc) {
-  MemoryRead(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryRead(thr, (uptr)pc, (uptr)addr, 1);
 }
 
 void __tsan_read_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryRead(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryRead(thr, (uptr)pc, (uptr)addr, 1);
   if (callpc != 0)
     FuncExit(thr);
 }
 
 void __tsan_write(ThreadState *thr, void *addr, void *pc) {
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryWrite(thr, (uptr)pc, (uptr)addr, 1);
 }
 
 void __tsan_write_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryWrite(thr, (uptr)pc, (uptr)addr, 1);
   if (callpc != 0)
     FuncExit(thr);
 }
@@ -211,9 +211,10 @@ void __tsan_func_exit(ThreadState *thr) {
 
 void __tsan_malloc(ThreadState *thr, uptr pc, uptr p, uptr sz) {
   CHECK(inited);
+  ScopedRuntime rt(thr);
   if (thr && pc)
-    MBlockAlloc(thr, pc, p, sz);
-  MemoryResetRange(thr, pc, (uptr)p, sz);
+    ctx->metamap.AllocBlock(thr, pc, p, sz);
+  RtMemoryResetRange(thr, pc, (uptr)p, sz);
 }
 
 void __tsan_free(uptr p, uptr sz) {
@@ -287,7 +288,7 @@ void __tsan_go_ignore_sync_begin(ThreadState *thr) {
 }
 
 void __tsan_go_ignore_sync_end(ThreadState *thr) {
-  ThreadIgnoreSyncEnd(thr, 0);
+  ThreadIgnoreSyncEnd(thr);
 }
 
 void __tsan_report_count(u64 *pn) {

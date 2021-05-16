@@ -149,6 +149,7 @@ struct ThreadState {
 
   atomic_sint32_t in_runtime;
   atomic_sint32_t reset_pending;
+  atomic_sint32_t pending_signals;
 
   // Technically `current` should be a separate THREADLOCAL variable;
   // but it is placed here in order to share cache line with previous fields.
@@ -242,17 +243,18 @@ struct ThreadState {
 ThreadState *cur_thread();
 void set_cur_thread(ThreadState *thr);
 void cur_thread_finalize();
-inline void cur_thread_init() { }
+inline ThreadState* cur_thread_init() { return cur_thread(); }
 #else
 __attribute__((tls_model("initial-exec")))
 extern THREADLOCAL char cur_thread_placeholder[];
 inline ThreadState *cur_thread() {
   return reinterpret_cast<ThreadState *>(cur_thread_placeholder)->current;
 }
-inline void cur_thread_init() {
+inline ThreadState* cur_thread_init() {
   ThreadState *thr = reinterpret_cast<ThreadState *>(cur_thread_placeholder);
   if (UNLIKELY(!thr->current))
     thr->current = thr;
+  return thr->current;
 }
 inline void set_cur_thread(ThreadState *thr) {
   reinterpret_cast<ThreadState *>(cur_thread_placeholder)->current = thr;
@@ -499,52 +501,46 @@ void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write);
 
 template <bool kInRuntime = true>
-void MemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSizeLog,
+void MemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSize,
                   bool kAccessIsWrite, bool kIsAtomic);
-void MemoryAccessImpl(ThreadState* thr, uptr addr, u32 kAccessSizeLog,
+void MemoryAccessImpl(ThreadState* thr, uptr addr, u32 kAccessSize,
                       bool kAccessIsWrite, bool kIsAtomic,
                       RawShadow* shadow_mem, Shadow cur);
-void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr,
-    uptr size, bool is_write);
+template<bool kInRuntime = false>
+void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr, uptr size, bool is_write);
 void UnalignedMemoryAccess(ThreadState *thr, uptr pc, uptr addr,
     int size, bool kAccessIsWrite, bool kIsAtomic);
 
 void ALWAYS_INLINE MemoryRead(ThreadState *thr, uptr pc,
-                                     uptr addr, int kAccessSizeLog) {
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, false, false);
+                                     uptr addr, int kAccessSize) {
+  MemoryAccess(thr, pc, addr, kAccessSize, false, false);
 }
 
 void ALWAYS_INLINE MemoryWrite(ThreadState *thr, uptr pc,
-                                      uptr addr, int kAccessSizeLog) {
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, true, false);
+                                      uptr addr, int kAccessSize) {
+  MemoryAccess(thr, pc, addr, kAccessSize, true, false);
 }
 
 void ALWAYS_INLINE MemoryReadAtomic(ThreadState *thr, uptr pc,
-                                           uptr addr, int kAccessSizeLog) {
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, false, true);
+                                           uptr addr, int kAccessSize) {
+  MemoryAccess(thr, pc, addr, kAccessSize, false, true);
 }
 
 void ALWAYS_INLINE MemoryWriteAtomic(ThreadState *thr, uptr pc,
-                                            uptr addr, int kAccessSizeLog) {
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, true, true);
+                                            uptr addr, int kAccessSize) {
+  MemoryAccess(thr, pc, addr, kAccessSize, true, true);
 }
 
-void MemoryResetRange(ThreadState *thr, uptr pc, uptr addr, uptr size);
 void MemoryRangeFreed(ThreadState *thr, uptr pc, uptr addr, uptr size);
-void MemoryRangeImitateWrite(ThreadState *thr, uptr pc, uptr addr, uptr size);
+void RtMemoryResetRange(ThreadState *thr, uptr pc, uptr addr, uptr size);
+void RtMemoryRangeImitateWrite(ThreadState *thr, uptr pc, uptr addr, uptr size);
 void MemoryRangeImitateWriteOrReset(ThreadState* thr, uptr pc, uptr addr,
                                     uptr size);
 
-void MBlockAlloc(ThreadState* thr, uptr pc, uptr p, uptr sz);
-uptr MBlockFree(ThreadState* thr, uptr pc, uptr p);
-
-void ThreadIgnoreBegin(ThreadState *thr, uptr pc, bool save_stack = true);
-void ThreadIgnoreEnd(ThreadState *thr, uptr pc);
-void ThreadIgnoreSyncBegin(ThreadState *thr, uptr pc, bool save_stack = true);
-void ThreadIgnoreSyncEnd(ThreadState *thr, uptr pc);
-
-template <bool kInRuntime = true> void FuncEntry(ThreadState* thr, uptr pc);
-template <bool kInRuntime = true> void FuncExit(ThreadState* thr);
+void ThreadIgnoreBegin(ThreadState *thr, uptr pc);
+void ThreadIgnoreEnd(ThreadState *thr);
+void ThreadIgnoreSyncBegin(ThreadState *thr, uptr pc);
+void ThreadIgnoreSyncEnd(ThreadState *thr);
 
 Tid ThreadCreate(ThreadState* thr, uptr pc, uptr uid, bool detached);
 void ThreadStart(ThreadState* thr, Tid tid, tid_t os_id,
@@ -556,8 +552,8 @@ void ThreadDetach(ThreadState* thr, uptr pc, Tid tid);
 void ThreadFinalize(ThreadState *thr);
 void ThreadSetName(ThreadState *thr, const char *name);
 int ThreadCount(ThreadState *thr);
-void ProcessPendingSignals(ThreadState *thr);
 void ThreadNotJoined(ThreadState* thr, uptr pc, Tid tid, uptr uid);
+void ProcessPendingSignalsImpl(ThreadState *thr);
 
 Processor *ProcCreate();
 void ProcDestroy(Processor *proc);
@@ -635,6 +631,23 @@ template <typename EventT> void TraceEvent(ThreadState* thr, EventT ev) {
   TraceRelease(thr, evp);
 }
 
+ALWAYS_INLINE WARN_UNUSED_RESULT
+bool TraceFunc(ThreadState* thr, EventType type, uptr pc = 0) {
+  DCHECK(type == EventTypeFuncEnter || type == EventTypeFuncExit);
+  if (!kCollectHistory)
+    return true;
+  EventPC* ev;
+  if (!TraceAcquire(thr, &ev))
+    return false;
+  ev->isAccess = 0;
+  ev->type = type;
+  ev->isExternalPC = 0;
+  ev->_ = 0;
+  ev->pc = pc;
+  TraceRelease(thr, ev);
+  return true;
+}
+
 void TraceMemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size,
                             bool isRead, bool isFreed);
 void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
@@ -642,6 +655,49 @@ void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
 void TraceMutexUnlock(ThreadState* thr, uptr addr);
 void TraceRelease(ThreadState* thr);
 void TraceSlotAttach(ThreadState* thr);
+
+void GrowShadowStack(ThreadState* thr);
+
+template <bool kInRuntime> void TraceRestartFuncExit(ThreadState* thr);
+template <bool kInRuntime> void TraceRestartFuncEntry(ThreadState* thr, uptr pc);
+
+template <bool kInRuntime = true>
+ALWAYS_INLINE
+void FuncEntry(ThreadState* thr, uptr pc) {
+  DCHECK_EQ(kInRuntime, atomic_load_relaxed(&thr->in_runtime));
+  StatInc(thr, StatFuncEnter);
+  DPrintf2("#%d: FuncEntry %p\n", (int)thr->fast_state.sid(), (void*)pc);
+  if (thr->ignore_funcs_) //!!! combine with TracePos check?
+    return;
+  if (!TraceFunc(thr, EventTypeFuncEnter, pc))
+    return TraceRestartFuncEntry<kInRuntime>(thr, pc);
+  DCHECK_GE(thr->shadow_stack_pos, thr->shadow_stack);
+#if !SANITIZER_GO
+  DCHECK_LT(thr->shadow_stack_pos, thr->shadow_stack_end);
+#else
+  if (thr->shadow_stack_pos == thr->shadow_stack_end)
+    GrowShadowStack(thr);
+#endif
+  thr->shadow_stack_pos[0] = pc;
+  thr->shadow_stack_pos++;
+}
+
+template <bool kInRuntime = true>
+ALWAYS_INLINE
+void FuncExit(ThreadState* thr) {
+  DCHECK_EQ(kInRuntime, atomic_load_relaxed(&thr->in_runtime));
+  StatInc(thr, StatFuncExit);
+  DPrintf2("#%d: FuncExit\n", (int)thr->fast_state.sid());
+  if (thr->ignore_funcs_) //!!! combine with TracePos check?
+    return;
+  if (!TraceFunc(thr, EventTypeFuncExit, 0))
+    return TraceRestartFuncExit<kInRuntime>(thr);
+  DCHECK_GT(thr->shadow_stack_pos, thr->shadow_stack);
+#if !SANITIZER_GO
+  DCHECK_LT(thr->shadow_stack_pos, thr->shadow_stack_end);
+#endif
+  thr->shadow_stack_pos--;
+}
 
 #if !SANITIZER_GO
 ALWAYS_INLINE uptr HeapEnd() {
@@ -705,25 +761,57 @@ template <> struct MaybeScopedRuntime<true> {
   }
 };
 
-/*
 ALWAYS_INLINE
-void RtMemoryAccessRange(ThreadState *thr, uptr pc, uptr addr, uptr size, bool
-is_write) { ScopedRuntime rt(thr); MemoryAccessRange(thr, pc, addr, size,
-is_write);
-}
-*/
-
-ALWAYS_INLINE
-void RtMemoryRead(ThreadState* thr, uptr pc, uptr addr, int kAccessSizeLog) {
+void RtMemoryRead(ThreadState* thr, uptr pc, uptr addr, int kAccessSize) {
   ScopedRuntime rt(thr);
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, false, false);
+  MemoryAccess(thr, pc, addr, kAccessSize, false, false);
 }
 
 ALWAYS_INLINE
-void RtMemoryWrite(ThreadState* thr, uptr pc, uptr addr, int kAccessSizeLog) {
+void RtMemoryWrite(ThreadState* thr, uptr pc, uptr addr, int kAccessSize) {
   ScopedRuntime rt(thr);
-  MemoryAccess(thr, pc, addr, kAccessSizeLog, true, false);
+  MemoryAccess(thr, pc, addr, kAccessSize, true, false);
 }
+
+ALWAYS_INLINE
+void MemoryResetRange(ThreadState *thr, uptr pc, uptr addr, uptr size) {
+  ScopedRuntime rt(thr);
+  RtMemoryResetRange(thr, pc, addr, size);
+}
+
+ALWAYS_INLINE
+void MemoryRangeImitateWrite(ThreadState *thr, uptr pc, uptr addr, uptr size) {
+  ScopedRuntime rt(thr);
+  RtMemoryRangeImitateWrite(thr, pc, addr, size);
+}
+
+ALWAYS_INLINE void ProcessPendingSignals(ThreadState *thr) {
+  CheckReset(thr); //!!! combine with pending_signals?
+  if (UNLIKELY(atomic_load_relaxed(&thr->pending_signals)))
+    ProcessPendingSignalsImpl(thr);
+}
+
+extern bool is_initialized;
+
+ALWAYS_INLINE
+void InitializeMaybe(ThreadState *thr) {
+#if !SANITIZER_CAN_USE_PREINIT_ARRAY
+  if (UNLIKELY(!is_initialized))
+    Initialize();
+#endif
+}
+
+#if !SANITIZER_GO
+ALWAYS_INLINE
+ThreadState* cur_thread_init_maybe() {
+#if SANITIZER_LINUX
+  DCHECK(cur_thread());
+  return cur_thread();
+#else
+  return cur_thread_init();
+#endif
+}
+#endif
 
 #if !SANITIZER_GO
 extern void* __tsan_on_initialize;

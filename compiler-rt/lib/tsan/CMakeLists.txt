@@ -22,7 +22,7 @@ list(APPEND TSAN_CFLAGS -Wno-pedantic)
 
 set(TSAN_RTL_CFLAGS ${TSAN_CFLAGS})
 append_list_if(COMPILER_RT_HAS_MSSE3_FLAG -msse4.1 TSAN_RTL_CFLAGS)
-append_list_if(SANITIZER_LIMIT_FRAME_SIZE -Wframe-larger-than=580
+append_list_if(SANITIZER_LIMIT_FRAME_SIZE -Wframe-larger-than=1000
                TSAN_RTL_CFLAGS)
 append_list_if(COMPILER_RT_HAS_WGLOBAL_CONSTRUCTORS_FLAG -Wglobal-constructors
                TSAN_RTL_CFLAGS)
