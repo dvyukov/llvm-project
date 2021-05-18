@@ -298,6 +298,7 @@ void PreemptHijack() {
 #  if !SANITIZER_GO
   ThreadState* thr = cur_thread();
   DPrintf("#%d: PreemptHijack\n", thr->tid);
+  CHECK(!atomic_load_relaxed(&thr->in_runtime));
   //!!! only if still requested
   CompleteReset(thr);
 #  endif

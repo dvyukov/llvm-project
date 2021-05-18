@@ -603,6 +603,8 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceAcquire(ThreadState* thr,
   DCHECK(thr->slot);
   StatInc(thr, StatEvents);
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
+  DCHECK_GE(pos, &thr->slot->trace.current->events[0]); //!!!
+  DCHECK_LE(pos, &thr->slot->trace.current->events[TracePart::kSize]); //!!!
   // TracePart is allocated with mmap and is at least 4K aligned.
   // So the following check is a faster way to check for part end.
   // It may have false positives in the middle of the trace,

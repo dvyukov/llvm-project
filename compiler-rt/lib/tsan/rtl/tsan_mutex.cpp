@@ -325,8 +325,8 @@ void Mutex::CheckLocked() {
 
 #if SANITIZER_DEBUG && !SANITIZER_GO
 void __sanitizer::OnMutexLockUnlock() {
-  //using namespace __tsan;
-  //if (ctx->initialized)
-  //  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
+  using namespace __tsan;
+  if (ctx->initialized)
+    CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
 }
 #endif

@@ -358,6 +358,7 @@ void SlotDetach(ThreadState* thr) {
   CHECK(!slot->next && !slot->prev);
   CHECK(!slot->reset_wait || atomic_load_relaxed(&ctx->reset_pending));
   slot->trace.pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
+  CHECK_GE(slot->trace.pos, &slot->trace.current->events[0]);
   CHECK_LE(slot->trace.pos, &slot->trace.current->events[TracePart::kSize]);
   slot->trace.prev_pc = thr->trace_prev_pc;
   atomic_store_relaxed(&thr->trace_pos, 0);
@@ -890,6 +891,8 @@ void TraceSwitch(ThreadState* thr) {
   auto part = thr->slot->trace.current;
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   Event* end = &part->events[TracePart::kSize];
+  CHECK_GE(pos, &part->events[0]);
+  CHECK_LE(pos, end);
   //!!! can't return due to event restart
   // we either need to remove false positive switches, or store some fake 0
   // event in this position
