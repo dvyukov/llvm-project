@@ -20,7 +20,7 @@ namespace __lsan {
 
 class ThreadContextLsanBase : public ThreadContextBase {
  public:
-  explicit ThreadContextLsanBase(Tid tid);
+  explicit ThreadContextLsanBase(int tid);
   void OnFinished() override;
   uptr stack_begin() { return stack_begin_; }
   uptr stack_end() { return stack_end_; }
@@ -28,7 +28,7 @@ class ThreadContextLsanBase : public ThreadContextBase {
   uptr cache_end() { return cache_end_; }
 
   // The argument is passed on to the subclass's OnStarted member function.
-  static void ThreadStart(Tid tid, tid_t os_id, ThreadType thread_type,
+  static void ThreadStart(u32 tid, tid_t os_id, ThreadType thread_type,
                           void *onstarted_arg);
 
  protected:
@@ -45,14 +45,14 @@ class ThreadContext;
 void InitializeThreadRegistry();
 void InitializeMainThread();
 
-Tid ThreadCreate(Tid tid, uptr uid, bool detached, void *arg = nullptr);
+u32 ThreadCreate(u32 tid, uptr uid, bool detached, void *arg = nullptr);
 void ThreadFinish();
-void ThreadDetach(Tid tid);
-void ThreadJoin(Tid tid);
-Tid ThreadTid(uptr uid);
+void ThreadDetach(u32 tid);
+void ThreadJoin(u32 tid);
+u32 ThreadTid(uptr uid);
 
-Tid GetCurrentThread();
-void SetCurrentThread(Tid tid);
+u32 GetCurrentThread();
+void SetCurrentThread(u32 tid);
 ThreadContext *CurrentThreadContext();
 void EnsureMainThreadIDIsCorrect();
 

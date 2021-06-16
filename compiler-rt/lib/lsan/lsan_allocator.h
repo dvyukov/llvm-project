@@ -46,7 +46,7 @@ struct ChunkMetadata {
   uptr requested_size : 32;
   uptr padding : 22;
 #endif
-  StackID stack_trace_id;
+  u32 stack_trace_id;
 };
 
 #if defined(__mips64) || defined(__aarch64__) || defined(__i386__) || \

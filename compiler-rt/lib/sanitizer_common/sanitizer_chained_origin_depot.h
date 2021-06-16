@@ -28,25 +28,25 @@ class ChainedOriginDepot {
   // If successful, returns true and the new chain id new_id.
   // If the same element already exists, returns false and sets new_id to the
   // existing ID.
-  bool Put(StackID here_id, StackID prev_id, StackID *new_id);
+  bool Put(u32 here_id, u32 prev_id, u32 *new_id);
 
   // Retrieves the stored StackDepot ID for the given origin ID.
-  StackID Get(StackID id, StackID *other);
+  u32 Get(u32 id, u32 *other);
 
   void LockAll();
   void UnlockAll();
 
  private:
   struct ChainedOriginDepotDesc {
-    StackID here_id;
-    StackID prev_id;
+    u32 here_id;
+    u32 prev_id;
   };
 
   struct ChainedOriginDepotNode {
     ChainedOriginDepotNode *link;
-    StackID id;
-    StackID here_id;
-    StackID prev_id;
+    u32 id;
+    u32 here_id;
+    u32 prev_id;
 
     typedef ChainedOriginDepotDesc args_type;
 
@@ -67,9 +67,9 @@ class ChainedOriginDepot {
       Handle() : node_(nullptr) {}
       explicit Handle(ChainedOriginDepotNode *node) : node_(node) {}
       bool valid() { return node_; }
-      StackID id() { return node_->id; }
-      StackID here_id() { return node_->here_id; }
-      StackID prev_id() { return node_->prev_id; }
+      u32 id() { return node_->id; }
+      int here_id() { return node_->here_id; }
+      int prev_id() { return node_->prev_id; }
     };
 
     Handle get_handle();

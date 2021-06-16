@@ -199,7 +199,7 @@ static u32 ChainOrigin(u32 id, StackTrace *stack, bool from_init = false) {
     PRINT_CALLER_STACK_TRACE
   }
 
-  Origin o(id);
+  Origin o = Origin::FromRawId(id);
   stack->tag = StackTrace::TAG_UNKNOWN;
   Origin chained = Origin::CreateChainedOrigin(o, stack);
   return chained.raw_id();
@@ -657,7 +657,7 @@ bool PrintOriginTraceToStr(const void *addr, const char *description,
               d.Origin(), label, addr, description ? description : "",
               d.Default());
 
-  Origin o(origin);
+  Origin o = Origin::FromRawId(origin);
   bool found = false;
 
   while (o.isChainedOrigin()) {
@@ -748,7 +748,7 @@ dfsan_get_init_origin(const void *addr) {
 
   const dfsan_origin origin = *__dfsan::origin_for(addr);
 
-  Origin o(origin);
+  Origin o = Origin::FromRawId(origin);
   dfsan_origin origin_id = o.raw_id();
   while (o.isChainedOrigin()) {
     StackTrace stack;

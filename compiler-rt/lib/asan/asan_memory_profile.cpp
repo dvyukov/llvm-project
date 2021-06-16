@@ -23,7 +23,7 @@
 namespace __asan {
 
 struct AllocationSite {
-  StackID id;
+  u32 id;
   uptr total_size;
   uptr count;
 };
@@ -36,8 +36,8 @@ class HeapProfile {
     if (cv.IsAllocated()) {
       total_allocated_user_size_ += cv.UsedSize();
       total_allocated_count_++;
-      StackID id = cv.GetAllocStackId();
-      if (id != kInvalidStackID)
+      u32 id = cv.GetAllocStackId();
+      if (id)
         Insert(id, cv.UsedSize());
     } else if (cv.IsQuarantined()) {
       total_quarantined_user_size_ += cv.UsedSize();
@@ -82,7 +82,7 @@ class HeapProfile {
   uptr total_other_count_ = 0;
   InternalMmapVector<AllocationSite> allocations_;
 
-  void Insert(StackID id, uptr size) {
+  void Insert(u32 id, uptr size) {
     // Linear lookup will be good enough for most cases (although not all).
     for (uptr i = 0; i < allocations_.size(); i++) {
       if (allocations_[i].id == id) {

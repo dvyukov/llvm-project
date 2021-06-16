@@ -38,9 +38,9 @@
 #include "tsan_defs.h"
 #include "tsan_flags.h"
 #include "tsan_ignoreset.h"
+#include "tsan_ilist.h"
 #include "tsan_mman.h"
 #include "tsan_mutexset.h"
-#include "tsan_ilist.h"
 #include "tsan_platform.h"
 #include "tsan_report.h"
 #include "tsan_shadow.h"
@@ -145,7 +145,6 @@ struct TidSlot { //!!! pad/align to cache line
 struct ThreadState {
   Shadow fast_state;
   bool ignore_enabled_;
-  //!!!int ignore_funcs_;
   int ignore_sync;
 #if !SANITIZER_GO
   int ignore_interceptors;
@@ -193,9 +192,6 @@ struct ThreadState {
 #endif
   MutexSet mset;
   bool is_dead;
-#if TSAN_COLLECT_STATS
-  u64 stat[StatCnt];
-#endif
   const Tid tid;
   bool is_freeing;
   bool is_vptr_access;
@@ -245,8 +241,10 @@ struct ThreadState {
 ThreadState *cur_thread();
 void set_cur_thread(ThreadState *thr);
 void cur_thread_finalize();
-inline ThreadState* cur_thread_init() { return cur_thread(); }
-#else
+inline ThreadState* cur_thread_init() {
+  return cur_thread();
+}
+#  else
 __attribute__((tls_model("initial-exec")))
 extern THREADLOCAL char cur_thread_placeholder[];
 inline ThreadState *cur_thread() {
@@ -262,7 +260,7 @@ inline void set_cur_thread(ThreadState *thr) {
   reinterpret_cast<ThreadState *>(cur_thread_placeholder)->current = thr;
 }
 inline void cur_thread_finalize() { }
-#endif  // SANITIZER_MAC || SANITIZER_ANDROID
+#  endif // SANITIZER_MAC || SANITIZER_ANDROID
 #endif  // SANITIZER_GO
 
 class ThreadContext final : public ThreadContextBase {
@@ -341,14 +339,13 @@ struct Context {
 
   Mutex busy_mtx;
   IList<TidSlot, &TidSlot::node> busy_slots GUARDED_BY(busy_mtx);
-  IList<TraceHeader, &TraceHeader::global, TracePart> trace_part_recycle GUARDED_BY(busy_mtx);
+  IList<TraceHeader, &TraceHeader::global, TracePart>
+      trace_part_recycle GUARDED_BY(busy_mtx);
 
   Mutex trace_part_mtx;
   IList<TraceHeader, &TraceHeader::global, TracePart>
       trace_part_cache GUARDED_BY(trace_part_mtx);
   u32 trace_part_count GUARDED_BY(trace_part_mtx);
-
-  u64 stat[StatCnt];
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
@@ -414,22 +411,6 @@ void ObtainCurrentStack(ThreadState *thr, uptr toppc, StackTraceTy *stack,
   VarSizeStackTrace stack; \
   ObtainCurrentStack(thr, pc, &stack); \
   stack.ReverseOrder();
-
-#if TSAN_COLLECT_STATS
-void StatAggregate(u64 *dst, u64 *src);
-void StatOutput(u64 *stat);
-#endif
-
-void ALWAYS_INLINE StatInc(ThreadState *thr, StatType typ, u64 n = 1) {
-#if TSAN_COLLECT_STATS
-  thr->stat[typ] += n;
-#endif
-}
-void ALWAYS_INLINE StatSet(ThreadState *thr, StatType typ, u64 n) {
-#if TSAN_COLLECT_STATS
-  thr->stat[typ] = n;
-#endif
-}
 
 void MapShadow(uptr addr, uptr size);
 void MapThreadTrace(uptr addr, uptr size, const char *name);
@@ -510,23 +491,23 @@ void MemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size,
     MemoryAccessRangeT<false>(thr, pc, addr, size);
 }
 
-void ALWAYS_INLINE MemoryRead(ThreadState *thr, uptr pc,
-                                     uptr addr, int kAccessSize) {
+void ALWAYS_INLINE MemoryRead(ThreadState* thr, uptr pc, uptr addr,
+                              int kAccessSize) {
   MemoryAccess(thr, pc, addr, kAccessSize, false, false);
 }
 
-void ALWAYS_INLINE MemoryWrite(ThreadState *thr, uptr pc,
-                                      uptr addr, int kAccessSize) {
+void ALWAYS_INLINE MemoryWrite(ThreadState* thr, uptr pc, uptr addr,
+                               int kAccessSize) {
   MemoryAccess(thr, pc, addr, kAccessSize, true, false);
 }
 
-void ALWAYS_INLINE MemoryReadAtomic(ThreadState *thr, uptr pc,
-                                           uptr addr, int kAccessSize) {
+void ALWAYS_INLINE MemoryReadAtomic(ThreadState* thr, uptr pc, uptr addr,
+                                    int kAccessSize) {
   MemoryAccess(thr, pc, addr, kAccessSize, false, true);
 }
 
-void ALWAYS_INLINE MemoryWriteAtomic(ThreadState *thr, uptr pc,
-                                            uptr addr, int kAccessSize) {
+void ALWAYS_INLINE MemoryWriteAtomic(ThreadState* thr, uptr pc, uptr addr,
+                                     int kAccessSize) {
   MemoryAccess(thr, pc, addr, kAccessSize, true, true);
 }
 
@@ -536,10 +517,10 @@ void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size);
 void MemoryRangeImitateWriteOrReset(ThreadState* thr, uptr pc, uptr addr,
                                     uptr size);
 
-void ThreadIgnoreBegin(ThreadState *thr, uptr pc);
-void ThreadIgnoreEnd(ThreadState *thr);
-void ThreadIgnoreSyncBegin(ThreadState *thr, uptr pc);
-void ThreadIgnoreSyncEnd(ThreadState *thr);
+void ThreadIgnoreBegin(ThreadState* thr, uptr pc);
+void ThreadIgnoreEnd(ThreadState* thr);
+void ThreadIgnoreSyncBegin(ThreadState* thr, uptr pc);
+void ThreadIgnoreSyncEnd(ThreadState* thr);
 
 Tid ThreadCreate(ThreadState* thr, uptr pc, uptr uid, bool detached);
 void ThreadStart(ThreadState* thr, Tid tid, tid_t os_id,
@@ -552,7 +533,7 @@ void ThreadFinalize(ThreadState *thr);
 void ThreadSetName(ThreadState *thr, const char *name);
 int ThreadCount(ThreadState *thr);
 void ThreadNotJoined(ThreadState* thr, uptr pc, Tid tid, uptr uid);
-void ProcessPendingSignalsImpl(ThreadState *thr);
+void ProcessPendingSignalsImpl(ThreadState* thr);
 
 Processor *ProcCreate();
 void ProcDestroy(Processor *proc);
@@ -598,7 +579,6 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceAcquire(ThreadState* thr,
   DCHECK((ctx->trace_part_mtx.Lock(), ctx->trace_part_mtx.Unlock(), true));
   DCHECK((ctx->busy_mtx.Lock(), ctx->busy_mtx.Unlock(), true));
   DCHECK((thr->tctx->trace.mtx.Lock(), thr->tctx->trace.mtx.Unlock(), true));
-  StatInc(thr, StatEvents);
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   TracePart* current = thr->tctx->trace.parts.Back();
   if (current) {
@@ -635,8 +615,8 @@ template <typename EventT> void TraceEvent(ThreadState* thr, EventT ev) {
   TraceRelease(thr, evp);
 }
 
-ALWAYS_INLINE WARN_UNUSED_RESULT
-bool TraceFunc(ThreadState* thr, EventType type, uptr pc = 0) {
+ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceFunc(ThreadState* thr,
+                                                EventType type, uptr pc = 0) {
   DCHECK(type == EventTypeFuncEnter || type == EventTypeFuncExit);
   if (!kCollectHistory)
     return true;
@@ -666,10 +646,7 @@ void TraceRestartFuncEntry(ThreadState* thr, uptr pc);
 
 ALWAYS_INLINE
 void FuncEntry(ThreadState* thr, uptr pc) {
-  StatInc(thr, StatFuncEnter);
   DPrintf2("#%d: FuncEntry %p\n", (int)thr->fast_state.sid(), (void*)pc);
-  //if (thr->ignore_funcs_) //!!! combine with TracePos check?
-  //  return;
   if (!TraceFunc(thr, EventTypeFuncEnter, pc))
     return TraceRestartFuncEntry(thr, pc);
   DCHECK_GE(thr->shadow_stack_pos, thr->shadow_stack);
@@ -685,10 +662,7 @@ void FuncEntry(ThreadState* thr, uptr pc) {
 
 ALWAYS_INLINE
 void FuncExit(ThreadState* thr) {
-  StatInc(thr, StatFuncExit);
   DPrintf2("#%d: FuncExit\n", (int)thr->fast_state.sid());
-  //if (thr->ignore_funcs_) //!!! combine with TracePos check?
-  //  return;
   if (!TraceFunc(thr, EventTypeFuncExit, 0))
     return TraceRestartFuncExit(thr);
   DCHECK_GT(thr->shadow_stack_pos, thr->shadow_stack);
@@ -735,9 +709,7 @@ private:
 
 class SlotUnlocker {
 public:
-  SlotUnlocker(ThreadState* thr)
-    : thr_(thr)
-    , locked_(thr->slot_locked) {
+  SlotUnlocker(ThreadState* thr) : thr_(thr), locked_(thr->slot_locked) {
     if (locked_)
       SlotUnlock(thr_);
   }
@@ -762,7 +734,7 @@ private:
   Lock slots_lock_;
 };
 
-ALWAYS_INLINE void ProcessPendingSignals(ThreadState *thr) {
+ALWAYS_INLINE void ProcessPendingSignals(ThreadState* thr) {
   if (UNLIKELY(atomic_load_relaxed(&thr->pending_signals)))
     ProcessPendingSignalsImpl(thr);
 }
@@ -770,7 +742,7 @@ ALWAYS_INLINE void ProcessPendingSignals(ThreadState *thr) {
 extern bool is_initialized;
 
 ALWAYS_INLINE
-void InitializeMaybe(ThreadState *thr) {
+void InitializeMaybe(ThreadState* thr) {
 #if !SANITIZER_CAN_USE_PREINIT_ARRAY
   if (UNLIKELY(!is_initialized))
     Initialize();
@@ -780,12 +752,12 @@ void InitializeMaybe(ThreadState *thr) {
 #if !SANITIZER_GO
 ALWAYS_INLINE
 ThreadState* cur_thread_init_maybe() {
-#if SANITIZER_LINUX
+#  if SANITIZER_LINUX
   DCHECK(cur_thread());
   return cur_thread();
-#else
+#  else
   return cur_thread_init();
-#endif
+#  endif
 }
 #endif
 

@@ -6897,7 +6897,6 @@ INTERCEPTOR(int, getloadavg, double *loadavg, int nelem) {
 #define INIT_GETLOADAVG
 #endif
 
-/*
 #if SANITIZER_INTERCEPT_MCHECK_MPROBE
 INTERCEPTOR(int, mcheck, void (*abortfunc)(int mstatus)) {
   return 0;
@@ -6911,7 +6910,6 @@ INTERCEPTOR(int, mprobe, void *ptr) {
   return 0;
 }
 #endif
-*/
 
 INTERCEPTOR(SIZE_T, wcslen, const wchar_t *s) {
   void *ctx;

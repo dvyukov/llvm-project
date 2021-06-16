@@ -301,7 +301,7 @@ struct MallocFreeHook {
 
 static MallocFreeHook MFHooks[kMaxMallocFreeHooks];
 
-void RunMallocHooks(const void *ptr, uptr size) { //!!! optimize
+void RunMallocHooks(const void *ptr, uptr size) {
   for (int i = 0; i < kMaxMallocFreeHooks; i++) {
     auto hook = MFHooks[i].malloc_hook;
     if (!hook) return;
@@ -330,9 +330,8 @@ static int InstallMallocFreeHooks(void (*malloc_hook)(const void *, uptr),
   return 0;
 }
 
-#if SANITIZER_DEBUG
-SANITIZER_WEAK_CXX_DEFAULT_IMPL void OnMutexLockUnlock() {}
-#endif
+void SleepForSeconds(int seconds) { internal_usleep(seconds * 1000 * 1000); }
+void SleepForMillis(int millis) { internal_usleep(millis * 1000); }
 
 } // namespace __sanitizer
 

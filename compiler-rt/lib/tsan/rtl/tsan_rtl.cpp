@@ -74,7 +74,8 @@ static TracePart* TracePartAlloc() {
   {
     Lock l(&ctx->trace_part_mtx);
     part = ctx->trace_part_cache.PopBack();
-    //!!! give each thread at least 1 trace part because stalled threads can consume trace parts
+    //!!! give each thread at least 1 trace part because stalled threads can
+    //! consume trace parts
 
     if (!part) {
       u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
@@ -145,7 +146,8 @@ void DoResetImpl() {
           ctx->trace_part_recycle.Remove(part);
         DCHECK(!ctx->trace_part_recycle.Queued(part));
         if (attached && parts->Size() == 1) {
-          //!!! reset thr->trace_pos to the end of the part to force it to switch
+          //!!! reset thr->trace_pos to the end of the part to force it to
+          //! switch
           break;
         }
         parts->Remove(part);
@@ -158,8 +160,10 @@ void DoResetImpl() {
     }
   }
 
-  CHECK_EQ(ctx->free_slots.Size() + ctx->busy_slots.Size() + ctx->used_slots, kSlotCount);
-  while (ctx->free_slots.PopFront()) {}
+  CHECK_EQ(ctx->free_slots.Size() + ctx->busy_slots.Size() + ctx->used_slots,
+           kSlotCount);
+  while (ctx->free_slots.PopFront()) {
+  }
   for (auto slot = &ctx->slots[0]; slot < &ctx->slots[kSlotCount]; slot++) {
     slot->clock.Reset();
     slot->journal.Reset();
@@ -249,58 +253,58 @@ TidSlot* FindAttachSlotImpl(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
 
 TidSlot* FindAttachSlot(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
   CHECK(!thr->slot);
-  //int dump = -1;
+  // int dump = -1;
   for (;;) {
-      //!!! handle the case when all slots are busy, but not exhausted (>256
-      //!threads), just wait
-      TidSlot* slot = FindAttachSlotImpl(thr);
-      //!!! if InitTrace fails we still can try other slots?
-      if (slot)
-        return slot;
-      //!!! we could estimate threshold based on number of waiting threads and
-      //!number of CPUs
-      if (ctx->used_slots < kMaxSid - 50) {
-        //!!! block for free slots somehow
-        ctx->slots_mtx.Unlock();
-        internal_usleep(10 * 1000);
-        ctx->slots_mtx.Lock();
-        continue;
-      }
-      VPrintf(1, "#%d: InitiateReset: %s exhaustion\n", thr->tid,
-              slot ? "trace" : "slot");
-      DoReset();
+    //!!! handle the case when all slots are busy, but not exhausted (>256
+    //! threads), just wait
+    TidSlot* slot = FindAttachSlotImpl(thr);
+    //!!! if InitTrace fails we still can try other slots?
+    if (slot)
+      return slot;
+    //!!! we could estimate threshold based on number of waiting threads and
+    //! number of CPUs
+    if (ctx->used_slots < kMaxSid - 50) {
+      //!!! block for free slots somehow
+      ctx->slots_mtx.Unlock();
+      internal_usleep(10 * 1000);
+      ctx->slots_mtx.Lock();
+      continue;
+    }
+    VPrintf(1, "#%d: InitiateReset: %s exhaustion\n", thr->tid,
+            slot ? "trace" : "slot");
+    DoReset();
   }
 }
 
 void SlotAttach(ThreadState* thr) {
-    Lock lock(&ctx->slots_mtx);
-    TidSlot* slot = FindAttachSlot(thr);
-    DPrintf("#%d: SlotAttach: slot=%u\n", thr->tid, slot->sid);
-    CHECK(!slot->thr);
-    CHECK(!thr->slot);
-    slot->thr = thr;
-    thr->slot = slot;
-    thr->last_slot = slot;
-    Epoch epoch = EpochInc(slot->clock.Get(slot->sid));
-    CHECK(!EpochOverflow(epoch));
-    slot->clock.Set(slot->sid, epoch);
-    if (thr->slot_epoch == ctx->global_epoch) {
-      thr->clock.Acquire(&slot->clock);
-    } else {
-      thr->slot_epoch = ctx->global_epoch;
-      thr->clock = slot->clock;
+  Lock lock(&ctx->slots_mtx);
+  TidSlot* slot = FindAttachSlot(thr);
+  DPrintf("#%d: SlotAttach: slot=%u\n", thr->tid, slot->sid);
+  CHECK(!slot->thr);
+  CHECK(!thr->slot);
+  slot->thr = thr;
+  thr->slot = slot;
+  thr->last_slot = slot;
+  Epoch epoch = EpochInc(slot->clock.Get(slot->sid));
+  CHECK(!EpochOverflow(epoch));
+  slot->clock.Set(slot->sid, epoch);
+  if (thr->slot_epoch == ctx->global_epoch) {
+    thr->clock.Acquire(&slot->clock);
+  } else {
+    thr->slot_epoch = ctx->global_epoch;
+    thr->clock = slot->clock;
 #if !SANITIZER_GO
-      thr->last_sleep_stack_id = kInvalidStackID;
-      thr->last_sleep_clock.Reset();
+    thr->last_sleep_stack_id = kInvalidStackID;
+    thr->last_sleep_clock.Reset();
 #endif
-    }
-    thr->fast_state.SetSid(slot->sid);
-    thr->fast_state.SetEpoch(thr->clock.Get(slot->sid));
-    slot->journal.PushBack({thr->tid, epoch});
-    {
-      Lock lock(&ctx->busy_mtx);
-      ctx->busy_slots.PushBack(slot);
-    }
+  }
+  thr->fast_state.SetSid(slot->sid);
+  thr->fast_state.SetEpoch(thr->clock.Get(slot->sid));
+  slot->journal.PushBack({thr->tid, epoch});
+  {
+    Lock lock(&ctx->busy_mtx);
+    ctx->busy_slots.PushBack(slot);
+  }
 }
 
 void SlotDetach(ThreadState* thr) {
@@ -337,8 +341,8 @@ void InitiateReset(ThreadState* thr, bool force) {
   SlotUnlocker unlocker(thr);
   SlotDetach(thr);
   if (force) {
-      Lock lock(&ctx->slots_mtx);
-      DoReset();
+    Lock lock(&ctx->slots_mtx);
+    DoReset();
   }
   SlotAttach(thr);
 }
@@ -374,8 +378,7 @@ Context::Context()
   global_epoch = 1;
 }
 
-TidSlot::TidSlot()
-  : mtx(MutexTypeSlot) {
+TidSlot::TidSlot() : mtx(MutexTypeSlot) {
 }
 
 // The objects are allocated in TLS, so one may rely on zero-initialization.
@@ -417,6 +420,7 @@ static void* BackgroundThread(void* arg) {
   cur_thread()->ignore_interceptors++;
   const u64 kMs2Ns = 1000 * 1000;
 
+  // Write memory profile if requested.
   fd_t mprof_fd = kInvalidFd;
   if (flags()->profile_memory && flags()->profile_memory[0]) {
     if (internal_strcmp(flags()->profile_memory, "stdout") == 0) {
@@ -444,33 +448,6 @@ static void* BackgroundThread(void* arg) {
     internal_usleep(100*1000);
     u64 now = NanoTime();
 
-    // Flush memory if requested.
-    if (flags()->flush_memory_ms > 0) {
-      if (last_flush + flags()->flush_memory_ms * kMs2Ns < now) {
-        VPrintf(1, "ThreadSanitizer: periodic memory flush\n");
-        FlushShadowMemory();
-        last_flush = NanoTime();
-      }
-    }
-    // GetRSS can be expensive on huge programs, so don't do it every 100ms.
-    if (flags()->memory_limit_mb > 0) {
-      uptr rss = GetRSS();
-      uptr limit = uptr(flags()->memory_limit_mb) << 20;
-      VPrintf(1,
-              "ThreadSanitizer: memory flush check"
-              " RSS=%llu LAST=%llu LIMIT=%llu\n",
-              (u64)rss >> 20, (u64)last_rss >> 20, (u64)limit >> 20);
-      if (2 * rss > limit + last_rss) {
-        VPrintf(1, "ThreadSanitizer: flushing memory due to RSS\n");
-        FlushShadowMemory();
-        rss = GetRSS();
-        VPrintf(1, "ThreadSanitizer: memory flushed RSS=%llu\n",
-                (u64)rss >> 20);
-      }
-      last_rss = rss;
-    }
-
-    // Write memory profile if requested.
     if (mprof_fd != kInvalidFd)
       MemoryProfiler(ctx, mprof_fd, i);
 
@@ -758,11 +735,6 @@ int Finalize(ThreadState* thr) {
 
   failed = OnFinalize(failed);
 
-#if TSAN_COLLECT_STATS
-  StatAggregate(ctx->stat, thr->stat);
-  StatOutput(ctx->stat);
-#endif
-
   return failed ? common_flags()->exitcode : 0;
 }
 
@@ -886,7 +858,8 @@ void TraceSwitch(ThreadState* thr) {
   while (!(part = TracePartAlloc()))
     InitiateReset(thr, true);
   part->trace = trace;
-  part->start_stack.Init(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack);
+  part->start_stack.Init(thr->shadow_stack,
+                         thr->shadow_stack_pos - thr->shadow_stack);
   part->start_mset = thr->mset;
   part->start_epoch = thr->fast_state.epoch();
   part->prev_pc = thr->trace_prev_pc;
@@ -901,7 +874,8 @@ void TraceSwitch(ThreadState* thr) {
     ctx->busy_slots.Remove(thr->slot);
     ctx->busy_slots.PushBack(thr->slot);
     if (trace->parts.Size() >= 3)
-      ctx->trace_part_recycle.PushBack(trace->parts.Prev(trace->parts.Prev(part)));
+      ctx->trace_part_recycle.PushBack(
+          trace->parts.Prev(trace->parts.Prev(part)));
   }
 }
 
@@ -936,9 +910,6 @@ ALWAYS_INLINE
 void MemoryAccessImpl1(ThreadState* thr, uptr addr, u32 kAccessSize,
                        bool kAccessIsWrite, bool kIsAtomic,
                        RawShadow* shadow_mem, Shadow cur) {
-  StatInc(thr, StatMop);
-  StatInc(thr, kAccessIsWrite ? StatMopWrite : StatMopRead);
-
   // Scan all the shadow values and dispatch to 4 categories:
   // same, replace, candidate and race (see comments below).
   // we consider only 3 cases regarding access sizes:
@@ -951,11 +922,9 @@ void MemoryAccessImpl1(ThreadState* thr, uptr addr, u32 kAccessSize,
   Shadow old(0);
 
   for (int idx = 0; idx < 4; idx++) {
-    StatInc(thr, StatShadowProcessed);
     RawShadow* sp = &shadow_mem[idx];
     old = LoadShadow(sp);
     if (LIKELY(old.IsZero())) {
-      StatInc(thr, StatShadowZero);
       if (!stored)
         StoreShadow(sp, cur.raw());
       return;
@@ -988,7 +957,6 @@ void MemoryAccessImpl1(ThreadState* thr, uptr addr, u32 kAccessSize,
                  kShadowCnt; //!!! very low entropy, epoch does not change often
     StoreShadow(&shadow_mem[index], cur.raw());
   }
-  StatInc(thr, StatShadowReplace);
   return;
 RACE:
   DoReportRace(thr, shadow_mem, cur, old);
@@ -1030,7 +998,7 @@ bool ContainsSameAccessFast(RawShadow* s, RawShadow a, bool isRead) {
     // Access to .rodata section, no races here.
     const m128 read_mask = _mm_set1_epi32(Shadow::kShadowRodata);
     //!!! we can also skip it for range memory access, they already checked
-    //!rodata.
+    //! rodata.
 #  if !SANITIZER_GO
     const m128 ro = _mm_cmpeq_epi32(shadow, read_mask);
 #  endif
@@ -1074,9 +1042,10 @@ char* DumpShadow(char* buf, RawShadow raw) {
   return buf;
 }
 
-ALWAYS_INLINE WARN_UNUSED_RESULT bool
-TraceMemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size,
-                  bool isRead, bool isAtomic) {
+ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceMemoryAccess(ThreadState* thr,
+                                                        uptr pc, uptr addr,
+                                                        uptr size, bool isRead,
+                                                        bool isAtomic) {
   DCHECK(size == 1 || size == 2 || size == 4 || size == 8);
   if (!kCollectHistory)
     return true;
@@ -1280,12 +1249,8 @@ MemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSize,
   if (ContainsSameAccessV(shadow, access, kAccessIsWrite))
     return;
 
-  if (UNLIKELY(thr->ignore_enabled_)) {
-    StatInc(thr, StatMop);
-    StatInc(thr, kAccessIsWrite ? StatMopWrite : StatMopRead);
-    StatInc(thr, StatMopIgnored);
+  if (UNLIKELY(thr->ignore_enabled_))
     return;
-  }
 
   //!!! we could move this below since we store at a single point now
   if (!TraceMemoryAccess(thr, pc, addr, kAccessSize, !kAccessIsWrite,
@@ -1387,9 +1352,9 @@ SECOND:
 
 // Called by MemoryAccessRange in tsan_rtl_thread.cpp
 ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
-                                         u32 kAccessSize,
-                                         bool kAccessIsWrite, bool kIsAtomic,
-                                         RawShadow* shadow_mem, Shadow cur) {
+                                         u32 kAccessSize, bool kAccessIsWrite,
+                                         bool kIsAtomic, RawShadow* shadow_mem,
+                                         Shadow cur) {
   char memBuf[4][64];
   (void)memBuf;
   DPrintf2("    Access:%p access=0x%x"
@@ -1400,12 +1365,8 @@ ALWAYS_INLINE USED void MemoryAccessImpl(ThreadState* thr, uptr addr,
            DumpShadow(memBuf[2], shadow_mem[2]),
            DumpShadow(memBuf[3], shadow_mem[3]));
 
-  if (LIKELY(ContainsSameAccess(shadow_mem, cur.raw(), !kAccessIsWrite))) {
-    StatInc(thr, StatMop);
-    StatInc(thr, kAccessIsWrite ? StatMopWrite : StatMopRead);
-    StatInc(thr, StatMopSame);
+  if (LIKELY(ContainsSameAccess(shadow_mem, cur.raw(), !kAccessIsWrite)))
     return;
-  }
 
   MemoryAccessImpl1(thr, addr, kAccessSize, kAccessIsWrite, kIsAtomic,
                     shadow_mem, cur);
@@ -1525,9 +1486,8 @@ template <bool is_write>
 void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
                         uptr size) { //!!! change all is_write to isRead
   RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
-  DPrintf2("#%d: MemoryAccessRange: @%p %p size=%d is_write=%d\n",
-      thr->tid, (void*)pc, (void*)addr,
-      (int)size, is_write);
+  DPrintf2("#%d: MemoryAccessRange: @%p %p size=%d is_write=%d\n", thr->tid,
+           (void*)pc, (void*)addr, (int)size, is_write);
 
 #if SANITIZER_DEBUG
   if (!IsAppMem(addr)) {
@@ -1543,20 +1503,16 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
     DCHECK(IsShadowMem((uptr)shadow_mem));
   }
   if (!IsShadowMem((uptr)(shadow_mem + size * kShadowCnt / 8 - 1))) {
-    Printf("Bad shadow addr %p (%zx)\n",
-               shadow_mem + size * kShadowCnt / 8 - 1, addr + size - 1);
+    Printf("Bad shadow addr %p (%zx)\n", shadow_mem + size * kShadowCnt / 8 - 1,
+           addr + size - 1);
     DCHECK(IsShadowMem((uptr)(shadow_mem + size * kShadowCnt / 8 - 1)));
   }
 #endif
 
-  StatInc(thr, StatMopRange);
-
-  if (*shadow_mem == Shadow::kShadowRodata) {
-    // Access to .rodata section, no races here.
-    // Measurements show that it can be 10-20% of all memory accesses.
-    StatInc(thr, StatMopRangeRodata);
+  // Access to .rodata section, no races here.
+  // Measurements show that it can be 10-20% of all memory accesses.
+  if (*shadow_mem == Shadow::kShadowRodata)
     return;
-  }
 
   if (UNLIKELY(thr->ignore_enabled_))
     return;
@@ -1634,7 +1590,7 @@ void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
 void TraceMutexUnlock(ThreadState* thr, uptr addr) {
   if (!kCollectHistory)
     return;
-  EventUnlock ev; //!!! = {};
+  EventUnlock ev;                      //!!! = {};
   internal_memset(&ev, 0, sizeof(ev)); //!!!
   ev.type = EventTypeUnlock;
   ev.addr = addr;
@@ -1644,7 +1600,7 @@ void TraceMutexUnlock(ThreadState* thr, uptr addr) {
 void TraceRelease(ThreadState* thr) {
   if (!kCollectHistory)
     return;
-  EventPC ev; //!!! = {};
+  EventPC ev;                          //!!! = {};
   internal_memset(&ev, 0, sizeof(ev)); //!!!
   ev.type = EventTypeRelease;
   TraceEvent(thr, ev);
@@ -1718,35 +1674,26 @@ void build_consistency_debug() {
 void build_consistency_release() {
 }
 #endif
-
-#if TSAN_COLLECT_STATS
-void build_consistency_stats() {
-}
-#else
-void build_consistency_nostats() {
-}
-#endif
-
 } // namespace __tsan
 
 namespace __sanitizer {
 
 void PrintfBefore() {
 #if !SANITIZER_GO
-  //using namespace __tsan;
-  //atomic_fetch_add(&cur_thread()->in_runtime, 2, memory_order_relaxed);
-#endif  
+  // using namespace __tsan;
+  // atomic_fetch_add(&cur_thread()->in_runtime, 2, memory_order_relaxed);
+#endif
 }
 
 void PrintfAfter() {
 #if !SANITIZER_GO
-  //using namespace __tsan;
-  //atomic_fetch_add(&cur_thread()->in_runtime, -2, memory_order_relaxed);
-#endif  
+  // using namespace __tsan;
+  // atomic_fetch_add(&cur_thread()->in_runtime, -2, memory_order_relaxed);
+#endif
 }
-}
+} // namespace __sanitizer
 
 #if !SANITIZER_GO
 // Must be included in this file to make sure everything is inlined.
-#include "tsan_interface_inl.h"
+#  include "tsan_interface_inl.h"
 #endif

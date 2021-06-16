@@ -293,7 +293,7 @@ u32 ChainOrigin(u32 id, StackTrace *stack) {
   if (t && t->InSignalHandler())
     return id;
 
-  Origin o(id);
+  Origin o = Origin::FromRawId(id);
   stack->tag = StackTrace::TAG_UNKNOWN;
   Origin chained = Origin::CreateChainedOrigin(o, stack);
   return chained.raw_id();
@@ -408,8 +408,7 @@ static void OnStackUnwind(const SignalContext &sig, const void *,
 }
 
 static void MsanOnDeadlySignal(int signo, void *siginfo, void *context) {
-  HandleDeadlySignal(siginfo, context, static_cast<Tid>(GetTid()),
-                     &OnStackUnwind, nullptr);
+  HandleDeadlySignal(siginfo, context, GetTid(), &OnStackUnwind, nullptr);
 }
 
 static void CheckUnwind() {
@@ -628,7 +627,7 @@ u32 __msan_get_origin(const void *a) {
 }
 
 int __msan_origin_is_descendant_or_same(u32 this_id, u32 prev_id) {
-  Origin o(this_id);
+  Origin o = Origin::FromRawId(this_id);
   while (o.raw_id() != prev_id && o.isChainedOrigin())
     o = o.getNextChainedOrigin(nullptr);
   return o.raw_id() == prev_id;

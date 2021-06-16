@@ -20,12 +20,6 @@
 
 namespace __sanitizer {
 
-void OnMutexLockUnlock();
-
-#if !SANITIZER_DEBUG
-inline void OnMutexLockUnlock() {}
-#endif
-
 class StaticSpinMutex {
  public:
   void Init() {
@@ -33,19 +27,16 @@ class StaticSpinMutex {
   }
 
   void Lock() {
-    OnMutexLockUnlock();
     if (TryLock())
       return;
     LockSlow();
   }
 
   bool TryLock() {
-    OnMutexLockUnlock();
     return atomic_exchange(&state_, 1, memory_order_acquire) == 0;
   }
 
   void Unlock() {
-    OnMutexLockUnlock();
     atomic_store(&state_, 0, memory_order_release);
   }
 
@@ -128,7 +119,6 @@ class RWMutex {
   }
 
   void Lock() {
-    OnMutexLockUnlock();
     u32 cmp = kUnlocked;
     if (atomic_compare_exchange_strong(&state_, &cmp, kWriteLock,
                                        memory_order_acquire))
@@ -137,14 +127,12 @@ class RWMutex {
   }
 
   void Unlock() {
-    OnMutexLockUnlock();
     u32 prev = atomic_fetch_sub(&state_, kWriteLock, memory_order_release);
     DCHECK_NE(prev & kWriteLock, 0);
     (void)prev;
   }
 
   void ReadLock() {
-    OnMutexLockUnlock();
     u32 prev = atomic_fetch_add(&state_, kReadLock, memory_order_acquire);
     if ((prev & kWriteLock) == 0)
       return;
@@ -152,7 +140,6 @@ class RWMutex {
   }
 
   void ReadUnlock() {
-    OnMutexLockUnlock();
     u32 prev = atomic_fetch_sub(&state_, kReadLock, memory_order_release);
     DCHECK_EQ(prev & kWriteLock, 0);
     DCHECK_GT(prev & ~kWriteLock, 0);
@@ -202,7 +189,7 @@ class RWMutex {
   void operator = (const RWMutex&);
 };
 
-template<typename MutexType>
+template <typename MutexType>
 class SCOPED_LOCK GenericScopedLock {
  public:
   ALWAYS_INLINE explicit GenericScopedLock(MutexType *mu) ACQUIRE(mu)
@@ -219,7 +206,7 @@ class SCOPED_LOCK GenericScopedLock {
   void operator=(const GenericScopedLock&);
 };
 
-template<typename MutexType>
+template <typename MutexType>
 class SCOPED_LOCK GenericScopedReadLock {
  public:
   ALWAYS_INLINE explicit GenericScopedReadLock(MutexType *mu) ACQUIRE_SHARED(mu)
@@ -239,7 +226,8 @@ class SCOPED_LOCK GenericScopedReadLock {
 template <typename MutexType>
 class SCOPED_LOCK GenericScopedRWLock {
  public:
-  ALWAYS_INLINE explicit GenericScopedRWLock(MutexType *mu, bool write) ACQUIRE(mu)
+  ALWAYS_INLINE explicit GenericScopedRWLock(MutexType *mu, bool write)
+      ACQUIRE(mu)
       : mu_(mu), write_(write) {
     if (write_)
       mu_->Lock();

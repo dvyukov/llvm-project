@@ -46,7 +46,7 @@ static ThreadRegistry *asan_thread_registry;
 static BlockingMutex mu_for_thread_context(LINKER_INITIALIZED);
 static LowLevelAllocator allocator_for_thread_context;
 
-static ThreadContextBase *GetAsanThreadContext(Tid tid) {
+static ThreadContextBase *GetAsanThreadContext(u32 tid) {
   BlockingMutexLock lock(&mu_for_thread_context);
   return new(allocator_for_thread_context) AsanThreadContext(tid);
 }
@@ -67,7 +67,7 @@ ThreadRegistry &asanThreadRegistry() {
   return *asan_thread_registry;
 }
 
-AsanThreadContext *GetThreadContextByTidLocked(Tid tid) {
+AsanThreadContext *GetThreadContextByTidLocked(u32 tid) {
   return static_cast<AsanThreadContext *>(
       asanThreadRegistry().GetThreadLocked(tid));
 }
@@ -75,7 +75,7 @@ AsanThreadContext *GetThreadContextByTidLocked(Tid tid) {
 // AsanThread implementation.
 
 AsanThread *AsanThread::Create(thread_callback_t start_routine, void *arg,
-                               Tid parent_tid, StackTrace *stack,
+                               u32 parent_tid, StackTrace *stack,
                                bool detached) {
   uptr PageSize = GetPageSizeCached();
   uptr size = RoundUpTo(sizeof(AsanThread), PageSize);
@@ -97,7 +97,7 @@ void AsanThread::TSDDtor(void *tsd) {
 }
 
 void AsanThread::Destroy() {
-  Tid tid = this->tid();
+  int tid = this->tid();
   VReport(1, "T%d exited\n", tid);
 
   bool was_running =
@@ -451,7 +451,7 @@ void SetCurrentThread(AsanThread *t) {
   CHECK_EQ(t->context(), AsanTSDGet());
 }
 
-Tid GetCurrentTidOrInvalid() {
+u32 GetCurrentTidOrInvalid() {
   AsanThread *t = GetCurrentThread();
   return t ? t->tid() : kInvalidTid;
 }

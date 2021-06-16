@@ -13,11 +13,9 @@
 // produce sligtly less efficient code.
 //===----------------------------------------------------------------------===//
 do {
-  StatInc(thr, StatShadowProcessed);
   RawShadow* sp = &shadow_mem[idx];
   old = LoadShadow(sp);
   if (LIKELY(old.IsZero())) {
-    StatInc(thr, StatShadowZero);
     if (!stored)
       StoreShadow(sp, cur.raw());
     return;

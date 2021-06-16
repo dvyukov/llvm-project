@@ -239,10 +239,10 @@ void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
   CHECK_NE(p, nullptr);
   if (thr->is_dead)
     return; //!!! we are leaking mblock, next alloc of this block will get
-            //!already installed MBlock, what will happen?
+            //! already installed MBlock, what will happen?
   if (!thr->slot)
     return; //!!! free is called from blocking func interceptor, e.g.
-            //!pthread_join -> _dl_deallocate_tls
+            //! pthread_join -> _dl_deallocate_tls
   uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
   DPrintf("#%d: free(%p %zu) write=%d\n", thr->tid, p, sz, write);
   //!!! find a better check for thread inited thr->trace_pos
@@ -357,14 +357,8 @@ void* Alloc(uptr sz) {
   return InternalAlloc(sz, &thr->proc()->internal_alloc_cache);
 }
 
-void* RtAlloc(uptr sz) {
-  ThreadState *thr = cur_thread();
-  CHECK(!thr->nomalloc);
-  return InternalAlloc(sz, &thr->proc()->internal_alloc_cache);
-}
-
 void FreeImpl(void* p) {
-  ThreadState *thr = cur_thread();
+  ThreadState* thr = cur_thread();
   CHECK(!thr->nomalloc);
   InternalFree(p, &thr->proc()->internal_alloc_cache);
 }

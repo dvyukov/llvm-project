@@ -59,11 +59,11 @@ class AsanChunkView {
   uptr End() const;            // Last byte of user memory.
   uptr UsedSize() const;       // Size requested by the user.
   u32 UserRequestedAlignment() const;  // Originally requested alignment.
-  Tid AllocTid() const;
-  Tid FreeTid() const;
+  uptr AllocTid() const;
+  uptr FreeTid() const;
   bool Eq(const AsanChunkView &c) const { return chunk_ == c.chunk_; }
-  StackID GetAllocStackId() const;
-  StackID GetFreeStackId() const;
+  u32 GetAllocStackId() const;
+  u32 GetFreeStackId() const;
   StackTrace GetAllocStack() const;
   StackTrace GetFreeStack() const;
   AllocType GetAllocType() const;

@@ -59,7 +59,7 @@ static void DescribeStackOrigin(const char *so, uptr pc) {
 static void DescribeOrigin(u32 id) {
   VPrintf(1, "  raw origin id: %d\n", id);
   Decorator d;
-  Origin o(id);
+  Origin o = Origin::FromRawId(id);
   while (o.isChainedOrigin()) {
     StackTrace stack;
     o = o.getNextChainedOrigin(&stack);

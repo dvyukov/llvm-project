@@ -29,7 +29,7 @@ namespace __lsan {
 
 class ThreadContext final : public ThreadContextLsanBase {
  public:
-  explicit ThreadContext(Tid tid);
+  explicit ThreadContext(int tid);
   void OnStarted(void *arg) override;
   uptr tls_begin() { return tls_begin_; }
   uptr tls_end() { return tls_end_; }
@@ -41,7 +41,7 @@ class ThreadContext final : public ThreadContextLsanBase {
   DTLS *dtls_ = nullptr;
 };
 
-void ThreadStart(Tid tid, tid_t os_id,
+void ThreadStart(u32 tid, tid_t os_id,
                  ThreadType thread_type = ThreadType::Regular);
 
 }  // namespace __lsan

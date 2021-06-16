@@ -163,8 +163,7 @@ a128 func_cas(volatile a128 *v, a128 cmp, a128 xch) {
 }
 #endif
 
-template<typename T>
-static int AccessSize() {
+template <typename T> static int AccessSize() {
   if (sizeof(T) <= 1)
     return 1;
   else if (sizeof(T) <= 2)

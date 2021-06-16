@@ -44,10 +44,10 @@ void __tsan_on_report(const ReportDesc *rep) {
 
 bool InternalFrame(const char* func) {
   static const char* frames[] = {
-    "ScopedInterceptor",
-    "EnableIgnores",
-    "__tsan::ScopedInterceptor",
-    "__sanitizer::StackTrace",
+      "ScopedInterceptor",
+      "EnableIgnores",
+      "__tsan::ScopedInterceptor",
+      "__sanitizer::StackTrace",
   };
   for (auto frame : frames) {
     if (!internal_strncmp(func, frame, internal_strlen(frame)))
@@ -56,7 +56,7 @@ bool InternalFrame(const char* func) {
   return false;
 }
 
-static SymbolizedStack *StackStripMain(SymbolizedStack *frames) {
+static SymbolizedStack* StackStripMain(SymbolizedStack* frames) {
   for (; frames && frames->info.function; frames = frames->next) {
     // Remove top inlined frames from our interceptors.
     if (!InternalFrame(frames->info.function))
@@ -238,8 +238,8 @@ uptr RestorePC(uptr pc, bool isExternal) {
 }
 
 template <typename Func>
-void TraceReplay(Trace* trace, TracePart* last, Event* last_pos,
-                 Epoch epoch, Func f) {
+void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
+                 Func f) {
   TracePart* part = trace->parts.Front();
   Epoch evEpoch = part->start_epoch;
   for (;;) {
@@ -293,7 +293,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
   TidSlot* slot = &ctx->slots[static_cast<uptr>(sid)];
   Tid tid = kInvalidTid;
   for (uptr i = 0; i < slot->journal.Size(); i++) {
-    if (i == slot->journal.Size() - 1 || slot->journal[i+1].epoch > epoch) {
+    if (i == slot->journal.Size() - 1 || slot->journal[i + 1].epoch > epoch) {
       tid = slot->journal[i].tid;
       break;
     }
@@ -302,7 +302,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
     return false;
   *ptid = tid;
   ThreadContext* tctx =
-    static_cast<ThreadContext*>(ctx->thread_registry.GetThreadLocked(tid));
+      static_cast<ThreadContext*>(ctx->thread_registry.GetThreadLocked(tid));
   Trace* trace = &tctx->trace;
   TracePart* first_part;
   TracePart* last_part;
@@ -331,8 +331,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
   MutexSet mset = first_part->start_mset;
   bool found = false;
   TraceReplay(
-      trace, last_part, last_pos, epoch,
-      [&](Epoch evEpoch, Event* evp) {
+      trace, last_part, last_pos, epoch, [&](Epoch evEpoch, Event* evp) {
         if (evp->isAccess) {
           if (evp->type == 0 && evp->_ == 0) // NopEvent
             return;
@@ -496,10 +495,9 @@ static bool HandleRacyAddress(ThreadState *thr, uptr addr_min, uptr addr_max) {
 }
 
 struct ExternalCallbackScope : ScopedIgnoreInterceptors {
-  ExternalCallbackScope(ThreadState* thr, ReportDesc* rep) 
-      : thr_(thr)
-      , is_freeing_(thr->is_freeing)
-      , is_vptr_access_(thr->is_vptr_access) {
+  ExternalCallbackScope(ThreadState* thr, ReportDesc* rep)
+      : thr_(thr), is_freeing_(thr->is_freeing),
+        is_vptr_access_(thr->is_vptr_access) {
     ThreadIgnoreBegin(thr_, 0);
     CHECK_EQ(thr_->current_report, nullptr);
     thr_->current_report = rep;
@@ -513,7 +511,7 @@ struct ExternalCallbackScope : ScopedIgnoreInterceptors {
     thr_->is_freeing = is_freeing_;
     thr_->is_vptr_access = is_vptr_access_;
   }
-  
+
   ThreadState* thr_;
   bool is_freeing_;
   bool is_vptr_access_;
@@ -646,8 +644,8 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   MutexSet* mset1 = new (&mset_buffer[0]) MutexSet();
   MutexSet* mset[kMop] = {&thr->mset, mset1};
 
-  //!!! re slots_mtx: how atomic is this? if we detect a bug, then reset happens,
-  //!traces reset,
+  //!!! re slots_mtx: how atomic is this? if we detect a bug, then reset
+  //! happens, traces reset,
   // then we try to report and fail to restore traces
   {
     ReportScope report_scope(thr);
@@ -684,8 +682,9 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     rep.AddLocation(addr_min, addr_max - addr_min);
 
 #if !SANITIZER_GO
-  if (!s[1].IsFreed() && s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
-    rep.AddSleep(thr->last_sleep_stack_id);
+    if (!s[1].IsFreed() &&
+        s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
+      rep.AddSleep(thr->last_sleep_stack_id);
 #endif
   }
   OutputReport(thr, &rep);

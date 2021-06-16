@@ -50,7 +50,7 @@ static void AsanDie() {
     DumpProcessMap();
   if (flags()->sleep_before_dying) {
     Report("Sleeping for %d second(s)\n", flags()->sleep_before_dying);
-    internal_usleep(u64(flags()->sleep_before_dying) * 1000 * 1000);
+    SleepForSeconds(flags()->sleep_before_dying);
   }
   if (flags()->unmap_shadow_on_exit) {
     if (kMidMemBeg) {
@@ -514,7 +514,7 @@ static void AsanInitInternal() {
 
   if (flags()->sleep_after_init) {
     Report("Sleeping for %d second(s)\n", flags()->sleep_after_init);
-    internal_usleep(u64(flags()->sleep_after_init) * 1000 * 1000);
+    SleepForSeconds(flags()->sleep_after_init);
   }
 }
 

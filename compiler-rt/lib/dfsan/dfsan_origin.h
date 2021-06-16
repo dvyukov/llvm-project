@@ -63,9 +63,8 @@ class Origin {
   // tracking report.
   Origin getNextChainedOrigin(StackTrace *stack) const {
     CHECK(Origin::isValidId(raw_id_));
-    StackID prev_id;
-    StackID stack_id = GetChainedOriginDepot()->Get(
-        static_cast<StackID>(getChainedId()), &prev_id);
+    u32 prev_id;
+    u32 stack_id = GetChainedOriginDepot()->Get(getChainedId(), &prev_id);
     if (stack)
       *stack = StackDepotGet(stack_id);
     return Origin(prev_id);
@@ -92,9 +91,8 @@ class Origin {
     }
 
     u32 chained_id;
-    bool inserted = GetChainedOriginDepot()->Put(
-        h.id(), static_cast<StackID>(prev.raw_id()),
-        reinterpret_cast<StackID *>(&chained_id));
+    bool inserted =
+        GetChainedOriginDepot()->Put(h.id(), prev.raw_id(), &chained_id);
     CHECK((chained_id & kChainedIdMask) == chained_id);
 
     if (inserted && flags().origin_history_per_stack_limit > 0)
@@ -103,8 +101,7 @@ class Origin {
     return Origin((depth << kDepthShift) | chained_id);
   }
 
-  explicit Origin(u32 raw_id) : raw_id_(raw_id) {}
-  explicit Origin(StackID id) : raw_id_(static_cast<u32>(id)) {}
+  static Origin FromRawId(u32 id) { return Origin(id); }
 
  private:
   static const int kDepthBits = 4;
@@ -113,6 +110,8 @@ class Origin {
   static const u32 kChainedIdMask = ((u32)-1) >> kDepthBits;
 
   u32 raw_id_;
+
+  explicit Origin(u32 raw_id) : raw_id_(raw_id) {}
 
   int depth() const {
     CHECK(isChainedOrigin());

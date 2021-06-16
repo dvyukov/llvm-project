@@ -351,7 +351,7 @@ void ErrorODRViolation::Print() {
          MaybeDemangleGlobalName(global1.name), g1_loc.data());
   Printf("  [2] size=%zd '%s' %s\n", global2.size,
          MaybeDemangleGlobalName(global2.name), g2_loc.data());
-  if (stack_id1 != kInvalidStackID && stack_id2 != kInvalidStackID) {
+  if (stack_id1 && stack_id2) {
     Printf("These globals were registered at these points:\n");
     Printf("  [1]:\n");
     StackDepotGet(stack_id1).Print();
@@ -384,7 +384,7 @@ static bool AdjacentShadowValuesAreFullyPoisoned(u8 *s) {
   return s[-1] > 127 && s[1] > 127;
 }
 
-ErrorGeneric::ErrorGeneric(Tid tid, uptr pc_, uptr bp_, uptr sp_, uptr addr,
+ErrorGeneric::ErrorGeneric(u32 tid, uptr pc_, uptr bp_, uptr sp_, uptr addr,
                            bool is_write_, uptr access_size_)
     : ErrorBase(tid),
       addr_description(addr, access_size_, /*shouldLockThreadRegistry=*/false),

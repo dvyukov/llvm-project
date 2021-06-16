@@ -32,8 +32,8 @@ class ScopedAnnotation {
  public:
   ScopedAnnotation(ThreadState *thr, const char *aname, uptr pc)
       : thr_(thr) {
-    DPrintf("#%d: annotation %s()\n", thr_->tid, aname);
     FuncEntry(thr_, pc);
+    DPrintf("#%d: annotation %s()\n", thr_->tid, aname);
   }
 
   ~ScopedAnnotation() {
@@ -49,8 +49,6 @@ class ScopedAnnotation {
       return ret; \
     ThreadState *thr = cur_thread(); \
     const uptr caller_pc = (uptr)__builtin_return_address(0); \
-    StatInc(thr, StatAnnotation); \
-    StatInc(thr, Stat##typ); \
     ScopedAnnotation sa(thr, __func__, caller_pc); \
     const uptr pc = StackTrace::GetCurrentPc(); \
     (void)pc; \
@@ -160,6 +158,19 @@ void INTERFACE_ATTRIBUTE AnnotateHappensBefore(char *f, int l, uptr addr) {
 void INTERFACE_ATTRIBUTE AnnotateHappensAfter(char *f, int l, uptr addr) {
   SCOPED_ANNOTATION(AnnotateHappensAfter);
   Acquire(thr, pc, addr);
+}
+
+void INTERFACE_ATTRIBUTE AnnotateCondVarSignal(char *f, int l, uptr cv) {
+}
+
+void INTERFACE_ATTRIBUTE AnnotateCondVarSignalAll(char *f, int l, uptr cv) {
+}
+
+void INTERFACE_ATTRIBUTE AnnotateMutexIsNotPHB(char *f, int l, uptr mu) {
+}
+
+void INTERFACE_ATTRIBUTE AnnotateCondVarWait(char *f, int l, uptr cv,
+                                             uptr lock) {
 }
 
 void INTERFACE_ATTRIBUTE AnnotateRWLockCreate(char *f, int l, uptr m) {

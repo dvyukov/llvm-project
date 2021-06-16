@@ -92,12 +92,8 @@ class ThreadRegistry {
   void Unlock() { mtx_.Unlock(); }
 
   // Should be guarded by ThreadRegistryLock.
-  ThreadContextBase *GetThreadLocked(Tid tid) {
-    CheckLocked();
-    return threads_[tid];
-  }
+  ThreadContextBase *GetThreadLocked(Tid tid) { return threads_[tid]; }
 
-  //!!! remove because tsan will probably not need this.
   u32 NumThreadsLocked() const {
     CheckLocked();
     return threads_.size();

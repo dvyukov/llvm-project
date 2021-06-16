@@ -41,13 +41,17 @@ struct Id {
 struct Link {
   u32 id;
   u32 seq;
-  Tid tid;
-  StackID stk0;
-  StackID stk1;
+  u32 tid;
+  u32 stk0;
+  u32 stk1;
 
-  explicit Link(u32 id = 0, u32 seq = 0, Tid tid = kInvalidTid,
-                StackID s0 = kInvalidStackID, StackID s1 = kInvalidStackID)
-      : id(id), seq(seq), tid(tid), stk0(s0), stk1(s1) {}
+  explicit Link(u32 id = 0, u32 seq = 0, u32 tid = 0, u32 s0 = 0, u32 s1 = 0)
+      : id(id)
+      , seq(seq)
+      , tid(tid)
+      , stk0(s0)
+      , stk1(s1) {
+  }
 };
 
 struct DDPhysicalThread {
@@ -60,11 +64,11 @@ struct DDPhysicalThread {
 
 struct ThreadMutex {
   u32 id;
-  StackID stk;
+  u32 stk;
 };
 
 struct DDLogicalThread {
-  Tid tid;
+  u64         ctx;
   ThreadMutex locked[kMaxNesting];
   int         nlocked;
 };
@@ -82,7 +86,7 @@ struct DD final : public DDetector {
   DDPhysicalThread* CreatePhysicalThread();
   void DestroyPhysicalThread(DDPhysicalThread *pt);
 
-  DDLogicalThread *CreateLogicalThread(Tid tid);
+  DDLogicalThread* CreateLogicalThread(u64 ctx);
   void DestroyLogicalThread(DDLogicalThread *lt);
 
   void MutexInit(DDCallback *cb, DDMutex *m);
@@ -128,10 +132,10 @@ void DD::DestroyPhysicalThread(DDPhysicalThread *pt) {
   UnmapOrDie(pt, sizeof(DDPhysicalThread));
 }
 
-DDLogicalThread *DD::CreateLogicalThread(Tid tid) {
+DDLogicalThread* DD::CreateLogicalThread(u64 ctx) {
   DDLogicalThread *lt = (DDLogicalThread*)InternalAlloc(
       sizeof(DDLogicalThread));
-  lt->tid = tid;
+  lt->ctx = ctx;
   lt->nlocked = 0;
   return lt;
 }
@@ -142,7 +146,7 @@ void DD::DestroyLogicalThread(DDLogicalThread *lt) {
 }
 
 void DD::MutexInit(DDCallback *cb, DDMutex *m) {
-  VPrintf(2, "#%u: DD::MutexInit(%p)\n", cb->lt->tid, m);
+  VPrintf(2, "#%llu: DD::MutexInit(%p)\n", cb->lt->ctx, m);
   m->id = kNoId;
   m->recursion = 0;
   atomic_store(&m->owner, 0, memory_order_relaxed);
@@ -178,19 +182,20 @@ u32 DD::allocateId(DDCallback *cb) {
     id = id_gen++;
   }
   CHECK_LE(id, kMaxMutex);
-  VPrintf(3, "#%u: DD::allocateId assign id %d\n", cb->lt->tid, id);
+  VPrintf(3, "#%llu: DD::allocateId assign id %d\n", cb->lt->ctx, id);
   return id;
 }
 
 void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
-  VPrintf(2, "#%u: DD::MutexBeforeLock(%p, wlock=%d) nlocked=%d\n", cb->lt->tid,
-          m, wlock, cb->lt->nlocked);
+  VPrintf(2, "#%llu: DD::MutexBeforeLock(%p, wlock=%d) nlocked=%d\n",
+      cb->lt->ctx, m, wlock, cb->lt->nlocked);
   DDPhysicalThread *pt = cb->pt;
   DDLogicalThread *lt = cb->lt;
 
   uptr owner = atomic_load(&m->owner, memory_order_relaxed);
   if (owner == (uptr)cb->lt) {
-    VPrintf(3, "#%u: DD::MutexBeforeLock recursive\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexBeforeLock recursive\n",
+        cb->lt->ctx);
     return;
   }
 
@@ -205,7 +210,8 @@ void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
   if (flags.second_deadlock_stack)
     tm->stk = cb->Unwind();
   if (lt->nlocked == 1) {
-    VPrintf(3, "#%u: DD::MutexBeforeLock first mutex\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexBeforeLock first mutex\n",
+        cb->lt->ctx);
     return;
   }
 
@@ -213,7 +219,7 @@ void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
   Mutex *mtx = getMutex(m->id);
   for (int i = 0; i < lt->nlocked - 1; i++) {
     u32 id1 = lt->locked[i].id;
-    StackID stk1 = lt->locked[i].stk;
+    u32 stk1 = lt->locked[i].stk;
     Mutex *mtx1 = getMutex(id1);
     SpinMutexLock l(&mtx1->mtx);
     if (mtx1->nlink == kMaxLink) {
@@ -226,12 +232,12 @@ void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
       if (link->id == m->id) {
         if (link->seq != mtx->seq) {
           link->seq = mtx->seq;
-          link->tid = lt->tid;
+          link->tid = lt->ctx;
           link->stk0 = stk1;
           link->stk1 = cb->Unwind();
           added = true;
-          VPrintf(3, "#%u: DD::MutexBeforeLock added %d->%d link\n",
-                  cb->lt->tid, getMutexId(mtx1), m->id);
+          VPrintf(3, "#%llu: DD::MutexBeforeLock added %d->%d link\n",
+              cb->lt->ctx, getMutexId(mtx1), m->id);
         }
         break;
       }
@@ -241,17 +247,18 @@ void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
       Link *link = &mtx1->link[mtx1->nlink++];
       link->id = m->id;
       link->seq = mtx->seq;
-      link->tid = lt->tid;
+      link->tid = lt->ctx;
       link->stk0 = stk1;
       link->stk1 = cb->Unwind();
       added = true;
-      VPrintf(3, "#%u: DD::MutexBeforeLock added %d->%d link\n", cb->lt->tid,
-              getMutexId(mtx1), m->id);
+      VPrintf(3, "#%llu: DD::MutexBeforeLock added %d->%d link\n",
+          cb->lt->ctx, getMutexId(mtx1), m->id);
     }
   }
 
   if (!added || mtx->nlink == 0) {
-    VPrintf(3, "#%u: DD::MutexBeforeLock don't check\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexBeforeLock don't check\n",
+        cb->lt->ctx);
     return;
   }
 
@@ -260,20 +267,20 @@ void DD::MutexBeforeLock(DDCallback *cb, DDMutex *m, bool wlock) {
 
 void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock,
     bool trylock) {
-  VPrintf(2, "#%u: DD::MutexAfterLock(%p, wlock=%d, try=%d) nlocked=%d\n",
-          cb->lt->tid, m, wlock, trylock, cb->lt->nlocked);
+  VPrintf(2, "#%llu: DD::MutexAfterLock(%p, wlock=%d, try=%d) nlocked=%d\n",
+      cb->lt->ctx, m, wlock, trylock, cb->lt->nlocked);
   DDLogicalThread *lt = cb->lt;
 
   uptr owner = atomic_load(&m->owner, memory_order_relaxed);
   if (owner == (uptr)cb->lt) {
-    VPrintf(3, "#%u: DD::MutexAfterLock recursive\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexAfterLock recursive\n", cb->lt->ctx);
     CHECK(wlock);
     m->recursion++;
     return;
   }
   CHECK_EQ(owner, 0);
   if (wlock) {
-    VPrintf(3, "#%u: DD::MutexAfterLock set owner\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexAfterLock set owner\n", cb->lt->ctx);
     CHECK_EQ(m->recursion, 0);
     m->recursion = 1;
     atomic_store(&m->owner, (uptr)cb->lt, memory_order_relaxed);
@@ -292,16 +299,16 @@ void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock,
 }
 
 void DD::MutexBeforeUnlock(DDCallback *cb, DDMutex *m, bool wlock) {
-  VPrintf(2, "#%u: DD::MutexBeforeUnlock(%p, wlock=%d) nlocked=%d\n",
-          cb->lt->tid, m, wlock, cb->lt->nlocked);
+  VPrintf(2, "#%llu: DD::MutexBeforeUnlock(%p, wlock=%d) nlocked=%d\n",
+      cb->lt->ctx, m, wlock, cb->lt->nlocked);
   DDLogicalThread *lt = cb->lt;
 
   uptr owner = atomic_load(&m->owner, memory_order_relaxed);
   if (owner == (uptr)cb->lt) {
-    VPrintf(3, "#%u: DD::MutexBeforeUnlock recursive\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexBeforeUnlock recursive\n", cb->lt->ctx);
     if (--m->recursion > 0)
       return;
-    VPrintf(3, "#%u: DD::MutexBeforeUnlock reset owner\n", cb->lt->tid);
+    VPrintf(3, "#%llu: DD::MutexBeforeUnlock reset owner\n", cb->lt->ctx);
     atomic_store(&m->owner, 0, memory_order_relaxed);
   }
   CHECK_NE(m->id, kNoId);
@@ -316,7 +323,8 @@ void DD::MutexBeforeUnlock(DDCallback *cb, DDMutex *m, bool wlock) {
 }
 
 void DD::MutexDestroy(DDCallback *cb, DDMutex *m) {
-  VPrintf(2, "#%u: DD::MutexDestroy(%p)\n", cb->lt->tid, m);
+  VPrintf(2, "#%llu: DD::MutexDestroy(%p)\n",
+      cb->lt->ctx, m);
   DDLogicalThread *lt = cb->lt;
 
   if (m->id == kNoId)
@@ -398,8 +406,7 @@ void DD::Report(DDPhysicalThread *pt, DDLogicalThread *lt, int npath) {
     rep->loop[i].thr_ctx = link->tid;
     rep->loop[i].mtx_ctx0 = link0->id;
     rep->loop[i].mtx_ctx1 = link->id;
-    rep->loop[i].stk[0] =
-        flags.second_deadlock_stack ? link->stk0 : kInvalidStackID;
+    rep->loop[i].stk[0] = flags.second_deadlock_stack ? link->stk0 : 0;
     rep->loop[i].stk[1] = link->stk1;
   }
   pt->report_pending = true;

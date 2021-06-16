@@ -104,7 +104,7 @@ void ThreadContextBase::Reset() {
 
 ThreadRegistry::ThreadRegistry(ThreadContextFactory factory)
     : context_factory_(factory), mtx_(), alive_threads_(), running_threads_() {
-  // threads_.Initialize(1024), //!!! increase once grow is tested
+  threads_.Initialize(1024);
 }
 
 void ThreadRegistry::GetNumberOfThreads(uptr *total, uptr *running,

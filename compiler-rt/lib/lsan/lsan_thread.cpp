@@ -25,7 +25,7 @@ namespace __lsan {
 
 static ThreadRegistry *thread_registry;
 
-static ThreadContextBase *CreateThreadContext(Tid tid) {
+static ThreadContextBase *CreateThreadContext(u32 tid) {
   void *mem = MmapOrDie(sizeof(ThreadContext), "ThreadContext");
   return new (mem) ThreadContext(tid);
 }
@@ -36,7 +36,7 @@ void InitializeThreadRegistry() {
       new (thread_registry_placeholder) ThreadRegistry(CreateThreadContext);
 }
 
-ThreadContextLsanBase::ThreadContextLsanBase(Tid tid)
+ThreadContextLsanBase::ThreadContextLsanBase(int tid)
     : ThreadContextBase(tid) {}
 
 void ThreadContextLsanBase::OnFinished() {
@@ -44,11 +44,11 @@ void ThreadContextLsanBase::OnFinished() {
   DTLS_Destroy();
 }
 
-Tid ThreadCreate(Tid parent_tid, uptr user_id, bool detached, void *arg) {
+u32 ThreadCreate(u32 parent_tid, uptr user_id, bool detached, void *arg) {
   return thread_registry->CreateThread(user_id, detached, parent_tid, arg);
 }
 
-void ThreadContextLsanBase::ThreadStart(Tid tid, tid_t os_id,
+void ThreadContextLsanBase::ThreadStart(u32 tid, tid_t os_id,
                                         ThreadType thread_type, void *arg) {
   thread_registry->StartThread(tid, os_id, thread_type, arg);
   SetCurrentThread(tid);
@@ -76,16 +76,16 @@ static bool FindThreadByUid(ThreadContextBase *tctx, void *arg) {
   return false;
 }
 
-Tid ThreadTid(uptr uid) {
+u32 ThreadTid(uptr uid) {
   return thread_registry->FindThread(FindThreadByUid, (void *)uid);
 }
 
-void ThreadDetach(Tid tid) {
+void ThreadDetach(u32 tid) {
   CHECK_NE(tid, kInvalidTid);
   thread_registry->DetachThread(tid, /* arg */ nullptr);
 }
 
-void ThreadJoin(Tid tid) {
+void ThreadJoin(u32 tid) {
   CHECK_NE(tid, kInvalidTid);
   thread_registry->JoinThread(tid, /* arg */ nullptr);
 }

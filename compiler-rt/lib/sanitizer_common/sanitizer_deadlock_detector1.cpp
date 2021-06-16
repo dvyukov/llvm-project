@@ -26,7 +26,7 @@ struct DDPhysicalThread {
 };
 
 struct DDLogicalThread {
-  Tid tid;
+  u64 ctx;
   DeadlockDetectorTLS<DDBV> dd;
   DDReport rep;
   bool report_pending;
@@ -42,7 +42,7 @@ struct DD final : public DDetector {
   DDPhysicalThread *CreatePhysicalThread() override;
   void DestroyPhysicalThread(DDPhysicalThread *pt) override;
 
-  DDLogicalThread *CreateLogicalThread(Tid tid) override;
+  DDLogicalThread *CreateLogicalThread(u64 ctx) override;
   void DestroyLogicalThread(DDLogicalThread *lt) override;
 
   void MutexInit(DDCallback *cb, DDMutex *m) override;
@@ -76,9 +76,9 @@ DDPhysicalThread* DD::CreatePhysicalThread() {
 void DD::DestroyPhysicalThread(DDPhysicalThread *pt) {
 }
 
-DDLogicalThread *DD::CreateLogicalThread(Tid tid) {
+DDLogicalThread* DD::CreateLogicalThread(u64 ctx) {
   DDLogicalThread *lt = (DDLogicalThread*)InternalAlloc(sizeof(*lt));
-  lt->tid = tid;
+  lt->ctx = ctx;
   lt->dd.clear();
   lt->report_pending = false;
   return lt;
@@ -136,8 +136,8 @@ void DD::ReportDeadlock(DDCallback *cb, DDMutex *m) {
     DDMutex *m0 = (DDMutex*)dd.getData(from);
     DDMutex *m1 = (DDMutex*)dd.getData(to);
 
-    StackID stk_from = kInvalidStackID, stk_to = kInvalidStackID;
-    Tid unique_tid = kInvalidTid;
+    u32 stk_from = 0, stk_to = 0;
+    int unique_tid = 0;
     dd.findEdge(from, to, &stk_from, &stk_to, &unique_tid);
     // Printf("Edge: %zd=>%zd: %u/%u T%d\n", from, to, stk_from, stk_to,
     //    unique_tid);
@@ -151,7 +151,7 @@ void DD::ReportDeadlock(DDCallback *cb, DDMutex *m) {
 
 void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock, bool trylock) {
   DDLogicalThread *lt = cb->lt;
-  StackID stk = kInvalidStackID;
+  u32 stk = 0;
   if (flags.second_deadlock_stack)
     stk = cb->Unwind();
   // Printf("T%p MutexLock:   %zx stk %u\n", lt, m->id, stk);
@@ -164,11 +164,8 @@ void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock, bool trylock) {
   MutexEnsureID(lt, m);
   if (wlock)  // Only a recursive rlock may be held.
     CHECK(!dd.isHeld(&lt->dd, m->id));
-  if (!trylock) {
-    if (stk == kInvalidStackID)
-      stk = cb->Unwind();
-    dd.addEdges(&lt->dd, m->id, stk, cb->UniqueTid());
-  }
+  if (!trylock)
+    dd.addEdges(&lt->dd, m->id, stk ? stk : cb->Unwind(), cb->UniqueTid());
   dd.onLockAfter(&lt->dd, m->id, stk);
 }
 

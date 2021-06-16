@@ -247,18 +247,20 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
 
 NOINLINE
 void ScopedInterceptor::EnableIgnoresImpl() {
-    ThreadIgnoreBegin(thr_, 0);
-    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports++;
-    if (in_ignored_lib_) {
-      DCHECK(!thr_->in_ignored_lib);
-      thr_->in_ignored_lib = true;
-    }
+  ThreadIgnoreBegin(thr_, 0);
+  if (flags()->ignore_noninstrumented_modules)
+    thr_->suppress_reports++;
+  if (in_ignored_lib_) {
+    DCHECK(!thr_->in_ignored_lib);
+    thr_->in_ignored_lib = true;
+  }
 }
 
 NOINLINE
 void ScopedInterceptor::DisableIgnoresImpl() {
   ThreadIgnoreEnd(thr_);
-  if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports--;
+  if (flags()->ignore_noninstrumented_modules)
+    thr_->suppress_reports--;
   if (in_ignored_lib_) {
     DCHECK(thr_->in_ignored_lib);
     thr_->in_ignored_lib = false;
@@ -392,7 +394,7 @@ TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
 
 static int setup_at_exit_wrapper(ThreadState *thr, uptr pc, void(*f)(),
       void *arg, void *dso) {
-  auto ctx = RtNew<AtExitCtx>();
+  auto ctx = New<AtExitCtx>();
   ctx->f = f;
   ctx->arg = arg;
   Release(thr, pc, (uptr)ctx);
@@ -433,7 +435,7 @@ TSAN_INTERCEPTOR(int, on_exit, void(*f)(int, void*), void *arg) {
   if (in_symbolizer())
     return 0;
   SCOPED_TSAN_INTERCEPTOR(on_exit, f, arg);
-  auto ctx = RtNew<AtExitCtx>();
+  auto ctx = New<AtExitCtx>();
   ctx->f = (void(*)())f;
   ctx->arg = arg;
   Release(thr, pc, (uptr)ctx);
@@ -1978,7 +1980,7 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   errno = saved_errno;
 }
 
-void ProcessPendingSignalsImpl(ThreadState *thr) {
+void ProcessPendingSignalsImpl(ThreadState* thr) {
   atomic_store(&thr->pending_signals, 0, memory_order_relaxed);
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sctx == 0)
@@ -2258,17 +2260,17 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
                     ((TsanInterceptorContext *) ctx)->pc, (uptr) ptr, size, \
                     false)
 
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)      \
-  SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);         \
-  TsanInterceptorContext _ctx = {thr, pc}; \
-  ctx = (void *)&_ctx;                                \
-  (void) ctx;
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)                               \
+  SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);                                  \
+  TsanInterceptorContext _ctx = {thr, pc};                                     \
+  ctx = (void*)&_ctx;                                                          \
+  (void)ctx;
 
-#define COMMON_INTERCEPTOR_ENTER_NOIGNORE(ctx, func, ...) \
-  SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__);              \
-  TsanInterceptorContext _ctx = {thr, pc};     \
-  ctx = (void *)&_ctx;                                    \
-  (void) ctx;
+#define COMMON_INTERCEPTOR_ENTER_NOIGNORE(ctx, func, ...)                      \
+  SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__);                                   \
+  TsanInterceptorContext _ctx = {thr, pc};                                     \
+  ctx = (void*)&_ctx;                                                          \
+  (void)ctx;
 
 #define COMMON_INTERCEPTOR_FILE_OPEN(ctx, file, path) \
   if (path)                                           \
@@ -2319,12 +2321,12 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
 
-#define COMMON_INTERCEPTOR_ON_EXIT(ctx) \
-  ({ \
-    si.DisableIgnores(); \
-    int res = OnExit(((TsanInterceptorContext *) ctx)->thr); \
-    si.EnableIgnores(); \
-    res; \
+#define COMMON_INTERCEPTOR_ON_EXIT(ctx)                                        \
+  ({                                                                           \
+    si.DisableIgnores();                                                       \
+    int res = OnExit(((TsanInterceptorContext*)ctx)->thr);                     \
+    si.EnableIgnores();                                                        \
+    res;                                                                       \
   })
 
 #define COMMON_INTERCEPTOR_MUTEX_PRE_LOCK(ctx, m) \
@@ -2863,10 +2865,11 @@ constexpr uptr kBarrierThreads = 1 << kBarrierThreadBits;
 extern "C" SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_testonly_barrier_init(u64 *barrier, u32 count) {
   if (count >= kBarrierThreads) {
-      Printf("barrier_init: count is too large (%d)\n", count);
-      Die();
+    Printf("barrier_init: count is too large (%d)\n", count);
+    Die();
   }
-  // kBarrierThreadBits lsb is thread count, the remaining are count of entered threads.
+  // kBarrierThreadBits lsb is thread count, the remaining are count of entered
+  // threads.
   *barrier = count;
 }
 

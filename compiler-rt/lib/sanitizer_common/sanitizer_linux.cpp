@@ -650,7 +650,6 @@ BlockingMutex::BlockingMutex() {
 }
 
 void BlockingMutex::Lock() {
-  OnMutexLockUnlock();
   CHECK_EQ(owner_, 0);
   atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
   if (atomic_exchange(m, MtxLocked, memory_order_acquire) == MtxUnlocked)
@@ -668,7 +667,6 @@ void BlockingMutex::Lock() {
 }
 
 void BlockingMutex::Unlock() {
-  OnMutexLockUnlock();
   atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
   u32 v = atomic_exchange(m, MtxUnlocked, memory_order_release);
   CHECK_NE(v, MtxUnlocked);
@@ -684,7 +682,7 @@ void BlockingMutex::Unlock() {
 }
 
 void BlockingMutex::CheckLocked() const {
-  auto m = reinterpret_cast<atomic_uint32_t const *>(&opaque_storage_);
+  auto m = reinterpret_cast<atomic_uint32_t const*>(&opaque_storage_);
   CHECK_NE(MtxUnlocked, atomic_load(m, memory_order_relaxed));
 }
 

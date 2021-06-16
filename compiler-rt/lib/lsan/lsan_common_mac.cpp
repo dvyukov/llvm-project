@@ -35,7 +35,7 @@ namespace __lsan {
 
 typedef struct {
   int disable_counter;
-  Tid current_thread_id;
+  u32 current_thread_id;
   AllocatorCache cache;
 } thread_local_data_t;
 
@@ -84,12 +84,12 @@ void EnableInThisThread() {
   --*disable_counter;
 }
 
-Tid GetCurrentThread() {
+u32 GetCurrentThread() {
   thread_local_data_t *data = get_tls_val(false);
   return data ? data->current_thread_id : kInvalidTid;
 }
 
-void SetCurrentThread(Tid tid) { get_tls_val(true)->current_thread_id = tid; }
+void SetCurrentThread(u32 tid) { get_tls_val(true)->current_thread_id = tid; }
 
 AllocatorCache *GetAllocatorCache() { return &get_tls_val(true)->cache; }
 

@@ -408,7 +408,7 @@ INTERCEPTOR(char *, strerror, int errnum) {
 struct ThreadParam {
   void *(*callback)(void *arg);
   void *param;
-  atomic_uint32_t tid;
+  atomic_uintptr_t tid;
 };
 
 extern "C" void *__lsan_thread_start_func(void *arg) {
@@ -424,10 +424,10 @@ extern "C" void *__lsan_thread_start_func(void *arg) {
     Die();
   }
 #endif
-  u32 tid = 0;
+  int tid = 0;
   while ((tid = atomic_load(&p->tid, memory_order_acquire)) == 0)
     internal_sched_yield();
-  ThreadStart(static_cast<Tid>(tid), GetTid());
+  ThreadStart(tid, GetTid());
   atomic_store(&p->tid, 0, memory_order_release);
   return callback(param);
 }
@@ -458,10 +458,10 @@ INTERCEPTOR(int, pthread_create, void *th, void *attr,
     res = REAL(pthread_create)(th, attr, __lsan_thread_start_func, &p);
   }
   if (res == 0) {
-    Tid tid = ThreadCreate(GetCurrentThread(), *(uptr *)th,
+    int tid = ThreadCreate(GetCurrentThread(), *(uptr *)th,
                            IsStateDetached(detached));
     CHECK_NE(tid, kMainTid);
-    atomic_store(&p.tid, static_cast<u32>(tid), memory_order_release);
+    atomic_store(&p.tid, tid, memory_order_release);
     while (atomic_load(&p.tid, memory_order_acquire) != 0)
       internal_sched_yield();
   }
@@ -472,7 +472,7 @@ INTERCEPTOR(int, pthread_create, void *th, void *attr,
 
 INTERCEPTOR(int, pthread_join, void *th, void **ret) {
   ENSURE_LSAN_INITED;
-  Tid tid = ThreadTid((uptr)th);
+  int tid = ThreadTid((uptr)th);
   int res = REAL(pthread_join)(th, ret);
   if (res == 0)
     ThreadJoin(tid);
@@ -481,7 +481,7 @@ INTERCEPTOR(int, pthread_join, void *th, void **ret) {
 
 INTERCEPTOR(int, pthread_detach, void *th) {
   ENSURE_LSAN_INITED;
-  Tid tid = ThreadTid((uptr)th);
+  int tid = ThreadTid((uptr)th);
   int res = REAL(pthread_detach)(th);
   if (res == 0)
     ThreadDetach(tid);

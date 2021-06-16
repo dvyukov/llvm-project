@@ -425,8 +425,7 @@ void HwasanOnDeadlySignal(int signo, void *info, void *context) {
     if (HwasanOnSIGTRAP(signo, (siginfo_t *)info, (ucontext_t*)context))
       return;
 
-  HandleDeadlySignal(info, context, static_cast<Tid>(GetTid()), &OnStackUnwind,
-                     nullptr);
+  HandleDeadlySignal(info, context, GetTid(), &OnStackUnwind, nullptr);
 }
 
 void Thread::InitStackAndTls() {

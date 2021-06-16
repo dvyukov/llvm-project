@@ -42,7 +42,7 @@ struct Callback final : public DDCallback {
   StackID Unwind() override {
     return CurrentStackId(thr, pc);
   }
-  Tid UniqueTid() override {
+  int UniqueTid() override {
     return thr->tid;
   }
 };
@@ -50,13 +50,11 @@ struct Callback final : public DDCallback {
 void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s) {
   Callback cb(thr, pc);
   ctx->dd->MutexInit(&cb, &s->dd);
-  s->dd.stk = s->creation_stack_id;
   s->dd.ctx = s->addr;
 }
 
 void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexCreate %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  StatInc(thr, StatMutexCreate);
   if (!(flagz & MutexFlagLinkerInit) && IsAppMem(addr)) {
     CHECK(!thr->is_freeing);
     thr->is_freeing = true;
@@ -73,7 +71,6 @@ void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 
 void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexDestroy %zx\n", thr->tid, addr);
-  StatInc(thr, StatMutexDestroy);
   bool unlock_locked = false;
   StackID creation_stack_id;
   u32 last_lock;
@@ -164,13 +161,10 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
     }
     s->recursion += rec;
     if (first) {
-      StatInc(thr, StatMutexLock);
       if (!thr->ignore_sync) {
         thr->clock.Acquire(s->clock);
         thr->clock.Acquire(s->read_clock);
       }
-    } else if (!s->IsFlagSet(MutexFlagWriteReentrant)) {
-      StatInc(thr, StatMutexRecLock);
     }
     if (first && common_flags()->detect_deadlocks) {
       pre_lock =
@@ -213,12 +207,9 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
       rec = (flagz & MutexFlagRecursiveUnlock) ? s->recursion : 1;
       s->recursion -= rec;
       if (s->recursion == 0) {
-        StatInc(thr, StatMutexUnlock);
         s->owner_tid = kInvalidTid;
         if (!thr->ignore_sync)
           thr->clock.ReleaseStore(&s->clock);
-      } else {
-        StatInc(thr, StatMutexRecUnlock);
       }
     }
     if (common_flags()->detect_deadlocks && s->recursion == 0 &&
@@ -256,14 +247,13 @@ void MutexPreReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 
 void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexPostReadLock %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  StatInc(thr, StatMutexReadLock);
   if (IsAppMem(addr))
     MemoryReadAtomic(thr, pc, addr, 1);
   SlotLocker locker(thr);
   auto s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
   StackID creation_stack_id = s->creation_stack_id;
   //!!! Every trace can now reset state, double check that it's ok and leaves
-  //!state consistent, e.g. mutex set or release epoch.
+  //! state consistent, e.g. mutex set or release epoch.
   TraceMutexLock(thr, EventTypeRLock, pc, addr, creation_stack_id);
   thr->mset.Add(addr, creation_stack_id, false);
   bool report_bad_lock = false;
@@ -300,7 +290,6 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 
 void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadUnlock %zx\n", thr->tid, addr);
-  StatInc(thr, StatMutexReadUnlock);
   if (IsAppMem(addr))
     MemoryReadAtomic(thr, pc, addr, 1);
   TraceMutexUnlock(thr, addr);
@@ -353,7 +342,6 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
     if (s->owner_tid == kInvalidTid) {
       // Seems to be read unlock.
       write = false;
-      StatInc(thr, StatMutexReadUnlock);
       if (!thr->ignore_sync)
         thr->clock.Release(&s->read_clock);
     } else if (s->owner_tid == thr->tid) {
@@ -361,12 +349,9 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
       CHECK_GT(s->recursion, 0);
       s->recursion--;
       if (s->recursion == 0) {
-        StatInc(thr, StatMutexUnlock);
         s->owner_tid = kInvalidTid;
         if (!thr->ignore_sync)
           thr->clock.ReleaseStore(&s->clock);
-      } else {
-        StatInc(thr, StatMutexRecUnlock);
       }
     } else if (!s->IsFlagSet(MutexFlagBroken)) {
       s->SetFlags(MutexFlagBroken);
@@ -462,7 +447,7 @@ void IncrementEpoch(ThreadState* thr) {
   TraceRelease(thr);
   Epoch epoch = EpochInc(thr->fast_state.epoch());
   //!!! We traced release above, but then did not increment slot epoch. Is it
-  //!OK?
+  //! OK?
   // Shuold we do it in opposite order?
   if (!EpochOverflow(epoch)) {
     thr->fast_state.SetEpoch(epoch);
@@ -506,7 +491,7 @@ void AfterSleep(ThreadState *thr, uptr pc) {
 }
 #endif
 
-void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r) {
+void ReportDeadlock(ThreadState* thr, uptr pc, DDReport* r) {
   if (r == 0 || !ShouldReport(thr, ReportTypeDeadlock))
     return;
   ReportDesc rep;

@@ -290,6 +290,8 @@ void InitTlsSize();
 uptr GetTlsSize();
 
 // Other
+void SleepForSeconds(int seconds);
+void SleepForMillis(int millis);
 u64 NanoTime();
 u64 MonotonicNanoTime();
 int Atexit(void (*function)(void));

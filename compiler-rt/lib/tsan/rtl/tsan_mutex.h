@@ -39,19 +39,19 @@ enum MutexType {
 };
 
 class MUTEX Mutex {
- public:
-   explicit Mutex(MutexType type);
-   ~Mutex();
+public:
+  explicit Mutex(MutexType type);
+  ~Mutex();
 
-   void Lock() ACQUIRE();
-   void Unlock() RELEASE();
+  void Lock() ACQUIRE();
+  void Unlock() RELEASE();
 
-   void ReadLock() ACQUIRE_SHARED();
-   void ReadUnlock() RELEASE_SHARED();
+  void ReadLock() ACQUIRE_SHARED();
+  void ReadUnlock() RELEASE_SHARED();
 
-   void CheckLocked() CHECK_LOCKED;
+  void CheckLocked() CHECK_LOCKED;
 
- private:
+private:
   atomic_uintptr_t state_;
 #if SANITIZER_DEBUG
   MutexType type_;
@@ -183,11 +183,11 @@ class InternalDeadlockDetector {
   void Unlock(MutexType t);
   void CheckNoLocks();
  private:
-  struct LockDesc {
-    u64 seq;
-    uptr pc;
-    int recursion;
-  };
+   struct LockDesc {
+     u64 seq;
+     uptr pc;
+     int recursion;
+   };
   u64 seq_;
   LockDesc locked_[MutexTypeCount];
 };

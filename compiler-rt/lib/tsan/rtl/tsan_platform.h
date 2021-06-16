@@ -1028,7 +1028,6 @@ void InitializePlatform();
 void InitializePlatformEarly();
 void MappingCheckAndProtect();
 void InitializeShadowMemoryPlatform();
-void FlushShadowMemory();
 void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive);
 int ExtractResolvFDs(void *state, int *fds, int nfd);
 int ExtractRecvmsgFDs(void *msg, int *fds, int nfd);

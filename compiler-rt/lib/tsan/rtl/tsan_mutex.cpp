@@ -9,11 +9,11 @@
 // This file is a part of ThreadSanitizer (TSan), a race detector.
 //
 //===----------------------------------------------------------------------===//
-#include "sanitizer_common/sanitizer_libc.h"
 #include "tsan_mutex.h"
+#include "sanitizer_common/sanitizer_libc.h"
 #include "tsan_platform.h"
-#include "tsan_symbolize.h"
 #include "tsan_rtl.h"
+#include "tsan_symbolize.h"
 
 namespace __tsan {
 
@@ -204,9 +204,11 @@ void InternalDeadlockDetector::Lock(MutexType t, uptr pc) {
     return;
   }
   if (max_idx != MutexTypeInvalid && !CanLockAdj[max_idx][t]) {
-    Printf("ThreadSanitizer: internal deadlock: can't lock %s under %s mutex locked at:\n",
-             mutex_meta[t].name, mutex_meta[max_idx].name);
-    PrintStack(SymbolizeCode(StackTrace::GetPreviousInstructionPc(locked_[max_idx].pc)));
+    Printf("ThreadSanitizer: internal deadlock: can't lock %s under %s mutex "
+           "locked at:\n",
+           mutex_meta[t].name, mutex_meta[max_idx].name);
+    PrintStack(SymbolizeCode(
+        StackTrace::GetPreviousInstructionPc(locked_[max_idx].pc)));
     CHECK(0);
   }
   locked_[t].seq = ++seq_;
@@ -349,11 +351,3 @@ void Mutex::CheckLocked() {
 #endif
 
 }  // namespace __tsan
-
-#if SANITIZER_DEBUG && !SANITIZER_GO
-void __sanitizer::OnMutexLockUnlock() {
-  //using namespace __tsan;
-  //if (ctx->initialized)
-  //  CHECK(atomic_load_relaxed(&cur_thread()->in_runtime));
-}
-#endif

@@ -38,18 +38,18 @@
 #  include <string.h>
 #  include <sys/mman.h>
 #  if SANITIZER_LINUX
-#    include <sys/personality.h>
 #    include <setjmp.h>
+#    include <sys/personality.h>
 #  endif
-#  include <sys/syscall.h>
+#  include <dlfcn.h>
+#  include <sched.h>
+#  include <sys/resource.h>
 #  include <sys/socket.h>
+#  include <sys/stat.h>
+#  include <sys/syscall.h>
 #  include <sys/time.h>
 #  include <sys/types.h>
-#  include <sys/resource.h>
-#  include <sys/stat.h>
 #  include <unistd.h>
-#  include <sched.h>
-#  include <dlfcn.h>
 #  if SANITIZER_LINUX
 #    define __need_res_state
 #    include <resolv.h>
@@ -143,20 +143,6 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
                     mem[MemHeap] >> 20, mem[MemOther] >> 20,
                     stacks->allocated >> 20, stacks->n_uniq_ids, nlive,
                     nthread);
-}
-
-#if SANITIZER_LINUX
-void FlushShadowMemoryCallback(
-    const SuspendedThreadsList &suspended_threads_list,
-    void *argument) {
-  ReleaseMemoryPagesToOS(ShadowBeg(), ShadowEnd());
-}
-#endif
-
-void FlushShadowMemory() {
-#if SANITIZER_LINUX
-  StopTheWorld(FlushShadowMemoryCallback, 0);
-#endif
 }
 
 #if !SANITIZER_GO
@@ -272,21 +258,6 @@ void InitializePlatformEarly() {
 # endif
 #endif
 #endif
-}
-
-void ThreadPreempt(ThreadState* thr) {
-  //!!! this won't work for Go
-  DPrintf("#%d: peempting\n", thr->tid);
-  siginfo_t info;
-  internal_memset(&info, 0, sizeof(info));
-  info.si_code = -66;
-  info.si_pid = internal_getpid();
-  info.si_value.sival_ptr = (void*)0x1234;
-  if (syscall(SYS_rt_tgsigqueueinfo, info.si_pid, thr->tctx->os_id, SIGUSR1,
-              &info)) {
-    Printf("ThreadSanitizer: rt_tgsigqueueinfo failed (%d)\n", errno);
-    Die();
-  }
 }
 
 void InitializePlatform() {

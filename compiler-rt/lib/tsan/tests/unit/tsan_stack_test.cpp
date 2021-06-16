@@ -19,7 +19,7 @@ namespace __tsan {
 template <typename StackTraceTy>
 static void TestStackTrace(StackTraceTy *trace) {
   char thr_mem[sizeof(ThreadState)] ALIGNED(64) = {};
-  ThreadState& thr = *new(thr_mem) ThreadState(kMainTid);
+  ThreadState& thr = *new (thr_mem) ThreadState(kMainTid);
   thr.shadow_stack_pos = &thr.shadow_stack[0];
   thr.shadow_stack_end = &thr.shadow_stack[ARRAY_SIZE(thr.shadow_stack)];
 

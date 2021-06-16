@@ -40,8 +40,7 @@ public:
     DCHECK_EQ(epoch_, static_cast<u16>(epoch));
   }
 
-  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic,
-                 bool isFreed) {
+  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic, bool isFreed) {
     // DCHECK_EQ(raw_ & 0xff, 0);
     DCHECK_GT(size, 0);
     DCHECK_LE(size, 8);

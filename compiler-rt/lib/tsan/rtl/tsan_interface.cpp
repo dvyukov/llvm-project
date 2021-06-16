@@ -26,7 +26,6 @@ void __tsan_init() {
 }
 
 void __tsan_flush_memory() {
-  // FlushShadowMemory();
 }
 
 void __tsan_read16(void *addr) {
@@ -83,40 +82,29 @@ void *__tsan_get_current_fiber() {
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void *__tsan_create_fiber(unsigned flags) {
-  uptr pc = CALLERPC;
-  ThreadState* thr = cur_thread();
-  return FiberCreate(thr, pc, flags);
+  return FiberCreate(cur_thread(), CALLERPC, flags);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_destroy_fiber(void *fiber) {
-  uptr pc = CALLERPC;
-  ThreadState* thr = cur_thread();
-  FiberDestroy(thr, pc, static_cast<ThreadState*>(fiber));
+  FiberDestroy(cur_thread(), CALLERPC, static_cast<ThreadState *>(fiber));
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_switch_to_fiber(void *fiber, unsigned flags) {
-  uptr pc = CALLERPC;
-  ThreadState* thr = cur_thread();
-  FiberSwitch(thr, pc, static_cast<ThreadState*>(fiber), flags);
+  FiberSwitch(cur_thread(), CALLERPC, static_cast<ThreadState *>(fiber), flags);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_set_fiber_name(void *fiber, const char *name) {
-  ThreadState* thr = cur_thread();
-  ThreadSetName(thr, name);
+  ThreadSetName(static_cast<ThreadState *>(fiber), name);
 }
 }  // extern "C"
 
 void __tsan_acquire(void *addr) {
-  uptr pc = CALLERPC;
-  ThreadState* thr = cur_thread();
-  Acquire(thr, pc, (uptr)addr);
+  Acquire(cur_thread(), CALLERPC, (uptr)addr);
 }
 
 void __tsan_release(void *addr) {
-  uptr pc = CALLERPC;
-  ThreadState* thr = cur_thread();
-  Release(thr, pc, (uptr)addr);
+  Release(cur_thread(), CALLERPC, (uptr)addr);
 }

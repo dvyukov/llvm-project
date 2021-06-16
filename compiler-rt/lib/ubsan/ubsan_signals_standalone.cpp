@@ -51,8 +51,7 @@ static void OnStackUnwind(const SignalContext &sig, const void *,
 }
 
 static void UBsanOnDeadlySignal(int signo, void *siginfo, void *context) {
-  HandleDeadlySignal(siginfo, context, static_cast<Tid>(GetTid()),
-                     &OnStackUnwind, nullptr);
+  HandleDeadlySignal(siginfo, context, GetTid(), &OnStackUnwind, nullptr);
 }
 
 static bool is_initialized = false;

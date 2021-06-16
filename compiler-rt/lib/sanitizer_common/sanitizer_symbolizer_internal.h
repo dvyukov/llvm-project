@@ -122,6 +122,7 @@ class SymbolizerProcess {
   char buffer_[kBufferSize];
 
   static const uptr kMaxTimesRestarted = 5;
+  static const int kSymbolizerStartupTimeMillis = 10;
   uptr times_restarted_;
   bool failed_to_start_;
   bool reported_invalid_path_;

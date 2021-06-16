@@ -177,7 +177,7 @@ INTERCEPTOR(int, pthread_create, void *thread, void *attr,
     result = REAL(pthread_create)(thread, attr, memprof_thread_start, &param);
   }
   if (result == 0) {
-    Tid current_tid = GetCurrentTidOrInvalid();
+    u32 current_tid = GetCurrentTidOrInvalid();
     MemprofThread *t = MemprofThread::Create(start_routine, arg, current_tid,
                                              &stack, detached);
     atomic_store(&param.t, reinterpret_cast<uptr>(t), memory_order_release);

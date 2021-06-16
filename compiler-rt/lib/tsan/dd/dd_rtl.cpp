@@ -18,17 +18,17 @@ namespace __dsan {
 
 static Context *ctx;
 
-static StackID CurrentStackTrace(Thread* thr, uptr skip) {
+static u32 CurrentStackTrace(Thread *thr, uptr skip) {
   BufferedStackTrace stack;
   thr->ignore_interceptors = true;
   stack.Unwind(1000, 0, 0, 0, 0, 0, false);
   thr->ignore_interceptors = false;
   if (stack.size <= skip)
-    return kInvalidStackID;
+    return 0;
   return StackDepotPut(StackTrace(stack.trace + skip, stack.size - skip));
 }
 
-static void PrintStackTrace(Thread* thr, StackID stk) {
+static void PrintStackTrace(Thread *thr, u32 stk) {
   StackTrace stack = StackDepotGet(stk);
   thr->ignore_interceptors = true;
   stack.Print();
@@ -45,7 +45,7 @@ static void ReportDeadlock(Thread *thr, DDReport *rep) {
     Printf("Thread %d locks mutex %llu while holding mutex %llu:\n",
       rep->loop[i].thr_ctx, rep->loop[i].mtx_ctx1, rep->loop[i].mtx_ctx0);
     PrintStackTrace(thr, rep->loop[i].stk[1]);
-    if (rep->loop[i].stk[0] != kInvalidStackID) {
+    if (rep->loop[i].stk[0]) {
       Printf("Mutex %llu was acquired here:\n",
         rep->loop[i].mtx_ctx0);
       PrintStackTrace(thr, rep->loop[i].stk[0]);
@@ -60,7 +60,7 @@ Callback::Callback(Thread *thr)
   pt = thr->dd_pt;
 }
 
-StackID Callback::Unwind() {
+u32 Callback::Unwind() {
   return CurrentStackTrace(thr, 3);
 }
 
@@ -100,7 +100,7 @@ void ThreadInit(Thread *thr) {
   static atomic_uintptr_t id_gen;
   uptr id = atomic_fetch_add(&id_gen, 1, memory_order_relaxed);
   thr->dd_pt = ctx->dd->CreatePhysicalThread();
-  thr->dd_lt = ctx->dd->CreateLogicalThread(static_cast<Tid>(id));
+  thr->dd_lt = ctx->dd->CreateLogicalThread(id);
 }
 
 void ThreadDestroy(Thread *thr) {

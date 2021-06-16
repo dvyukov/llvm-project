@@ -49,15 +49,10 @@ void invoke_free_hook(void *ptr);
 
 // For internal data structures.
 void* Alloc(uptr sz);
-void* RtAlloc(uptr sz);
 void FreeImpl(void* p);
 
 template <typename T> T* New() {
   return new (Alloc(sizeof(T))) T();
-}
-
-template <typename T> T* RtNew() {
-  return new (RtAlloc(sizeof(T))) T();
 }
 
 template <typename T> void Free(T*& p) {

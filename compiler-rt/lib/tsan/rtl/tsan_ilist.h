@@ -17,17 +17,17 @@ namespace __tsan {
 class INode {
 public:
   INode() = default;
+
 private:
   INode* next_ = nullptr;
   INode* prev_ = nullptr;
 
-  template<typename Base, INode Base::*Node, typename Elem> friend class IList;
+  template <typename Base, INode Base::*Node, typename Elem> friend class IList;
   INode(const INode&) = delete;
-  void operator = (const INode&) = delete;
+  void operator=(const INode&) = delete;
 };
 
-template<typename Base, INode Base::*Node, typename Elem = Base>
-class IList {
+template <typename Base, INode Base::*Node, typename Elem = Base> class IList {
 public:
   IList();
 
@@ -56,25 +56,25 @@ private:
   static Elem* ToElem(INode* n);
 
   IList(const IList&) = delete;
-  void operator = (const IList&) = delete;
+  void operator=(const IList&) = delete;
 };
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 IList<Base, Node, Elem>::IList() {
   node_.next_ = node_.prev_ = &node_;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 void IList<Base, Node, Elem>::PushFront(Elem* e) {
   Push(e, &node_);
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 void IList<Base, Node, Elem>::PushBack(Elem* e) {
   Push(e, node_.prev_);
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 void IList<Base, Node, Elem>::Push(Elem* e, INode* after) {
   INode* n = ToNode(e);
   DCHECK_EQ(n->next_, nullptr);
@@ -86,7 +86,7 @@ void IList<Base, Node, Elem>::Push(Elem* e, INode* after) {
   size_++;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 void IList<Base, Node, Elem>::Remove(Elem* e) {
   INode* n = ToNode(e);
   DCHECK(n->next_);
@@ -98,7 +98,7 @@ void IList<Base, Node, Elem>::Remove(Elem* e) {
   size_--;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::PopFront() {
   Elem* e = Front();
   if (e)
@@ -106,7 +106,7 @@ Elem* IList<Base, Node, Elem>::PopFront() {
   return e;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::PopBack() {
   Elem* e = Back();
   if (e)
@@ -114,36 +114,36 @@ Elem* IList<Base, Node, Elem>::PopBack() {
   return e;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::Front() {
   return size_ ? ToElem(node_.next_) : nullptr;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::Back() {
   return size_ ? ToElem(node_.prev_) : nullptr;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::Prev(Elem* e) {
   INode* n = ToNode(e);
   DCHECK(n->prev_);
   return n->prev_ != &node_ ? ToElem(n->prev_) : nullptr;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::Next(Elem* e) {
   INode* n = ToNode(e);
   DCHECK(n->next_);
   return n->next_ != &node_ ? ToElem(n->next_) : nullptr;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 uptr IList<Base, Node, Elem>::Size() const {
   return size_;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 bool IList<Base, Node, Elem>::Empty() const {
   return size_ == 0;
 }
@@ -155,16 +155,16 @@ bool IList<Base, Node, Elem>::Queued(Elem* e) const {
   return n->next_;
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 INode* IList<Base, Node, Elem>::ToNode(Elem* e) {
   return &(e->*Node);
 }
 
-template<typename Base, INode Base::*Node, typename Elem>
+template <typename Base, INode Base::*Node, typename Elem>
 Elem* IList<Base, Node, Elem>::ToElem(INode* n) {
   return static_cast<Elem*>((Base*)(uptr(n) - uptr(&((Elem*)(0)->*Node))));
 }
 
-}
+} // namespace __tsan
 
 #endif

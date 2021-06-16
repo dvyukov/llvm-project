@@ -62,7 +62,7 @@ FakeStack *FakeStack::Create(uptr stack_size_log) {
   return res;
 }
 
-void FakeStack::Destroy(Tid tid) {
+void FakeStack::Destroy(int tid) {
   PoisonAll(0);
   if (Verbosity() >= 2) {
     InternalScopedString str;

@@ -13,10 +13,10 @@
 #define TSAN_TRACE_H
 
 #include "tsan_defs.h"
-#include "tsan_mutex.h"
 #include "tsan_ilist.h"
-#include "tsan_stack_trace.h"
+#include "tsan_mutex.h"
 #include "tsan_mutexset.h"
+#include "tsan_stack_trace.h"
 
 namespace __tsan {
 
@@ -119,11 +119,13 @@ struct TraceHeader {
 
 struct TracePart : TraceHeader {
   static constexpr uptr kByteSize = 256 << 10;
-  static constexpr uptr kSize = (kByteSize - sizeof(TraceHeader)) / sizeof(Event);
+  static constexpr uptr kSize =
+      (kByteSize - sizeof(TraceHeader)) / sizeof(Event);
   // Note: TracePos assumes this to be the last field.
   Event events[kSize];
 
-  TracePart() {}
+  TracePart() {
+  }
 };
 static_assert(sizeof(TracePart) == TracePart::kByteSize, "bad TracePart size");
 

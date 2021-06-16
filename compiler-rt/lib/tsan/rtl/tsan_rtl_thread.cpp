@@ -131,7 +131,6 @@ struct OnCreatedArgs {
 };
 
 Tid ThreadCreate(ThreadState* thr, uptr pc, uptr uid, bool detached) {
-  StatInc(thr, StatThreadCreate);
   // The main thread and GCD workers don't have a parent thread.
   Tid parent = kInvalidTid;
   OnCreatedArgs arg = {nullptr, 0, kInvalidStackID};
@@ -215,7 +214,6 @@ void ThreadContext::OnStarted(void* arg) {
 
 void ThreadFinish(ThreadState *thr) {
   ThreadCheckIgnore(thr);
-  StatInc(thr, StatThreadFinish);
   if (thr->stk_addr && thr->stk_size)
     DontNeedShadowFor(thr->stk_addr, thr->stk_size);
   if (thr->tls_addr && thr->tls_size)
@@ -241,9 +239,6 @@ void ThreadFinish(ThreadState *thr) {
   if (common_flags()->detect_deadlocks)
     ctx->dd->DestroyLogicalThread(thr->dd_lt);
   thr->~ThreadState();
-#if TSAN_COLLECT_STATS
-  StatAggregate(ctx->stat, thr->stat);
-#endif
   SlotDetach(thr);
   ctx->thread_registry.FinishThread(thr->tid);
 }
@@ -321,7 +316,7 @@ void ThreadNotJoined(ThreadState* thr, uptr pc, Tid tid, uptr uid) {
   ctx->thread_registry.SetThreadUserId(tid, uid);
 }
 
-void ThreadSetName(ThreadState *thr, const char *name) {
+void ThreadSetName(ThreadState* thr, const char* name) {
   ctx->thread_registry.SetThreadName(thr->tid, name);
 }
 

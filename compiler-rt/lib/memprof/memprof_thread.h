@@ -27,18 +27,20 @@ struct DTLS;
 
 namespace __memprof {
 
+const u32 kMaxNumberOfThreads = (1 << 22); // 4M
+
 class MemprofThread;
 
 // These objects are created for every thread and are never deleted,
 // so we can find them by tid even if the thread is long dead.
 struct MemprofThreadContext final : public ThreadContextBase {
-  explicit MemprofThreadContext(Tid tid)
+  explicit MemprofThreadContext(int tid)
       : ThreadContextBase(tid), announced(false),
-        destructor_iterations(GetPthreadDestructorIterations()),
-        stack_id(kInvalidStackID), thread(nullptr) {}
+        destructor_iterations(GetPthreadDestructorIterations()), stack_id(0),
+        thread(nullptr) {}
   bool announced;
   u8 destructor_iterations;
-  StackID stack_id;
+  u32 stack_id;
   MemprofThread *thread;
 
   void OnCreated(void *arg) override;
@@ -57,7 +59,7 @@ COMPILER_CHECK(sizeof(MemprofThreadContext) <= 256);
 class MemprofThread {
 public:
   static MemprofThread *Create(thread_callback_t start_routine, void *arg,
-                               Tid parent_tid, StackTrace *stack,
+                               u32 parent_tid, StackTrace *stack,
                                bool detached);
   static void TSDDtor(void *tsd);
   void Destroy();
@@ -74,7 +76,7 @@ public:
   uptr tls_begin() { return tls_begin_; }
   uptr tls_end() { return tls_end_; }
   DTLS *dtls() { return dtls_; }
-  Tid tid() { return context_->tid; }
+  u32 tid() { return context_->tid; }
   MemprofThreadContext *context() { return context_; }
   void set_context(MemprofThreadContext *context) { context_ = context; }
 
@@ -121,12 +123,12 @@ private:
 ThreadRegistry &memprofThreadRegistry();
 
 // Must be called under ThreadRegistryLock.
-MemprofThreadContext *GetThreadContextByTidLocked(Tid tid);
+MemprofThreadContext *GetThreadContextByTidLocked(u32 tid);
 
 // Get the current thread. May return 0.
 MemprofThread *GetCurrentThread();
 void SetCurrentThread(MemprofThread *t);
-Tid GetCurrentTidOrInvalid();
+u32 GetCurrentTidOrInvalid();
 
 // Used to handle fork().
 void EnsureMainThreadIDIsCorrect();

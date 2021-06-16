@@ -20,7 +20,7 @@ namespace __sanitizer {
 
 struct StackDepotNode {
   StackDepotNode *link;
-  StackID id;
+  u32 id;
   atomic_uint32_t hash_and_use_count; // hash_bits : 12; use_count : 20;
   u32 size;
   u32 tag;
@@ -73,7 +73,7 @@ struct StackDepotNode {
 
 COMPILER_CHECK(StackDepotNode::kMaxUseCount == (u32)kStackDepotMaxUseCount);
 
-StackID StackDepotHandle::id() { return node_->id; }
+u32 StackDepotHandle::id() { return node_->id; }
 int StackDepotHandle::use_count() {
   return atomic_load(&node_->hash_and_use_count, memory_order_relaxed) &
          StackDepotNode::kUseCountMask;
@@ -94,16 +94,18 @@ StackDepotStats *StackDepotGetStats() {
   return theDepot.GetStats();
 }
 
-StackID StackDepotPut(StackTrace stack) {
+u32 StackDepotPut(StackTrace stack) {
   StackDepotHandle h = theDepot.Put(stack);
-  return h.valid() ? h.id() : kInvalidStackID;
+  return h.valid() ? h.id() : 0;
 }
 
 StackDepotHandle StackDepotPut_WithHandle(StackTrace stack) {
   return theDepot.Put(stack);
 }
 
-StackTrace StackDepotGet(StackID id) { return theDepot.Get(id); }
+StackTrace StackDepotGet(u32 id) {
+  return theDepot.Get(id);
+}
 
 void StackDepotLockAll() {
   theDepot.LockAll();
@@ -139,7 +141,7 @@ StackDepotReverseMap::StackDepotReverseMap() {
   Sort(map_.data(), map_.size(), &IdDescPair::IdComparator);
 }
 
-StackTrace StackDepotReverseMap::Get(StackID id) {
+StackTrace StackDepotReverseMap::Get(u32 id) {
   if (!map_.size())
     return StackTrace();
   IdDescPair pair = {id, nullptr};

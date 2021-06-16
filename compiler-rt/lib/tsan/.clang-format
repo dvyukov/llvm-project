@@ -1,9 +1,8 @@
-BasedOnStyle: LLVM
+BasedOnStyle: Google
 DerivePointerAlignment: false
 PointerAlignment: Left
 AllowShortBlocksOnASingleLine: false
 AllowShortFunctionsOnASingleLine: false
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false
-IndentPPDirectives: AfterHash
 ColumnLimit: 80

@@ -419,6 +419,7 @@ class SizeClassAllocator64 {
   // For the performance sake, none of the accessors check the validity of the
   // arguments, it is assumed that index is always in [0, n) range and the value
   // is not incremented past max_value.
+  template <typename MemoryMapper>
   class PackedCounterArray {
    public:
     PackedCounterArray(u64 num_counters, u64 max_value, MemoryMapper *mapper)
@@ -486,9 +487,10 @@ class SizeClassAllocator64 {
     u64* buffer;
   };
 
+  template <class MemoryMapperT>
   class FreePagesRangeTracker {
    public:
-    explicit FreePagesRangeTracker(MemoryMapper *mapper, uptr class_id)
+    explicit FreePagesRangeTracker(MemoryMapperT *mapper, uptr class_id)
         : memory_mapper(mapper),
           class_id(class_id),
           page_size_scaled_log(Log2(GetPageSizeCached() >> kCompactPtrScale)),
@@ -522,7 +524,7 @@ class SizeClassAllocator64 {
       }
     }
 
-    MemoryMapper *const memory_mapper;
+    MemoryMapperT *const memory_mapper;
     const uptr class_id;
     const uptr page_size_scaled_log;
     bool in_the_range;
@@ -534,6 +536,7 @@ class SizeClassAllocator64 {
   // chunks only and returns these pages back to OS.
   // allocated_pages_count is the total number of pages allocated for the
   // current bucket.
+  template <typename MemoryMapper>
   static void ReleaseFreeMemoryToOS(CompactPtrT *free_array,
                                     uptr free_array_count, uptr chunk_size,
                                     uptr allocated_pages_count,
@@ -574,8 +577,8 @@ class SizeClassAllocator64 {
       UNREACHABLE("All chunk_size/page_size ratios must be handled.");
     }
 
-    PackedCounterArray counters(allocated_pages_count,
-                                full_pages_chunk_count_max, memory_mapper);
+    PackedCounterArray<MemoryMapper> counters(
+        allocated_pages_count, full_pages_chunk_count_max, memory_mapper);
     if (!counters.IsAllocated())
       return;
 
@@ -600,7 +603,7 @@ class SizeClassAllocator64 {
 
     // Iterate over pages detecting ranges of pages with chunk counters equal
     // to the expected number of chunks for the particular page.
-    FreePagesRangeTracker range_tracker(memory_mapper, class_id);
+    FreePagesRangeTracker<MemoryMapper> range_tracker(memory_mapper, class_id);
     if (same_chunk_count_per_page) {
       // Fast path, every page has the same number of chunks affecting it.
       for (uptr i = 0; i < counters.GetCount(); i++)

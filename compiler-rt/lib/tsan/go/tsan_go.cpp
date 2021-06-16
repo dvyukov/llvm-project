@@ -217,7 +217,6 @@ void __tsan_malloc(ThreadState *thr, uptr pc, uptr p, uptr sz) {
 }
 
 void __tsan_free(uptr p, uptr sz) {
-  //!!! MBlockFree(thr, pc, p);
   ctx->metamap.FreeRange(get_cur_proc(), p, sz);
 }
 

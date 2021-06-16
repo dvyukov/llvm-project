@@ -23,7 +23,7 @@ MemprofThreadIdAndName::MemprofThreadIdAndName(MemprofThreadContext *t) {
   Init(t->tid, t->name);
 }
 
-MemprofThreadIdAndName::MemprofThreadIdAndName(Tid tid) {
+MemprofThreadIdAndName::MemprofThreadIdAndName(u32 tid) {
   if (tid == kInvalidTid) {
     Init(tid, "");
   } else {
@@ -33,7 +33,7 @@ MemprofThreadIdAndName::MemprofThreadIdAndName(Tid tid) {
   }
 }
 
-void MemprofThreadIdAndName::Init(Tid tid, const char *tname) {
+void MemprofThreadIdAndName::Init(u32 tid, const char *tname) {
   int len = internal_snprintf(name, sizeof(name), "T%d", tid);
   CHECK(((unsigned int)len) < sizeof(name));
   if (tname[0] != '\0')

@@ -22,7 +22,6 @@ public:
 
   Epoch Get(Sid sid) const;
   void Set(Sid sid, Epoch v);
-  // void Tick(uptr tid);
 
   void Reset();
   void Acquire(const VectorClock* src);
