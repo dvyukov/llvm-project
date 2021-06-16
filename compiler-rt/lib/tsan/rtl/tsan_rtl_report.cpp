@@ -585,23 +585,14 @@ static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
   return false;
 }
 
-static bool RaceBetweenAtomicAndFree(ThreadState* thr, Shadow cur, Shadow old) {
-  CHECK(!(cur.IsAtomic() && old.IsAtomic()));
-  if (!cur.IsAtomic() && !old.IsAtomic())
-    return true;
-  if (cur.IsAtomic() && old.IsFreed())
-    return true;
-  if (old.IsAtomic() && thr->is_freeing)
-    return true;
-  return false;
-}
-
 void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 Shadow old) {
   VPrintf(1, "#%d: ReportRace\n", thr->tid);
   if (!ShouldReport(thr, ReportTypeRace))
     return;
-  if (!flags()->report_atomic_races && !RaceBetweenAtomicAndFree(thr, cur, old))
+  if (!flags()->report_atomic_races &&
+      (cur.IsAtomic() || old.IsAtomic()) &&
+      !old.IsFree() && !thr->is_freeing)
     return;
 
   const uptr kMop = 2;
@@ -621,11 +612,11 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   VarSizeStackTrace traces[kMop];
   ReportDesc rep;
   rep.typ = ReportTypeRace;
-  if (thr->is_vptr_access && s[1].IsFreed())
+  if (thr->is_vptr_access && s[1].IsFree())
     rep.typ = ReportTypeVptrUseAfterFree;
   else if (thr->is_vptr_access)
     rep.typ = ReportTypeVptrRace;
-  else if (s[1].IsFreed())
+  else if (s[1].IsFree())
     rep.typ = ReportTypeUseAfterFree;
 
   if (IsFiredSuppression(ctx, rep.typ, addr))
@@ -651,7 +642,7 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     ReportScope report_scope(thr);
     if (!RestoreStack(EventTypeAccessEx, s[1].sid(), s[1].epoch(), addr1,
                       s[1].size(), s[1].IsRead(), s[1].IsAtomic(),
-                      s[1].IsFreed(), &tids[1], &traces[1], mset[1], &tags[1]))
+                      s[1].IsFree(), &tids[1], &traces[1], mset[1], &tags[1]))
       return;
     if (IsFiredSuppression(ctx, rep.typ, traces[1]))
       return;
@@ -682,7 +673,7 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     rep.AddLocation(addr_min, addr_max - addr_min);
 
 #if !SANITIZER_GO
-    if (!s[1].IsFreed() &&
+    if (!s[1].IsFree() &&
         s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
       rep.AddSleep(thr->last_sleep_stack_id);
 #endif

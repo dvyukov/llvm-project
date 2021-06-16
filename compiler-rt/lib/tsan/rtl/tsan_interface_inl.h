@@ -148,7 +148,7 @@ void __tsan_vptr_update(void **vptr_p, void *new_val) {
   if (*vptr_p == new_val)
     return;
   ThreadState* thr = cur_thread();
-  //!!! figure out how to turn this into fail call
+  //!!! figure out how to turn this into tail call
   thr->is_vptr_access = true;
   MemoryWrite(thr, CALLERPC, (uptr)vptr_p, 8);
   thr->is_vptr_access = false;

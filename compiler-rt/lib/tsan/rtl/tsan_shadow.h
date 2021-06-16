@@ -40,7 +40,7 @@ public:
     DCHECK_EQ(epoch_, static_cast<u16>(epoch));
   }
 
-  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic, bool isFreed) {
+  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic) {
     // DCHECK_EQ(raw_ & 0xff, 0);
     DCHECK_GT(size, 0);
     DCHECK_LE(size, 8);
@@ -48,12 +48,11 @@ public:
     (void)sid0;
     u16 epoch0 = epoch_;
     (void)epoch0;
-    raw_ |= (isAtomic << 31) | (isRead << 30) | (isFreed << 29) |
+    raw_ |= (isAtomic << 31) | (isRead << 30) |
             ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
     DCHECK_EQ(addr0(), addr & 0x7);
     DCHECK_EQ(IsAtomic(), isAtomic);
     DCHECK_EQ(IsRead(), isRead);
-    DCHECK_EQ(IsFreed(), isFreed);
     DCHECK_EQ(sid(), sid0);
     DCHECK_EQ(epoch(), epoch0);
   }
@@ -75,20 +74,11 @@ public:
     return cur.access_ == old.access_;
   }
 
-  static ALWAYS_INLINE bool AddrSizeEqualNotFreed(const Shadow cur,
-                                                  const Shadow old) {
-    DCHECK(!cur.IsFreed());
-    bool res = ((cur.raw_ ^ old.raw_) & 0x200000ff) == 0;
-    DCHECK_EQ(res,
-              cur.access_ == old.access_ && cur.is_freed_ == old.is_freed_);
-    return res;
-  }
-
   static ALWAYS_INLINE bool TwoRangesIntersect(Shadow cur, Shadow old) {
     return cur.access_ & old.access_;
   }
 
-  ALWAYS_INLINE u32 access() const {
+  ALWAYS_INLINE u8 access() const {
     return access_;
   }
   u32 ALWAYS_INLINE addr0() const {
@@ -97,17 +87,13 @@ public:
   }
   u32 ALWAYS_INLINE size() const {
     DCHECK(access_);
-    return __builtin_popcount(access_);
+    return access_ == kFreeAccess ? kShadowCell : __builtin_popcount(access_);
   }
   bool ALWAYS_INLINE IsWrite() const {
     return !IsRead();
   }
   bool ALWAYS_INLINE IsRead() const {
     return is_read_;
-  }
-
-  bool IsFreed() const {
-    return is_freed_;
   }
 
   ALWAYS_INLINE
@@ -117,6 +103,7 @@ public:
     return res;
   }
 
+/*
   ALWAYS_INLINE
   static bool SidsAreEqualOrBothReadsOrAtomic(Shadow cur, Shadow old,
                                               bool kIsWrite, bool kIsAtomic) {
@@ -134,8 +121,9 @@ public:
                        old.IsBothReadsOrAtomic(kIsWrite, kIsAtomic));
     return res;
   }
+*/
 
-  bool ALWAYS_INLINE IsRWWeakerOrEqual(Shadow cur, bool kIsWrite,
+  ALWAYS_INLINE bool IsRWWeakerOrEqual(Shadow cur, bool kIsWrite,
                                        bool kIsAtomic) const {
     DCHECK_EQ(raw_ & 0x3f, cur.raw_ & 0x3f);
     bool res = (raw_ & 0xc0000000) >=
@@ -145,21 +133,47 @@ public:
     return res;
   }
 
+  ALWAYS_INLINE bool IsFree() const {
+    return access_ == kFreeAccess;
+  }
+ 
   // .rodata shadow marker, see MapRodata and ContainsSameAccessFast.
   static constexpr RawShadow kShadowRodata = 0x40000001;
+
+  //!!! Need to write (kFreeSid, access:0xff, non-atomic write, epoch:0),
+  // (real sid, access:0x81, real epoch) (note: access must not pass
+  // "same access" check).
+  static RawShadow FreedMarker() {
+    Shadow s(0);
+    //!!! Strictly saying we don't need to reserve whole kFreeSid,
+    // we could reserve just the kEpochLast for kFreeSid.
+    s.SetSid(kFreeSid);
+    s.SetEpoch(kEpochLast);
+    s.SetAccess(0, 8, false, false);
+    return s.raw_;
+  }
+
+  static RawShadow Freed(Sid sid, Epoch epoch) {
+    Shadow s(0);
+    s.SetSid(sid);
+    s.SetEpoch(epoch);
+    s.access_ = kFreeAccess;
+    return s.raw_;
+  }
 
 private:
   union {
     struct {
       u8 access_;
       Sid sid_;
-      u16 epoch_ : 13;
-      u16 is_freed_ : 1;
+      u16 epoch_ : kEpochBits;
       u16 is_read_ : 1;
       u16 is_atomic_ : 1;
     };
     RawShadow raw_;
   };
+
+  static constexpr u8 kFreeAccess = 0x81;
 };
 
 static_assert(sizeof(Shadow) == kShadowSize, "bad Shadow size");

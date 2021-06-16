@@ -235,6 +235,7 @@ struct SizeClassAllocator32LocalCache {
               batch_class_id : 0;
       }
     }
+    atomic_signal_fence(memory_order_seq_cst); //!!! w/o this gcc fails the check below (does not understand that c aliases with this)
     DCHECK_NE(c->max_count, 0UL);
   }
 

@@ -671,7 +671,7 @@ void Initialize(ThreadState *thr) {
 #endif
 
   Shadow ro(0);
-  ro.SetAccess(0, 1, true, false, false);
+  ro.SetAccess(0, 1, true, false);
   CHECK_EQ(ro.raw(), Shadow::kShadowRodata);
 
   ctx->initialized = true;
@@ -931,8 +931,6 @@ void MemoryAccessImpl1(ThreadState* thr, uptr addr, u32 kAccessSize,
     }
     if (LIKELY(!Shadow::TwoRangesIntersect(cur, old)))
       continue;
-    if (UNLIKELY(old.IsFreed()))
-      goto RACE;
     if (LIKELY(Shadow::SidsAreEqual(old, cur))) {
       if (LIKELY(Shadow::AddrSizeEqual(cur, old) &&
                  old.IsRWWeakerOrEqual(cur, kAccessIsWrite, kIsAtomic))) {
@@ -970,9 +968,9 @@ bool ContainsSameAccessSlow(RawShadow* s, RawShadow a, bool isRead) {
     if (isRead && old.raw() == Shadow::kShadowRodata)
       return true;
     //!!! speed up, this is used at least for Go.
-    if (Shadow::AddrSizeEqualNotFreed(cur, old) && old.sid() == cur.sid() &&
+    if (Shadow::AddrSizeEqual(cur, old) && old.sid() == cur.sid() &&
         old.epoch() == cur.epoch() && old.IsAtomic() == cur.IsAtomic() &&
-        old.IsRead() <= cur.IsRead())
+        old.IsRead() <= cur.IsRead() /* && !old.IsFreed()*/)
       return true;
   }
   return false;
@@ -1036,9 +1034,9 @@ char* DumpShadow(char* buf, RawShadow raw) {
     return buf;
   }
   Shadow s(raw);
-  internal_snprintf(buf, 64, "{tid=%u@%u access=0x%x type=%u/%u/%u}",
+  internal_snprintf(buf, 64, "{tid=%u@%u access=0x%x type=%u/%u}",
                     static_cast<u32>(s.sid()), static_cast<u32>(s.epoch()),
-                    s.access(), s.IsRead(), s.IsAtomic(), s.IsFreed());
+                    s.access(), s.IsRead(), s.IsAtomic());
   return buf;
 }
 
@@ -1106,7 +1104,11 @@ NOINLINE void DoReportRaceV(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     old = _mm_extract_epi32(shadow, 3);
     break;
   }
-  DoReportRace(thr, shadow_mem, cur, Shadow(old));
+  Shadow prev(old);
+  //!!! this part is not supported in the non-vector code.
+  if (prev.sid() == kFreeSid)
+    prev = Shadow(_mm_extract_epi32(shadow, 1));
+  DoReportRace(thr, shadow_mem, cur, prev);
 }
 
 ALWAYS_INLINE
@@ -1141,7 +1143,7 @@ bool ContainsSameAccessV(m128 shadow, m128 access, bool kAccessIsWrite) {
 
 ALWAYS_INLINE
 bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
-                m128 shadow, m128 access, bool kAccessIsWrite, bool kIsAtomic) {
+                m128 shadow, m128 access, bool kAccessIsWrite, bool kIsAtomic, bool kStoreAccess = true) {
   //!!! handle is freed
   const m128 zero = _mm_setzero_si128();
   const m128 mask_access = _mm_set1_epi32(0x000000ff);
@@ -1166,6 +1168,8 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     goto SHARED;
 
 STORE : {
+  if (!kStoreAccess)
+    return false;
   const m128 not_same_sid_access = _mm_and_si128(access_xor, mask_access_sid);
   const m128 same_sid_access = _mm_cmpeq_epi32(not_same_sid_access, zero);
   const m128 access_read_atomic =
@@ -1240,7 +1244,7 @@ MemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSize,
 #endif
 
   Shadow cur(thr->fast_state);
-  cur.SetAccess(addr, kAccessSize, !kAccessIsWrite, kIsAtomic, false);
+  cur.SetAccess(addr, kAccessSize, !kAccessIsWrite, kIsAtomic);
 
   // This is an optimized version of ContainsSameAccessSlow.
   const m128 access = _mm_set1_epi32(cur.raw());
@@ -1315,7 +1319,7 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
   uptr size1 = Min<uptr>(size, RoundUp(addr + 1, kShadowCell) - addr);
   {
     Shadow cur(fast_state);
-    cur.SetAccess(addr, size1, !kAccessIsWrite, false, false);
+    cur.SetAccess(addr, size1, !kAccessIsWrite, false);
 
     const m128 access = _mm_set1_epi32(cur.raw());
     const m128 shadow = _mm_load_si128((m128*)shadow_mem);
@@ -1335,7 +1339,7 @@ SECOND:
   {
     shadow_mem += kShadowCnt;
     Shadow cur(fast_state);
-    cur.SetAccess(0, size2, !kAccessIsWrite, false, false);
+    cur.SetAccess(0, size2, !kAccessIsWrite, false);
     const m128 access = _mm_set1_epi32(cur.raw());
     const m128 shadow = _mm_load_si128((m128*)shadow_mem);
     if (ContainsSameAccessV(shadow, access, kAccessIsWrite))
@@ -1391,6 +1395,7 @@ static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
     RawShadow* p = (RawShadow*)MemToShadow(addr);
     CHECK(IsShadowMem((uptr)p));
     CHECK(IsShadowMem((uptr)(p + size * kShadowCnt / kShadowCell - 1)));
+    //!!! optimize using vector instructions
     for (uptr i = 0; i < size / kShadowCell * kShadowCnt;) {
       p[i++] = val;
       for (uptr j = 1; j < kShadowCnt; j++)
@@ -1403,6 +1408,7 @@ static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
     RawShadow* end = begin + size / kShadowCell * kShadowCnt;
     RawShadow* p = begin;
     // Set at least first kPageSize/2 to page boundary.
+    //!!! optimize using vector instructions
     while ((p < begin + kPageSize / kShadowSize / 2) || ((uptr)p % kPageSize)) {
       *p++ = val;
       for (uptr j = 1; j < kShadowCnt; j++)
@@ -1415,6 +1421,7 @@ static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
     if (!MmapFixedSuperNoReserve((uptr)p1, (uptr)p - (uptr)p1))
       Die();
     // Set the ending.
+    //!!! optimize using vector instructions
     while (p < end) {
       *p++ = val;
       for (uptr j = 1; j < kShadowCnt; j++)
@@ -1432,19 +1439,39 @@ void MemoryResetRange(ThreadState* thr, uptr pc, uptr addr, uptr size) {
 void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
-  // Processing more than 1k (4k of shadow) is expensive,
+  // Processing more than 1k (2k of shadow) is expensive,
   // can cause excessive memory consumption (user does not necessary touch
   // the whole range) and most likely unnecessary.
-  if (size > 1024)
-    size = 1024;
+  size = Min<uptr>(size, 1024);
   CHECK_EQ(thr->is_freeing, false);
   thr->is_freeing = true;
-  MemoryAccessRange(thr, pc, addr, size, true);
-  thr->is_freeing = false;
+
+  //!!! This may need to lock the slot to ensure synchronization
+  // with the reset. The problem with "freed" memory is that it's
+  // not "monotonic" -- freed memory is bad to access, but then
+  // if the heap block is reallocated, it's good to access again.
+  // It's not the case with bad accesses due to races.
+  // As the result a garbage "freed" shadow can lead to a false
+  // positive if it happen to match a real free in the trace,
+  // but the heap block was reallocated, so it's still good to access.
   TraceMemoryAccessRange(thr, pc, addr, size, false, true);
-  Shadow s(thr->fast_state);
-  s.SetAccess(0, 8, false, false, true);
-  MemoryRangeSet(thr, pc, addr, size, s.raw());
+  RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
+  Shadow fast_state = thr->fast_state;
+  Shadow cur(fast_state);
+  cur.SetAccess(0, kShadowCell, false, false);
+  const m128 access = _mm_set1_epi32(cur.raw());
+  const m128 freed = _mm_setr_epi32(Shadow::FreedMarker(), Shadow::Freed(cur.sid(), cur.epoch()), 0, 0);
+  for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt) {
+    const m128 shadow = _mm_load_si128((m128*)shadow_mem);
+    _mm_store_si128((m128*)shadow_mem, freed);
+    if (LIKELY(ContainsSameAccessV(shadow, access, true)))
+      continue;
+    if (UNLIKELY(thr->ignore_enabled_))
+      continue;
+    if (UNLIKELY(CheckRaces(thr, shadow_mem, cur, shadow, access, false, false, false)))
+      break;
+  }
+  thr->is_freeing = false;
 }
 
 void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
@@ -1452,7 +1479,7 @@ void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   size = RoundUp(size, kShadowCell);
   TraceMemoryAccessRange(thr, pc, addr, size, false, false);
   Shadow s(thr->fast_state);
-  s.SetAccess(0, 8, false, false, false);
+  s.SetAccess(0, 8, false, false);
   MemoryRangeSet(thr, pc, addr, size, s.raw());
 }
 
@@ -1465,9 +1492,8 @@ void MemoryRangeImitateWriteOrReset(ThreadState* thr, uptr pc, uptr addr,
 }
 
 ALWAYS_INLINE
-bool MemoryAccessRangeOne(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
+bool MemoryAccessRangeOne(ThreadState* thr, RawShadow* shadow_mem, Shadow cur, m128 access,
                           uptr addr, uptr size, bool kAccessIsWrite) {
-  const m128 access = _mm_set1_epi32(cur.raw());
   const m128 shadow = _mm_load_si128((m128*)shadow_mem);
   if (ContainsSameAccessV(shadow, access, kAccessIsWrite))
     return false;
@@ -1543,25 +1569,28 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
     uptr size1 = Min(size, RoundUp(addr, kShadowCell) - addr);
     size -= size1;
     Shadow cur(fast_state);
-    cur.SetAccess(addr, size1, !is_write, false, false);
+    cur.SetAccess(addr, size1, !is_write, false);
+    const m128 access = _mm_set1_epi32(cur.raw());
     if (UNLIKELY(
-            MemoryAccessRangeOne(thr, shadow_mem, cur, addr, size1, is_write)))
+            MemoryAccessRangeOne(thr, shadow_mem, cur, access, addr, size1, is_write)))
       return;
     shadow_mem += kShadowCnt;
   }
   // Handle middle part, if any.
+  Shadow cur(fast_state);
+  cur.SetAccess(0, kShadowCell, !is_write, false);
+  const m128 access = _mm_set1_epi32(cur.raw());
   for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt) {
-    Shadow cur(fast_state);
-    cur.SetAccess(0, kShadowCell, !is_write, false, false);
-    if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, 0, kShadowCell,
+    if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, access, 0, kShadowCell,
                                       is_write)))
       return;
   }
   // Handle ending, if any.
   if (UNLIKELY(size)) {
     Shadow cur(fast_state);
-    cur.SetAccess(0, size, !is_write, false, false);
-    if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, 0, size, is_write)))
+    cur.SetAccess(0, size, !is_write, false);
+    const m128 access = _mm_set1_epi32(cur.raw());
+    if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, access, 0, size, is_write)))
       return;
   }
 }

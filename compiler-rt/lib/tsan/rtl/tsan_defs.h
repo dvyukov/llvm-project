@@ -58,9 +58,10 @@ constexpr uptr kSlotCount = 255;
 constexpr Sid kFreeSid = static_cast<Sid>(255);
 
 enum class Epoch : u16 {};
+constexpr uptr kEpochBits = 14;
 constexpr Epoch kEpochZero = static_cast<Epoch>(0);
-constexpr Epoch kEpochOver = static_cast<Epoch>(1 << 13);
-constexpr Epoch kEpochLast = static_cast<Epoch>((1 << 13) - 1);
+constexpr Epoch kEpochOver = static_cast<Epoch>(1 << kEpochBits);
+constexpr Epoch kEpochLast = static_cast<Epoch>((1 << kEpochBits) - 1);
 
 inline Epoch EpochInc(Epoch epoch) {
   return static_cast<Epoch>(static_cast<u16>(epoch) + 1);

@@ -452,9 +452,6 @@ void PrintMatchedBenignRaces();
 #else
 #  define DPrintf Printf
 #  define DPrintf2 Printf
-//#  define DPrintf2(...)                                                        \
-    do {                                                                       \
-    } while (0)
 #endif
 
 StackID CurrentStackId(ThreadState* thr, uptr pc);

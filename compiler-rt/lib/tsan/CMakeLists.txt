@@ -103,12 +103,12 @@ set(TSAN_HEADERS
   rtl/tsan_ppc_regs.h
   rtl/tsan_report.h
   rtl/tsan_rtl.h
+  rtl/tsan_shadow.h
   rtl/tsan_stack_trace.h
   rtl/tsan_suppressions.h
   rtl/tsan_symbolize.h
   rtl/tsan_sync.h
   rtl/tsan_trace.h
-  rtl/tsan_update_shadow_word_inl.h
   )
 
 set(TSAN_RUNTIME_LIBRARIES)
