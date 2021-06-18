@@ -17,6 +17,7 @@
 #include "sanitizer_common/sanitizer_deadlock_detector_interface.h"
 #include "tsan_defs.h"
 #include "tsan_clock.h"
+#include "tsan_shadow.h"
 #include "tsan_mutex.h"
 #include "tsan_dense_alloc.h"
 
@@ -55,7 +56,7 @@ struct SyncVar {
   Mutex mtx;
   StackID creation_stack_id;
   Tid owner_tid; // Set only by exclusive owners.
-  u32 last_lock;
+  FastState last_lock;
   int recursion;
   atomic_uint32_t flags;
   u32 next;  // in MetaMap

@@ -13,8 +13,68 @@
 
 namespace __tsan {
 
+class FastState {
+public:
+  FastState() {
+    Reset();
+  }
+
+  void Reset() {
+    unused0_ = 0;
+    sid_ = kFreeSid;
+    epoch_ = static_cast<u16>(kEpochLast);
+    unused1_ = 0;
+    ignore_accesses_ = false;
+  }
+
+  void SetSid(Sid sid) {
+    sid_ = sid;
+  }
+
+  Sid sid() const {
+    return sid_;
+  }
+
+  Epoch epoch() const {
+    return static_cast<Epoch>(epoch_);
+  }
+
+  void SetEpoch(Epoch epoch) {
+    epoch_ = static_cast<u16>(epoch);
+  }
+
+  void SetIgnoreAccesses(bool ignore) {
+    ignore_accesses_ = ignore;
+  }
+
+  bool IgnoreAccesses() const {
+    return (s32)raw_ < 0;
+  }
+
+private:
+  friend class Shadow;
+  union {
+    struct {
+      u8 unused0_;
+      Sid sid_;
+      u16 epoch_ : kEpochBits;
+      u16 unused1_ : 1;
+      u16 ignore_accesses_ : 1;
+    };
+    RawShadow raw_;
+  };
+};
+
+static_assert(sizeof(FastState) == kShadowSize, "bad FastState size");
+
 class Shadow {
 public:
+  Shadow(FastState state, u32 addr, u32 size, AccessType typ) {
+    DCHECK(!state.ignore_accesses_);
+    raw_ = state.raw_;
+    SetAccess(addr, size, typ);
+  }
+
   explicit Shadow(RawShadow x = 0) {
     raw_ = x;
   }
@@ -42,24 +102,6 @@ public:
 
   void SetAccess(u32 addr, u32 size, AccessType typ) {
     SetAccess(addr, size, typ & AccessRead, typ & AccessAtomic);
-  }
-
- //!!! remove
-  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic) {
-    // DCHECK_EQ(raw_ & 0xff, 0);
-    DCHECK_GT(size, 0);
-    DCHECK_LE(size, 8);
-    Sid sid0 = sid_;
-    (void)sid0;
-    u16 epoch0 = epoch_;
-    (void)epoch0;
-    raw_ |= (isAtomic << 31) | (isRead << 30) |
-            ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
-    DCHECK_EQ(addr0(), addr & 0x7);
-    DCHECK_EQ(IsAtomic(), isAtomic);
-    DCHECK_EQ(IsRead(), isRead);
-    DCHECK_EQ(sid(), sid0);
-    DCHECK_EQ(epoch(), epoch0);
   }
 
   bool IsAtomic() const {
@@ -159,6 +201,24 @@ private:
   };
 
   static constexpr u8 kFreeAccess = 0x81;
+
+ //!!! remove
+  void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic) {
+    // DCHECK_EQ(raw_ & 0xff, 0);
+    DCHECK_GT(size, 0);
+    DCHECK_LE(size, 8);
+    Sid sid0 = sid_;
+    (void)sid0;
+    u16 epoch0 = epoch_;
+    (void)epoch0;
+    raw_ |= (isAtomic << 31) | (isRead << 30) |
+            ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
+    DCHECK_EQ(addr0(), addr & 0x7);
+    DCHECK_EQ(IsAtomic(), isAtomic);
+    DCHECK_EQ(IsRead(), isRead);
+    DCHECK_EQ(sid(), sid0);
+    DCHECK_EQ(epoch(), epoch0);
+  }
 };
 
 static_assert(sizeof(Shadow) == kShadowSize, "bad Shadow size");

@@ -670,9 +670,13 @@ void Initialize(ThreadState *thr) {
   Symbolizer::LateInitialize();
 #endif
 
-  Shadow ro(0);
-  ro.SetAccess(0, 1, true, false);
-  CHECK_EQ(ro.raw(), Shadow::kShadowRodata);
+  {
+    FastState fast_state;
+    fast_state.SetSid(static_cast<Sid>(0));
+    fast_state.SetEpoch(kEpochZero);
+    Shadow ro(fast_state, 0, 1, AccessRead);
+    CHECK_EQ(ro.raw(), Shadow::kShadowRodata);
+  }
 
   ctx->initialized = true;
 
@@ -1107,7 +1111,7 @@ ALWAYS_INLINE
 bool ContainsSameAccessV(m128 shadow, m128 access, AccessType typ) {
   if (!(typ & AccessRead)) {
     const m128 same = _mm_cmpeq_epi32(shadow, access);
-    return LIKELY(_mm_movemask_epi8(same));
+    return _mm_movemask_epi8(same);
   }
   // For reads we need to reset read bit in the shadow,
   // because we need to match read with both reads and writes.
@@ -1119,25 +1123,28 @@ bool ContainsSameAccessV(m128 shadow, m128 access, AccessType typ) {
   // kShadowRodata has epoch 0 which cannot appear in shadow normally
   // (thread epochs start from 1). So the same read bit mask
   // serves as rodata indicator.
-  // Access to .rodata section, no races here.
+
+  //!!! we can skip kShadowRodata check for range memory access,
+  // they already checked rodata.
   const m128 read_mask = _mm_set1_epi32(Shadow::kShadowRodata);
   const m128 masked_shadow = _mm_or_si128(shadow, read_mask);
   m128 same = _mm_cmpeq_epi32(masked_shadow, access);
 #if !SANITIZER_GO
-  //!!! we can also skip it for range memory access, they already checked
-  //! rodata.
   const m128 ro = _mm_cmpeq_epi32(shadow, read_mask);
   same = _mm_or_si128(ro, same);
 #else
 #endif
-  return LIKELY(_mm_movemask_epi8(same));
+  return _mm_movemask_epi8(same);
 }
 
 ALWAYS_INLINE
 bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 m128 shadow, m128 access, AccessType typ) {
-  //!!! handle is freed
   const m128 zero = _mm_setzero_si128();
+  //!!! These constants are compiled into loads of globals.
+  // Would it be faster to obtain some consts from others with e.g. shifts (mask_sid = mask_access << 8)?
+  //!!! Is it possible/make sense to compute them in some way?
+  // E.g. mask_access == take zero, shift left by 8 shifting in 1s?
   const m128 mask_access = _mm_set1_epi32(0x000000ff);
   const m128 mask_sid = _mm_set1_epi32(0x0000ff00);
   const m128 mask_access_sid = _mm_set1_epi32(0x0000ffff);
@@ -1187,7 +1194,7 @@ SHARED:
   // Need to unwind this because _mm_extract_epi8/_mm_insert_epi32
   // indexes must be constants.
 #define LOAD_EPOCH(idx)                                                        \
-  if (race_mask & (1 << (idx * 4))) {                                          \
+  if (LIKELY(race_mask & (1 << (idx * 4)))) {                                  \
     u8 sid = _mm_extract_epi8(shadow, idx * 4 + 1);                            \
     u16 epoch = static_cast<u16>(thr->clock.Get(static_cast<Sid>(sid)));       \
     thread_epochs = _mm_insert_epi32(thread_epochs, u32(epoch) << 16, idx);    \
@@ -1233,20 +1240,17 @@ MemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ) {
   }
 #endif
 
-  Shadow cur(thr->fast_state);
-  cur.SetAccess(addr, size, typ);
+  FastState fast_state = thr->fast_state;
+  Shadow cur(fast_state, addr, size, typ);
 
   // This is an optimized version of ContainsSameAccessSlow.
   const m128 access = _mm_set1_epi32(cur.raw());
   const m128 shadow = _mm_load_si128((m128*)shadow_mem);
   DPrintf2("  MOP: shadow=%V access=%V\n", shadow, access);
-  if (ContainsSameAccessV(shadow, access, typ))
+  if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
     return;
-
-  if (UNLIKELY(thr->ignore_enabled_))
+  if (UNLIKELY(fast_state.IgnoreAccesses()))
     return;
-
-  //!!! we could move this below since we store at a single point now
   if (!TraceMemoryAccess(thr, pc, addr, size, typ))
     return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
   CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
@@ -1295,21 +1299,18 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
                                               uptr addr, uptr size,
                                               AccessType typ) {
   DCHECK_LE(size, 8);
-  if (UNLIKELY(thr->ignore_enabled_))
+  FastState fast_state = thr->fast_state;
+  if (UNLIKELY(fast_state.IgnoreAccesses()))
     return;
-
   RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
-  Shadow fast_state = thr->fast_state;
   bool traced = false;
-
   uptr size1 = Min<uptr>(size, RoundUp(addr + 1, kShadowCell) - addr);
   {
-    Shadow cur(fast_state);
-    cur.SetAccess(addr, size1, typ);
+    Shadow cur(fast_state, addr, size1, typ);
 
     const m128 access = _mm_set1_epi32(cur.raw());
     const m128 shadow = _mm_load_si128((m128*)shadow_mem);
-    if (ContainsSameAccessV(shadow, access, typ))
+    if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
       goto SECOND;
     if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
       return RestartUnalignedMemoryAccess(thr, pc, addr, size, typ);
@@ -1323,11 +1324,10 @@ SECOND:
     return;
   {
     shadow_mem += kShadowCnt;
-    Shadow cur(fast_state);
-    cur.SetAccess(0, size2, typ);
+    Shadow cur(fast_state, 0, size2, typ);
     const m128 access = _mm_set1_epi32(cur.raw());
     const m128 shadow = _mm_load_si128((m128*)shadow_mem);
-    if (ContainsSameAccessV(shadow, access, typ))
+    if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
       return;
     if (!traced) {
       if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
@@ -1415,17 +1415,13 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   const AccessType typ = AccessWrite | AccessFree;
   TraceMemoryAccessRange(thr, pc, addr, size, typ);
   RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
-  Shadow fast_state = thr->fast_state;
-  Shadow cur(fast_state);
-  cur.SetAccess(0, kShadowCell, false, false);
+  Shadow cur(thr->fast_state, 0, kShadowCell, typ);
   const m128 access = _mm_set1_epi32(cur.raw());
   const m128 freed = _mm_setr_epi32(Shadow::FreedMarker(), Shadow::Freed(cur.sid(), cur.epoch()), 0, 0);
   for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt) {
     const m128 shadow = _mm_load_si128((m128*)shadow_mem);
     _mm_store_si128((m128*)shadow_mem, freed);
     if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
-      continue;
-    if (UNLIKELY(thr->ignore_enabled_))
       continue;
     if (UNLIKELY(CheckRaces(thr, shadow_mem, cur, shadow, access, typ)))
       return;
@@ -1436,9 +1432,8 @@ void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
   TraceMemoryAccessRange(thr, pc, addr, size, AccessWrite);
-  Shadow s(thr->fast_state);
-  s.SetAccess(0, 8, AccessWrite);
-  MemoryRangeSet(thr, pc, addr, size, s.raw());
+  Shadow cur(thr->fast_state, 0, 8, AccessWrite);
+  MemoryRangeSet(thr, pc, addr, size, cur.raw());
 }
 
 void MemoryRangeImitateWriteOrReset(ThreadState* thr, uptr pc, uptr addr,
@@ -1453,9 +1448,9 @@ ALWAYS_INLINE
 bool MemoryAccessRangeOne(ThreadState* thr, RawShadow* shadow_mem, Shadow cur, m128 access,
                           uptr addr, uptr size, AccessType typ) {
   const m128 shadow = _mm_load_si128((m128*)shadow_mem);
-  if (ContainsSameAccessV(shadow, access, typ))
+  if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
     return false;
-  return UNLIKELY(CheckRaces(thr, shadow_mem, cur, shadow, access, typ));
+  return CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
 }
 
 template <bool is_write>
@@ -1498,13 +1493,12 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
   if (*shadow_mem == Shadow::kShadowRodata)
     return;
 
-  if (UNLIKELY(thr->ignore_enabled_))
+  FastState fast_state = thr->fast_state;
+  if (UNLIKELY(fast_state.IgnoreAccesses()))
     return;
 
   if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
     return RestartMemoryAccessRange<is_write>(thr, pc, addr, size);
-
-  Shadow fast_state = thr->fast_state;
 
   //!!! update comment
   // Don't report more than one race in the same range access.
@@ -1526,8 +1520,7 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
     // Handle unaligned beginning, if any.
     uptr size1 = Min(size, RoundUp(addr, kShadowCell) - addr);
     size -= size1;
-    Shadow cur(fast_state);
-    cur.SetAccess(addr, size1, typ);
+    Shadow cur(fast_state, addr, size1, typ);
     const m128 access = _mm_set1_epi32(cur.raw());
     if (UNLIKELY(
             MemoryAccessRangeOne(thr, shadow_mem, cur, access, addr, size1, typ)))
@@ -1535,8 +1528,7 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
     shadow_mem += kShadowCnt;
   }
   // Handle middle part, if any.
-  Shadow cur(fast_state);
-  cur.SetAccess(0, kShadowCell, typ);
+  Shadow cur(fast_state, 0, kShadowCell, typ);
   const m128 access = _mm_set1_epi32(cur.raw());
   for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt) {
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, access, 0, kShadowCell, typ)))
@@ -1544,8 +1536,7 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr,
   }
   // Handle ending, if any.
   if (UNLIKELY(size)) {
-    Shadow cur(fast_state);
-    cur.SetAccess(0, size, typ);
+    Shadow cur(fast_state, 0, size, typ);
     const m128 access = _mm_set1_epi32(cur.raw());
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, access, 0, size, typ)))
       return;
@@ -1606,7 +1597,7 @@ void ThreadIgnoreBegin(ThreadState* thr, uptr pc) {
   DPrintf("#%d: ThreadIgnoreBegin\n", thr->tid);
   thr->ignore_accesses++;
   CHECK_GT(thr->ignore_accesses, 0);
-  thr->ignore_enabled_ = true;
+  thr->fast_state.SetIgnoreAccesses(true);
 #if !SANITIZER_GO
   if (pc && !ctx->after_multithreaded_fork)
     thr->mop_ignore_set.Add(CurrentStackId(thr, pc));
@@ -1617,12 +1608,11 @@ void ThreadIgnoreEnd(ThreadState* thr) {
   DPrintf("#%d: ThreadIgnoreEnd\n", thr->tid);
   CHECK_GT(thr->ignore_accesses, 0);
   thr->ignore_accesses--;
-  if (thr->ignore_accesses == 0) {
-    thr->ignore_enabled_ = false;
+  thr->fast_state.SetIgnoreAccesses(thr->ignore_accesses);
 #if !SANITIZER_GO
+  if (!thr->ignore_accesses)
     thr->mop_ignore_set.Reset();
 #endif
-  }
 }
 
 #if !SANITIZER_GO

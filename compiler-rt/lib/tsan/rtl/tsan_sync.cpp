@@ -36,7 +36,7 @@ void SyncVar::Init(ThreadState* thr, uptr pc, uptr addr, bool save_stack) {
 void SyncVar::Reset() {
   creation_stack_id = kInvalidStackID;
   owner_tid = kInvalidTid;
-  last_lock = 0;
+  last_lock.Reset();
   recursion = 0;
   atomic_store_relaxed(&flags, 0);
   Free(clock);
@@ -172,7 +172,7 @@ void MetaMap::ResetClocks() {
   sync_alloc_.ForEach([](SyncVar* s) {
     Free(s->clock);
     Free(s->read_clock);
-    s->last_lock = 0;
+    s->last_lock.Reset();
   });
 }
 

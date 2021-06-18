@@ -170,25 +170,25 @@ void __tsan_map_shadow(uptr addr, uptr size) {
 }
 
 void __tsan_read(ThreadState *thr, void *addr, void *pc) {
-  MemoryRead(thr, (uptr)pc, (uptr)addr, 1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, AccessRead);
 }
 
 void __tsan_read_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryRead(thr, (uptr)pc, (uptr)addr, 1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, AccessRead);
   if (callpc != 0)
     FuncExit(thr);
 }
 
 void __tsan_write(ThreadState *thr, void *addr, void *pc) {
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, 1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, AccessWrite);
 }
 
 void __tsan_write_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, 1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, AccessWrite);
   if (callpc != 0)
     FuncExit(thr);
 }

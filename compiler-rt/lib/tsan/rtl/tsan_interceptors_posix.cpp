@@ -1946,7 +1946,7 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   int ignore_sync = thr->ignore_sync;
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_accesses = 0;
-    thr->ignore_enabled_ = false;
+    thr->fast_state.SetIgnoreAccesses(false);
     thr->ignore_interceptors = 0;
     thr->ignore_sync = 0;
   }
@@ -1963,8 +1963,7 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
     ((__sanitizer_sigactionhandler_ptr)pc)(sig, info, uctx);
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_accesses = ignore_accesses;
-    if (ignore_accesses)
-      thr->ignore_enabled_ = true;
+    thr->fast_state.SetIgnoreAccesses(ignore_accesses);
     thr->ignore_interceptors = ignore_interceptors;
     thr->ignore_sync = ignore_sync;
   }

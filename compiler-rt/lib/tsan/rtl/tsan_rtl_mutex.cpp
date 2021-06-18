@@ -23,7 +23,7 @@
 namespace __tsan {
 
 void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r);
-void ReportDestroyLocked(ThreadState* thr, uptr pc, uptr addr, u32 last_lock,
+void ReportDestroyLocked(ThreadState* thr, uptr pc, uptr addr, FastState last_lock,
                          StackID creation_stack_id);
 void ReportMutexMisuse(ThreadState* thr, uptr pc, ReportType typ, uptr addr,
                        StackID creation_stack_id);
@@ -69,7 +69,7 @@ void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexDestroy %zx\n", thr->tid, addr);
   bool unlock_locked = false;
   StackID creation_stack_id;
-  u32 last_lock;
+  FastState last_lock;
   {
     SlotLocker locker(thr);
     auto s = ctx->metamap.GetSyncIfExists(thr, pc, addr);
@@ -144,7 +144,7 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
     if (s->owner_tid == kInvalidTid) {
       CHECK_EQ(s->recursion, 0);
       s->owner_tid = thr->tid;
-      s->last_lock = thr->fast_state.raw();
+      s->last_lock = thr->fast_state;
     } else if (s->owner_tid == thr->tid) {
       CHECK_GT(s->recursion, 0);
     } else if (flags()->report_mutex_bugs && !s->IsFlagSet(MutexFlagBroken)) {
@@ -261,7 +261,7 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
     }
     if (!thr->ignore_sync)
       thr->clock.Acquire(s->clock);
-    s->last_lock = thr->fast_state.raw();
+    s->last_lock = thr->fast_state;
     if (common_flags()->detect_deadlocks) {
       pre_lock =
           (flagz & MutexFlagDoPreLockOnPostLock) && !(flagz & MutexFlagTryLock);
@@ -436,11 +436,9 @@ void ReleaseStoreAcquire(ThreadState* thr, uptr pc, uptr addr) {
 
 void IncrementEpoch(ThreadState* thr) {
   DCHECK(!thr->ignore_sync);
+  DCHECK(thr->slot_locked);
   TraceRelease(thr);
   Epoch epoch = EpochInc(thr->fast_state.epoch());
-  //!!! We traced release above, but then did not increment slot epoch. Is it
-  //! OK?
-  // Shuold we do it in opposite order?
   if (!EpochOverflow(epoch)) {
     thr->fast_state.SetEpoch(epoch);
     thr->clock.Set(thr->fast_state.sid(), epoch);
@@ -513,10 +511,9 @@ void ReportDeadlock(ThreadState* thr, uptr pc, DDReport* r) {
   OutputReport(thr, &rep);
 }
 
-void ReportDestroyLocked(ThreadState* thr, uptr pc, uptr addr, u32 last_lock,
+void ReportDestroyLocked(ThreadState* thr, uptr pc, uptr addr, FastState last_lock,
                          StackID creation_stack_id) {
   MutexSet mset;
-  Shadow last(last_lock);
   //!!! this won't restore read lock stack because type == EventTypeLock.
   VarSizeStackTrace trace[2];
   ReportDesc rep;
@@ -524,7 +521,7 @@ void ReportDestroyLocked(ThreadState* thr, uptr pc, uptr addr, u32 last_lock,
   {
     ReportScope report_scope(thr);
     Tid tid;
-    if (!RestoreStack(EventTypeLock, last.sid(), last.epoch(), addr, 0, false,
+    if (!RestoreStack(EventTypeLock, last_lock.sid(), last_lock.epoch(), addr, 0, false,
                       false, false, &tid, &trace[1], &mset))
       return;
     rep.AddMutex(addr, creation_stack_id);

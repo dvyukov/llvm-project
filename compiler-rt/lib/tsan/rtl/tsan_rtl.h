@@ -143,8 +143,7 @@ struct TidSlot { //!!! pad/align to cache line
 
 // This struct is stored in TLS.
 struct ThreadState {
-  Shadow fast_state;
-  bool ignore_enabled_;
+  FastState fast_state;
   int ignore_sync;
 #if !SANITIZER_GO
   int ignore_interceptors;
