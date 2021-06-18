@@ -496,25 +496,18 @@ static bool HandleRacyAddress(ThreadState *thr, uptr addr_min, uptr addr_max) {
 
 struct ExternalCallbackScope : ScopedIgnoreInterceptors {
   ExternalCallbackScope(ThreadState* thr, ReportDesc* rep)
-      : thr_(thr), is_freeing_(thr->is_freeing),
-        is_vptr_access_(thr->is_vptr_access) {
+      : thr_(thr) {
     ThreadIgnoreBegin(thr_, 0);
     CHECK_EQ(thr_->current_report, nullptr);
     thr_->current_report = rep;
-    is_freeing_ = false;
-    thr->is_vptr_access = false;
   }
 
   ~ExternalCallbackScope() {
     ThreadIgnoreEnd(thr_);
     thr_->current_report = nullptr;
-    thr_->is_freeing = is_freeing_;
-    thr_->is_vptr_access = is_vptr_access_;
   }
 
   ThreadState* thr_;
-  bool is_freeing_;
-  bool is_vptr_access_;
 };
 
 bool OutputReport(ThreadState* thr, ReportDesc* rep) {
@@ -586,13 +579,13 @@ static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
 }
 
 void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
-                Shadow old) {
+                Shadow old, AccessType typ) {
   VPrintf(1, "#%d: ReportRace\n", thr->tid);
   if (!ShouldReport(thr, ReportTypeRace))
     return;
   if (!flags()->report_atomic_races &&
       (cur.IsAtomic() || old.IsAtomic()) &&
-      !old.IsFree() && !thr->is_freeing)
+      !old.IsFree() && !(typ & AccessFree))
     return;
 
   const uptr kMop = 2;
@@ -612,9 +605,9 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   VarSizeStackTrace traces[kMop];
   ReportDesc rep;
   rep.typ = ReportTypeRace;
-  if (thr->is_vptr_access && s[1].IsFree())
+  if ((typ & AccessVptr) && s[1].IsFree())
     rep.typ = ReportTypeVptrUseAfterFree;
-  else if (thr->is_vptr_access)
+  else if (typ & AccessVptr)
     rep.typ = ReportTypeVptrRace;
   else if (s[1].IsFree())
     rep.typ = ReportTypeUseAfterFree;

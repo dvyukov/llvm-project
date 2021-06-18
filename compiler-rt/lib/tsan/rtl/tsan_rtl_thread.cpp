@@ -83,7 +83,7 @@ static void ReportIgnoresEnabled(ThreadContext *tctx, IgnoreSet *set) {
 static void ThreadCheckIgnore(ThreadState *thr) {
   if (ctx->after_multithreaded_fork)
     return;
-  if (thr->ignore_reads_and_writes)
+  if (thr->ignore_accesses)
     ReportIgnoresEnabled(thr->tctx, &thr->mop_ignore_set);
   if (thr->ignore_sync)
     ReportIgnoresEnabled(thr->tctx, &thr->sync_ignore_set);

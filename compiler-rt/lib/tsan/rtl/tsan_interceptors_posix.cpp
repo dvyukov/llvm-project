@@ -1427,14 +1427,14 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_unlock, void *m) {
 #if !SANITIZER_MAC
 TSAN_INTERCEPTOR(int, pthread_barrier_init, void *b, void *a, unsigned count) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_init, b, a, count);
-  MemoryWrite(thr, pc, (uptr)b, 1);
+  MemoryAccess(thr, pc, (uptr)b, 1, AccessWrite);
   int res = REAL(pthread_barrier_init)(b, a, count);
   return res;
 }
 
 TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_destroy, b);
-  MemoryWrite(thr, pc, (uptr)b, 1);
+  MemoryAccess(thr, pc, (uptr)b, 1, AccessWrite);
   int res = REAL(pthread_barrier_destroy)(b);
   return res;
 }
@@ -1442,9 +1442,9 @@ TSAN_INTERCEPTOR(int, pthread_barrier_destroy, void *b) {
 TSAN_INTERCEPTOR(int, pthread_barrier_wait, void *b) {
   SCOPED_TSAN_INTERCEPTOR(pthread_barrier_wait, b);
   Release(thr, pc, (uptr)b);
-  MemoryRead(thr, pc, (uptr)b, 1);
+  MemoryAccess(thr, pc, (uptr)b, 1, AccessRead);
   int res = BLOCK_REAL(pthread_barrier_wait)(b);
-  MemoryRead(thr, pc, (uptr)b, 1);
+  MemoryAccess(thr, pc, (uptr)b, 1, AccessRead);
   if (res == 0 || res == PTHREAD_BARRIER_SERIAL_THREAD) {
     Acquire(thr, pc, (uptr)b);
   }
@@ -1941,11 +1941,11 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   // ignores are enabled we should disable ignores. This is critical for sync
   // and interceptors, because otherwise we can miss syncronization and report
   // false races.
-  int ignore_reads_and_writes = thr->ignore_reads_and_writes;
+  int ignore_accesses = thr->ignore_accesses;
   int ignore_interceptors = thr->ignore_interceptors;
   int ignore_sync = thr->ignore_sync;
   if (!ctx->after_multithreaded_fork) {
-    thr->ignore_reads_and_writes = 0;
+    thr->ignore_accesses = 0;
     thr->ignore_enabled_ = false;
     thr->ignore_interceptors = 0;
     thr->ignore_sync = 0;
@@ -1962,8 +1962,8 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   if (pc != sig_dfl && pc != sig_ign)
     ((__sanitizer_sigactionhandler_ptr)pc)(sig, info, uctx);
   if (!ctx->after_multithreaded_fork) {
-    thr->ignore_reads_and_writes = ignore_reads_and_writes;
-    if (ignore_reads_and_writes)
+    thr->ignore_accesses = ignore_accesses;
+    if (ignore_accesses)
       thr->ignore_enabled_ = true;
     thr->ignore_interceptors = ignore_interceptors;
     thr->ignore_sync = ignore_sync;

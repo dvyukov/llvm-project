@@ -164,9 +164,7 @@ struct ThreadState {
   VectorClock clock;
 
   // This is a slow path flag. On fast paths, ignore_enabled_ is used.
-  // We do not distinguish beteween ignoring reads and writes for better
-  // performance.
-  int ignore_reads_and_writes;
+  int ignore_accesses;
   int suppress_reports;
   // Go does not support ignores.
 #if SANITIZER_GO
@@ -193,8 +191,6 @@ struct ThreadState {
   MutexSet mset;
   bool is_dead;
   const Tid tid;
-  bool is_freeing;
-  bool is_vptr_access;
   uptr stk_addr;
   uptr stk_size;
   uptr tls_addr;
@@ -426,7 +422,7 @@ void ForkParentAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx);
 void ForkChildAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx);
 
 void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
-                Shadow old);
+                Shadow old, AccessType typ);
 bool OutputReport(ThreadState* thr, ReportDesc* rep);
 bool IsFiredSuppression(Context *ctx, ReportType type, StackTrace trace);
 bool IsExpectedReport(uptr addr, uptr size);
@@ -467,13 +463,8 @@ int Finalize(ThreadState *thr);
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write);
 
-void MemoryAccess(ThreadState* thr, uptr pc, uptr addr, u32 kAccessSize,
-                  bool kAccessIsWrite, bool kIsAtomic);
-void MemoryAccessImpl(ThreadState* thr, uptr addr, u32 kAccessSize,
-                      bool kAccessIsWrite, bool kIsAtomic,
-                      RawShadow* shadow_mem, Shadow cur);
-void UnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr, int size,
-                           bool kAccessIsWrite);
+void MemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ);
+void UnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ);
 template <bool is_write>
 void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size);
 
@@ -486,26 +477,6 @@ void MemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size,
     MemoryAccessRangeT<true>(thr, pc, addr, size);
   else
     MemoryAccessRangeT<false>(thr, pc, addr, size);
-}
-
-void ALWAYS_INLINE MemoryRead(ThreadState* thr, uptr pc, uptr addr,
-                              int kAccessSize) {
-  MemoryAccess(thr, pc, addr, kAccessSize, false, false);
-}
-
-void ALWAYS_INLINE MemoryWrite(ThreadState* thr, uptr pc, uptr addr,
-                               int kAccessSize) {
-  MemoryAccess(thr, pc, addr, kAccessSize, true, false);
-}
-
-void ALWAYS_INLINE MemoryReadAtomic(ThreadState* thr, uptr pc, uptr addr,
-                                    int kAccessSize) {
-  MemoryAccess(thr, pc, addr, kAccessSize, false, true);
-}
-
-void ALWAYS_INLINE MemoryWriteAtomic(ThreadState* thr, uptr pc, uptr addr,
-                                     int kAccessSize) {
-  MemoryAccess(thr, pc, addr, kAccessSize, true, true);
 }
 
 void MemoryRangeFreed(ThreadState *thr, uptr pc, uptr addr, uptr size);
@@ -629,8 +600,6 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceFunc(ThreadState* thr,
   return true;
 }
 
-void TraceMemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size,
-                            bool isRead, bool isFreed);
 void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
                     StackID stk);
 void TraceMutexUnlock(ThreadState* thr, uptr addr);

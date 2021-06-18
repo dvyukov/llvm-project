@@ -225,7 +225,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
   // This fast-path is critical for performance.
   // Assume the access is atomic.
   if (LIKELY(!IsAcquireOrder(mo))) {
-    MemoryReadAtomic(thr, pc, (uptr)a, AccessSize<T>());
+    MemoryAccess(thr, pc, (uptr)a, AccessSize<T>(), AccessRead | AccessAtomic);
     return NoTsanAtomicLoad(a, mo);
   }
   T v = NoTsanAtomicLoad(a, mo);
@@ -240,7 +240,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
     // of the value and the clock we acquire.
     v = NoTsanAtomicLoad(a, mo);
   }
-  MemoryReadAtomic(thr, pc, (uptr)a, AccessSize<T>());
+  MemoryAccess(thr, pc, (uptr)a, AccessSize<T>(), AccessRead | AccessAtomic);
   return v;
 }
 
@@ -260,7 +260,7 @@ template<typename T>
 static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
     morder mo) {
   DCHECK(IsStoreOrder(mo));
-  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
+  MemoryAccess(thr, pc, (uptr)a, AccessSize<T>(), AccessWrite | AccessAtomic);
   // This fast-path is critical for performance.
   // Assume the access is atomic.
   // Strictly saying even relaxed store cuts off release sequence,
@@ -281,7 +281,7 @@ static void AtomicStore(ThreadState *thr, uptr pc, volatile T *a, T v,
 
 template<typename T, T (*F)(volatile T *v, T op)>
 static T AtomicRMW(ThreadState *thr, uptr pc, volatile T *a, T v, morder mo) {
-  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
+  MemoryAccess(thr, pc, (uptr)a, AccessSize<T>(), AccessWrite | AccessAtomic);
   if (LIKELY(mo == mo_relaxed))
     return F(a, v);
   SlotLocker locker(thr);
@@ -409,7 +409,7 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
   // (mo_relaxed) when those are used.
   DCHECK(IsLoadOrder(fmo));
 
-  MemoryWriteAtomic(thr, pc, (uptr)a, AccessSize<T>());
+  MemoryAccess(thr, pc, (uptr)a, AccessSize<T>(), AccessWrite | AccessAtomic);
   if (LIKELY(mo == mo_relaxed && fmo == mo_relaxed)) {
     T cc = *c;
     T pr = func_cas(a, cc, v);

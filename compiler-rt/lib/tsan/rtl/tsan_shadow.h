@@ -40,6 +40,11 @@ public:
     DCHECK_EQ(epoch_, static_cast<u16>(epoch));
   }
 
+  void SetAccess(u32 addr, u32 size, AccessType typ) {
+    SetAccess(addr, size, typ & AccessRead, typ & AccessAtomic);
+  }
+
+ //!!! remove
   void SetAccess(u32 addr, u32 size, bool isRead, bool isAtomic) {
     // DCHECK_EQ(raw_ & 0xff, 0);
     DCHECK_GT(size, 0);
@@ -102,26 +107,6 @@ public:
     DCHECK_EQ(res, (!IsWrite() && !kIsWrite) || (IsAtomic() && kIsAtomic));
     return res;
   }
-
-/*
-  ALWAYS_INLINE
-  static bool SidsAreEqualOrBothReadsOrAtomic(Shadow cur, Shadow old,
-                                              bool kIsWrite, bool kIsAtomic) {
-    //!!! if we move bits to the low byte, we could do:
-    // (((cur.raw_ ^ old.raw_) & 0xff00) | ((cur.raw_ & old.raw_) 0x3)) - 1 <=
-    // 2;
-#if 0
-    //bool res = (((cur.raw_ ^ old.raw_) & 0xff00) | (old.raw_ & ((kIsWrite ^ 1) | (kIsAtomic << 1)))) - 1 <= 2;
-#else
-    bool res =
-        (cur.sid_ == old.sid_) ||
-        (old.raw_ & ((u32(kIsAtomic) << 31) | (u32(kIsWrite ^ 1) << 30)));
-#endif
-    DCHECK_EQ(res, SidsAreEqual(cur, old) ||
-                       old.IsBothReadsOrAtomic(kIsWrite, kIsAtomic));
-    return res;
-  }
-*/
 
   ALWAYS_INLINE bool IsRWWeakerOrEqual(Shadow cur, bool kIsWrite,
                                        bool kIsAtomic) const {

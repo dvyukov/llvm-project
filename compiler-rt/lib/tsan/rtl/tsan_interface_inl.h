@@ -19,91 +19,91 @@
 using namespace __tsan;
 
 void __tsan_read1(void* addr) {
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr, 1);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 1, AccessRead);
 }
 
 void __tsan_read2(void* addr) {
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr, 2);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, AccessRead);
 }
 
 void __tsan_read4(void* addr) {
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr, 4);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, AccessRead);
 }
 
 void __tsan_read8(void* addr) {
-  MemoryRead(cur_thread(), CALLERPC, (uptr)addr, 8);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, AccessRead);
 }
 
 void __tsan_write1(void* addr) {
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr, 1);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 1, AccessWrite);
 }
 
 void __tsan_write2(void* addr) {
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr, 2);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, AccessWrite);
 }
 
 void __tsan_write4(void* addr) {
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr, 4);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, AccessWrite);
 }
 
 void __tsan_write8(void* addr) {
-  MemoryWrite(cur_thread(), CALLERPC, (uptr)addr, 8);
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, AccessWrite);
 }
 
 void __tsan_read1_pc(void* addr, void* pc) {
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessRead);
 }
 
 void __tsan_read2_pc(void* addr, void* pc) {
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessRead);
 }
 
 void __tsan_read4_pc(void* addr, void* pc) {
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessRead);
 }
 
 void __tsan_read8_pc(void* addr, void* pc) {
-  MemoryRead(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessRead);
 }
 
 void __tsan_write1_pc(void* addr, void* pc) {
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessWrite);
 }
 
 void __tsan_write2_pc(void* addr, void* pc) {
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessWrite);
 }
 
 void __tsan_write4_pc(void* addr, void* pc) {
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessWrite);
 }
 
 void __tsan_write8_pc(void* addr, void* pc) {
-  MemoryWrite(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessWrite);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_read2(const void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, false);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, AccessRead);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_read4(const void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, false);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, AccessRead);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_read8(const void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, false);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, AccessRead);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_write2(void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, true);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 2, AccessWrite);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_write4(void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, true);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 4, AccessWrite);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_write8(void* addr) {
-  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, true);
+  UnalignedMemoryAccess(cur_thread(), CALLERPC, (uptr)addr, 8, AccessWrite);
 }
 
 extern "C" {
@@ -147,18 +147,11 @@ void __sanitizer_unaligned_store64(uu64* addr, u64 v) {
 void __tsan_vptr_update(void **vptr_p, void *new_val) {
   if (*vptr_p == new_val)
     return;
-  ThreadState* thr = cur_thread();
-  //!!! figure out how to turn this into tail call
-  thr->is_vptr_access = true;
-  MemoryWrite(thr, CALLERPC, (uptr)vptr_p, 8);
-  thr->is_vptr_access = false;
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)vptr_p, sizeof(*vptr_p), AccessWrite | AccessVptr);
 }
 
 void __tsan_vptr_read(void **vptr_p) {
-  ThreadState *thr = cur_thread();
-  thr->is_vptr_access = true;
-  MemoryRead(thr, CALLERPC, (uptr)vptr_p, 8);
-  thr->is_vptr_access = false;
+  MemoryAccess(cur_thread(), CALLERPC, (uptr)vptr_p, sizeof(*vptr_p), AccessRead | AccessVptr);
 }
 
 void __tsan_func_entry(void* pc) {

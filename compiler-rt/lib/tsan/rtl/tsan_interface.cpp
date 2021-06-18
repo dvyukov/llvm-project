@@ -31,29 +31,29 @@ void __tsan_flush_memory() {
 void __tsan_read16(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  MemoryRead(thr, pc, (uptr)addr, 8);
-  MemoryRead(thr, pc, (uptr)addr + 8, 8);
+  MemoryAccess(thr, pc, (uptr)addr, 8, AccessRead);
+  MemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessRead);
 }
 
 void __tsan_write16(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  MemoryWrite(thr, pc, (uptr)addr, 8);
-  MemoryWrite(thr, pc, (uptr)addr + 8, 8);
+  MemoryAccess(thr, pc, (uptr)addr, 8, AccessWrite);
+  MemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessWrite);
 }
 
 void __tsan_read16_pc(void* addr, void* pc1) {
   uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
-  MemoryRead(thr, pc, (uptr)addr, 8);
-  MemoryRead(thr, pc, (uptr)addr + 8, 8);
+  MemoryAccess(thr, pc, (uptr)addr, 8, AccessRead);
+  MemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessRead);
 }
 
 void __tsan_write16_pc(void* addr, void* pc1) {
   uptr pc = STRIP_PAC_PC(pc1);
   ThreadState* thr = cur_thread();
-  MemoryWrite(thr, pc, (uptr)addr, 8);
-  MemoryWrite(thr, pc, (uptr)addr + 8, 8);
+  MemoryAccess(thr, pc, (uptr)addr, 8, AccessWrite);
+  MemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessWrite);
 }
 
 // __tsan_unaligned_read/write calls are emitted by compiler.
@@ -61,15 +61,15 @@ void __tsan_write16_pc(void* addr, void* pc1) {
 void __tsan_unaligned_read16(const void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, false);
-  UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, false);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, AccessRead);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessRead);
 }
 
 void __tsan_unaligned_write16(void *addr) {
   uptr pc = CALLERPC;
   ThreadState* thr = cur_thread();
-  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, true);
-  UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, true);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, AccessWrite);
+  UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, AccessWrite);
 }
 
 // __sanitizer_unaligned_load/store are for user instrumentation.

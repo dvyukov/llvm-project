@@ -15,7 +15,7 @@
 #include "sanitizer_platform.h"
 
 #ifndef SANITIZER_DEBUG
-# define SANITIZER_DEBUG 1
+# define SANITIZER_DEBUG 0
 #endif
 
 #define SANITIZER_STRINGIFY_(S) #S

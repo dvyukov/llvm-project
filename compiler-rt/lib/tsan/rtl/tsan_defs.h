@@ -71,6 +71,16 @@ inline bool EpochOverflow(Epoch epoch) {
   return epoch == kEpochOver;
 }
 
+typedef uptr AccessType;
+
+enum {
+	AccessWrite = 0,
+	AccessRead = 1,
+	AccessAtomic = 2,
+	AccessFree = 4,
+	AccessVptr = 8,
+};
+
 const uptr kShadowStackSize = 64 * 1024;
 
 // Count of shadow values in a shadow cell.

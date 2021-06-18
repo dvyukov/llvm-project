@@ -228,7 +228,7 @@ void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
   DPrintf("#%d: alloc(%zu) = %p\n", thr->tid, sz, p);
   ctx->metamap.AllocBlock(thr, pc, p, sz);
   //!!! find a better check for thread inited thr->trace_pos
-  if (write && thr->ignore_reads_and_writes == 0 &&
+  if (write && !thr->ignore_accesses &&
       atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeImitateWrite(thr, pc, (uptr)p, sz);
   else
@@ -246,7 +246,7 @@ void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
   uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
   DPrintf("#%d: free(%p %zu) write=%d\n", thr->tid, p, sz, write);
   //!!! find a better check for thread inited thr->trace_pos
-  if (write && thr->ignore_reads_and_writes == 0 &&
+  if (write && !thr->ignore_accesses &&
       atomic_load_relaxed(&thr->trace_pos))
     MemoryRangeFreed(thr, pc, (uptr)p, sz);
 }
