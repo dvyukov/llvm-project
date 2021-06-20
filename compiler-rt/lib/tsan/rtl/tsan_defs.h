@@ -74,11 +74,12 @@ inline bool EpochOverflow(Epoch epoch) {
 typedef uptr AccessType;
 
 enum {
-	AccessWrite = 0,
-	AccessRead = 1,
-	AccessAtomic = 2,
-	AccessFree = 4,
-	AccessVptr = 8,
+  AccessWrite = 0,
+  AccessRead = 1,
+  AccessAtomic = 2,
+  AccessFree = 4,
+  AccessVptr = 8,
+  AccessTemp = 16,
 };
 
 const uptr kShadowStackSize = 64 * 1024;

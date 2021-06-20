@@ -1167,7 +1167,7 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
     goto SHARED;
 
 STORE : {
-  if (typ & AccessFree)
+  if (typ & AccessTemp)
     return false;
   const m128 not_same_sid_access = _mm_and_si128(access_xor, mask_access_sid);
   const m128 same_sid_access = _mm_cmpeq_epi32(not_same_sid_access, zero);
@@ -1224,7 +1224,7 @@ MemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ) {
   (void)memBuf;
   DPrintf2("#%d: Access: @%p %p size=%d"
            " typ=%x shadow=%p {%s, %s, %s, %s}\n",
-           (int)thr->tid, (void*)pc, (void*)addr, kAccessSize, typ,
+           (int)thr->tid, (void*)pc, (void*)addr, size, typ,
            shadow_mem, DumpShadow(memBuf[0], shadow_mem[0]),
            DumpShadow(memBuf[1], shadow_mem[1]),
            DumpShadow(memBuf[2], shadow_mem[2]),
@@ -1412,7 +1412,7 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   // As the result a garbage "freed" shadow can lead to a false
   // positive if it happen to match a real free in the trace,
   // but the heap block was reallocated, so it's still good to access.
-  const AccessType typ = AccessWrite | AccessFree;
+  const AccessType typ = AccessWrite | AccessFree | AccessTemp;
   TraceMemoryAccessRange(thr, pc, addr, size, typ);
   RawShadow* shadow_mem = (RawShadow*)MemToShadow(addr);
   Shadow cur(thr->fast_state, 0, kShadowCell, typ);

@@ -431,19 +431,13 @@ void PrintMatchedBenignRaces();
 #  if defined(TSAN_DEBUG_OUTPUT) && TSAN_DEBUG_OUTPUT >= 1
 #    define DPrintf Printf
 #  else
-#    define DPrintf(...)                                                       \
-      do {                                                                     \
-      } while (0)
+#    define DPrintf(...) do {} while (0)
 #  endif
-
 #  if defined(TSAN_DEBUG_OUTPUT) && TSAN_DEBUG_OUTPUT >= 2
 #    define DPrintf2 Printf
 #  else
-#    define DPrintf2(...)                                                      \
-      do {                                                                     \
-      } while (0)
+#    define DPrintf2(...) do {} while (0)
 #  endif
-
 #else
 #  define DPrintf Printf
 #  define DPrintf2 Printf
