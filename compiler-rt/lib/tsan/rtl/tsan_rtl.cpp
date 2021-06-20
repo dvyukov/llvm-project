@@ -669,15 +669,6 @@ void Initialize(ThreadState *thr) {
 #if !SANITIZER_GO
   Symbolizer::LateInitialize();
 #endif
-
-  {
-    FastState fast_state;
-    fast_state.SetSid(static_cast<Sid>(0));
-    fast_state.SetEpoch(kEpochZero);
-    Shadow ro(fast_state, 0, 1, AccessRead);
-    CHECK_EQ(ro.raw(), Shadow::kShadowRodata);
-  }
-
   ctx->initialized = true;
 
   if (flags()->stop_on_start) {

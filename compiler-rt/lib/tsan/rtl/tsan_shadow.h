@@ -163,9 +163,9 @@ public:
   ALWAYS_INLINE bool IsFree() const {
     return access_ == kFreeAccess;
   }
- 
+
   // .rodata shadow marker, see MapRodata and ContainsSameAccessFast.
-  static constexpr RawShadow kShadowRodata = 0x40000001;
+  static constexpr RawShadow kShadowRodata = 0x40000000;
 
   //!!! Need to write (kFreeSid, access:0xff, non-atomic write, epoch:0),
   // (real sid, access:0x81, real epoch) (note: access must not pass
