@@ -19,10 +19,8 @@
 
 namespace __tsan {
 
-enum MutexType {
-  MutexTypeLeaf = -1,
-  MutexTypeInvalid,
-  MutexTypeReport,
+enum {
+  MutexTypeReport = MutexLastCommon,
   MutexTypeSyncVar,
   MutexTypeAnnotations,
   MutexTypeFired,
@@ -38,6 +36,7 @@ enum MutexType {
   MutexTypeCount
 };
 
+/*
 class MUTEX Mutex {
 public:
   explicit Mutex(MutexType type);
@@ -171,6 +170,7 @@ ALWAYS_INLINE
 void Mutex::CheckLocked() {
   CHECK_NE(atomic_load(&state_, memory_order_relaxed), 0);
 }
+*/
 
 typedef GenericScopedLock<Mutex> Lock;
 typedef GenericScopedReadLock<Mutex> ReadLock;

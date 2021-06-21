@@ -22,14 +22,15 @@ namespace __sanitizer {
 
 class StaticSpinMutex {
  public:
+  StaticSpinMutex() = default;
+ 
   void Init() {
     atomic_store(&state_, 0, memory_order_relaxed);
   }
 
   void Lock() {
-    if (TryLock())
-      return;
-    LockSlow();
+    if (UNLIKELY(!TryLock()))
+      LockSlow();
   }
 
   bool TryLock() {
@@ -47,17 +48,10 @@ class StaticSpinMutex {
  private:
   atomic_uint8_t state_;
 
-  void NOINLINE LockSlow() {
-    for (int i = 0;; i++) {
-      if (i < 10)
-        proc_yield(10);
-      else
-        internal_sched_yield();
-      if (atomic_load(&state_, memory_order_relaxed) == 0
-          && atomic_exchange(&state_, 1, memory_order_acquire) == 0)
-        return;
-    }
-  }
+  void LockSlow();
+
+  StaticSpinMutex(const StaticSpinMutex&) = delete;
+  void operator = (const StaticSpinMutex&) = delete;
 };
 
 class SpinMutex : public StaticSpinMutex {
@@ -65,10 +59,45 @@ class SpinMutex : public StaticSpinMutex {
   SpinMutex() {
     Init();
   }
+};
 
- private:
-  SpinMutex(const SpinMutex&);
-  void operator=(const SpinMutex&);
+typedef uptr MutexType;
+
+enum {
+  MutexUnchecked,
+  MutexLeaf,
+  MutexLastCommon,
+};
+
+#if SANITIZER_DEBUG && !SANITIZER_GO
+void DebugMutexLock(MutexType type);
+void DebugMutexUnlock(MutexType type);
+#endif
+
+class CheckedMutex {
+protected:
+  CheckedMutex(MutexType type) {
+#if SANITIZER_DEBUG && !SANITIZER_GO
+    type_ = type;
+#endif
+  }
+
+  void DebugLock() {
+#if SANITIZER_DEBUG && !SANITIZER_GO
+    DebugMutexLock(type_);
+#endif  
+  }
+
+  void DebugUnlock() {
+#if SANITIZER_DEBUG && !SANITIZER_GO
+    DebugMutexUnlock(type_);
+#endif  
+  }
+
+private:
+#if SANITIZER_DEBUG && !SANITIZER_GO
+  MutexType type_;
+#endif  
 };
 
 class Semaphore {
@@ -81,16 +110,112 @@ class Semaphore {
   void Post(u32 count = 1);
 
  private:
-  atomic_uint32_t count_;
+#if SANITIZER_LINUX
+  atomic_uint32_t state_;
+#else
+  uptr state_;
+#endif
 };
 
-class BlockingMutex {
+// Reader-writer mutex.
+class MUTEX Mutex : public CheckedMutex {
  public:
-  explicit constexpr BlockingMutex(LinkerInitialized)
-      : opaque_storage_ {0, }, owner_ {0} {}
-  BlockingMutex();
-  void Lock();
-  void Unlock();
+  Mutex(MutexType type = MutexUnchecked)
+    : CheckedMutex(type) {
+    atomic_store_relaxed(&state_, 0);
+  }
+
+  ~Mutex() {
+    DCHECK_EQ(atomic_load_relaxed(&state_), 0);
+  }
+
+  void Lock() ACQUIRE() {
+    DebugLock();
+    u64 reset_mask = ~0ull;
+    u64 state = atomic_load_relaxed(&state_);
+    for (;;) {
+      u64 new_state;
+      bool locked = (state & (kWriterLock | kReaderLockMask)) != 0;
+      if (LIKELY(!locked))
+        new_state = state | kWriterLock;
+      else
+        new_state = state + kWaitingWriterInc;
+      new_state &= reset_mask;
+      if (UNLIKELY(!atomic_compare_exchange_weak(&state_, &state, new_state, memory_order_acquire)))
+        continue;
+      if (LIKELY(!locked))
+        return;
+      writers_.Wait();
+      state = atomic_load(&state_, memory_order_relaxed);
+      DCHECK_NE(state & kWriterWoken, 0);
+      reset_mask = ~kWriterWoken;
+    }
+  }
+
+  void Unlock() RELEASE() {
+    DebugUnlock();
+    u64 state = atomic_load_relaxed(&state_);
+    for (;;) {
+      DCHECK_NE(state & kWriterLock, 0);
+      DCHECK_EQ(state & kReaderLockMask, 0);
+      u64 new_state = state & ~kWriterLock;
+      bool wake_writer = (state & kWriterWoken) == 0 &&
+          (state & kWaitingWriterMask) != 0;
+      if (wake_writer)
+        new_state = (new_state - kWaitingWriterInc) | kWriterWoken;
+      u64 wake_readers = (state & (kWriterWoken | kWaitingWriterMask)) != 0 ? 0 :
+          ((state & kWaitingReaderMask) >> kWaitingReaderShift);
+      if (wake_readers)
+        new_state = (new_state & ~ kWaitingReaderMask) + (wake_readers << kReaderLockShift);
+      if (UNLIKELY(!atomic_compare_exchange_weak(&state_, &state, new_state, memory_order_release)))
+        continue;
+      if (UNLIKELY(wake_writer))
+        writers_.Post();
+      else if(UNLIKELY(wake_readers))
+        readers_.Post(wake_readers);
+      return;
+    }
+  }
+
+  void ReadLock() ACQUIRE_SHARED() {
+    DebugLock();
+    u64 state = atomic_load_relaxed(&state_);
+    for (;;) {
+      u64 new_state;
+      bool locked = (state & kReaderLockMask) == 0 &&
+          (state & (kWriterLock | kWriterWoken | kWaitingWriterMask)) != 0;
+      if (LIKELY(!locked))
+        new_state = state + kReaderLockInc;
+      else
+        new_state = state + kWaitingReaderInc;
+      if (UNLIKELY(!atomic_compare_exchange_weak(&state_, &state, new_state, memory_order_acquire)))
+        continue;
+      if (UNLIKELY(locked))
+        readers_.Wait();
+      DCHECK_EQ(atomic_load_relaxed(&state_) & kWriterLock, 0);
+      DCHECK_NE(atomic_load_relaxed(&state_) & kReaderLockMask, 0);
+      return;
+    }
+  }
+
+  void ReadUnlock() RELEASE_SHARED() {
+    DebugUnlock();
+    u64 state = atomic_load_relaxed(&state_);
+    for (;;) {
+      DCHECK_NE(state & kReaderLockMask, 0);
+      DCHECK_EQ(state & (kWaitingReaderMask | kWriterLock), 0);
+      u64 new_state = state - kReaderLockInc;
+      bool wake = (state & kWriterWoken) == 0 &&
+          (state & kWaitingWriterMask) != 0;
+      if (wake)
+        new_state = (new_state - kWaitingWriterInc) | kWriterWoken;
+      if (UNLIKELY(!atomic_compare_exchange_weak(&state_, &state, new_state, memory_order_release)))
+        continue;
+      if (UNLIKELY(wake))
+        writers_.Post();
+      return;
+    }
+  }
 
   // This function does not guarantee an explicit check that the calling thread
   // is the thread which owns the mutex. This behavior, while more strictly
@@ -99,95 +224,73 @@ class BlockingMutex {
   // maintaining complex state to work around those situations, the check only
   // checks that the mutex is owned, and assumes callers to be generally
   // well-behaved.
-  void CheckLocked() const;
-
- private:
-  // Solaris mutex_t has a member that requires 64-bit alignment.
-  ALIGNED(8) uptr opaque_storage_[10];
-  uptr owner_;  // for debugging
-};
-
-// Reader-writer spin mutex.
-class RWMutex {
- public:
-  RWMutex() {
-    atomic_store(&state_, kUnlocked, memory_order_relaxed);
+  void CheckLocked() const CHECK_LOCKED {
+    CHECK_NE(atomic_load(&state_, memory_order_relaxed), 0);
   }
 
-  ~RWMutex() {
-    CHECK_EQ(atomic_load(&state_, memory_order_relaxed), kUnlocked);
+ private:
+  atomic_uint64_t state_;
+  Semaphore writers_;
+  Semaphore readers_;
+
+  static constexpr u64 kCounterWidth = 20;
+  static constexpr u64 kReaderLockShift = 0;
+  static constexpr u64 kReaderLockInc = 1ull << kReaderLockShift;
+  static constexpr u64 kReaderLockMask = ((1ull << kCounterWidth) - 1) << kReaderLockShift;
+  static constexpr u64 kWaitingReaderShift = kCounterWidth;
+  static constexpr u64 kWaitingReaderInc = 1ull << kWaitingReaderShift;
+  static constexpr u64 kWaitingReaderMask = ((1ull << kCounterWidth) - 1) << kWaitingReaderShift;
+  static constexpr u64 kWaitingWriterShift = 2 * kCounterWidth;
+  static constexpr u64 kWaitingWriterInc = 1ull << kWaitingWriterShift;
+  static constexpr u64 kWaitingWriterMask = ((1ull << kCounterWidth) - 1) << kWaitingWriterShift;
+  static constexpr u64 kWriterLock = 1ull << (3 * kCounterWidth);
+  static constexpr u64 kWriterWoken = 1ull << (3 * kCounterWidth + 1);
+
+  Mutex(const Mutex&) = delete;
+  void operator = (const Mutex&) = delete;
+};
+
+typedef Mutex RWMutex;
+typedef Mutex BlockingMutex;
+
+
+/*
+template <MutexType Type, typename Base = Mutex>
+class MUTEX CheckedMutex : Base {
+public:
+  bool TryLock() {
+    bool res = Base::TryLock();
+    if (res)
+      DebugMutexLock(Type);
+    return res;
   }
 
   void Lock() {
-    u32 cmp = kUnlocked;
-    if (atomic_compare_exchange_strong(&state_, &cmp, kWriteLock,
-                                       memory_order_acquire))
-      return;
-    LockSlow();
+    DebugMutexLock(Type);
+    Base::Lock();
   }
 
   void Unlock() {
-    u32 prev = atomic_fetch_sub(&state_, kWriteLock, memory_order_release);
-    DCHECK_NE(prev & kWriteLock, 0);
-    (void)prev;
+    Base::Unlock();
+    DebugMutexUnlock(Type);
   }
 
   void ReadLock() {
-    u32 prev = atomic_fetch_add(&state_, kReadLock, memory_order_acquire);
-    if ((prev & kWriteLock) == 0)
-      return;
-    ReadLockSlow();
+    DebugMutexLock(Type);
+    Base::ReadLock();
   }
 
   void ReadUnlock() {
-    u32 prev = atomic_fetch_sub(&state_, kReadLock, memory_order_release);
-    DCHECK_EQ(prev & kWriteLock, 0);
-    DCHECK_GT(prev & ~kWriteLock, 0);
-    (void)prev;
+    Base::ReadUnlock();
+    DebugMutexUnlock(Type);
   }
-
-  void CheckLocked() const {
-    CHECK_NE(atomic_load(&state_, memory_order_relaxed), kUnlocked);
-  }
-
- private:
-  atomic_uint32_t state_;
-
-  enum {
-    kUnlocked = 0,
-    kWriteLock = 1,
-    kReadLock = 2
-  };
-
-  void NOINLINE LockSlow() {
-    for (int i = 0;; i++) {
-      if (i < 10)
-        proc_yield(10);
-      else
-        internal_sched_yield();
-      u32 cmp = atomic_load(&state_, memory_order_relaxed);
-      if (cmp == kUnlocked &&
-          atomic_compare_exchange_weak(&state_, &cmp, kWriteLock,
-                                       memory_order_acquire))
-          return;
-    }
-  }
-
-  void NOINLINE ReadLockSlow() {
-    for (int i = 0;; i++) {
-      if (i < 10)
-        proc_yield(10);
-      else
-        internal_sched_yield();
-      u32 prev = atomic_load(&state_, memory_order_acquire);
-      if ((prev & kWriteLock) == 0)
-        return;
-    }
-  }
-
-  RWMutex(const RWMutex&);
-  void operator = (const RWMutex&);
 };
+*/
+
+
+
+
+
 
 template <typename MutexType>
 class SCOPED_LOCK GenericScopedLock {

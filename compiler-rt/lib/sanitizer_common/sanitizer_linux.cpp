@@ -639,6 +639,7 @@ char **GetEnviron() {
 }
 
 #if !SANITIZER_SOLARIS
+/*
 enum MutexState {
   MtxUnlocked = 0,
   MtxLocked = 1,
@@ -658,7 +659,7 @@ void BlockingMutex::Lock() {
 #if SANITIZER_FREEBSD
     _umtx_op(m, UMTX_OP_WAIT_UINT, MtxSleeping, 0, 0);
 #elif SANITIZER_NETBSD
-    sched_yield(); /* No userspace futex-like synchronization */
+    sched_yield(); // No userspace futex-like synchronization.
 #else
     internal_syscall(SYSCALL(futex), (uptr)m, FUTEX_WAIT_PRIVATE, MtxSleeping,
                      0, 0, 0);
@@ -674,7 +675,7 @@ void BlockingMutex::Unlock() {
 #if SANITIZER_FREEBSD
     _umtx_op(m, UMTX_OP_WAKE, 1, 0, 0);
 #elif SANITIZER_NETBSD
-                   /* No userspace futex-like synchronization */
+    // No userspace futex-like synchronization.
 #else
     internal_syscall(SYSCALL(futex), (uptr)m, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
 #endif
@@ -686,26 +687,28 @@ void BlockingMutex::CheckLocked() const {
   CHECK_NE(MtxUnlocked, atomic_load(m, memory_order_relaxed));
 }
 
-Semaphore::Semaphore() { atomic_store_relaxed(&count_, 0); }
+*/
+
+Semaphore::Semaphore() { atomic_store_relaxed(&state_, 0); }
 
 void Semaphore::Wait() {
-  u32 count = atomic_load(&count_, memory_order_acquire);
+  u32 count = atomic_load(&state_, memory_order_acquire);
   for (;;) {
     if (count == 0) {
-      internal_syscall(SYSCALL(futex), (uptr)&count_, FUTEX_WAIT_PRIVATE, 0, 0,
+      internal_syscall(SYSCALL(futex), (uptr)&state_, FUTEX_WAIT_PRIVATE, 0, 0,
                        0, 0);
-      count = atomic_load(&count_, memory_order_acquire);
+      count = atomic_load(&state_, memory_order_acquire);
       continue;
     }
-    if (atomic_compare_exchange_weak(&count_, &count, count - 1,
+    if (atomic_compare_exchange_weak(&state_, &count, count - 1,
                                      memory_order_acquire))
       break;
   }
 }
 
 void Semaphore::Post(u32 count) {
-  atomic_fetch_add(&count_, count, memory_order_release);
-  internal_syscall(SYSCALL(futex), (uptr)&count_, FUTEX_WAKE_PRIVATE, count, 0,
+  atomic_fetch_add(&state_, count, memory_order_release);
+  internal_syscall(SYSCALL(futex), (uptr)&state_, FUTEX_WAKE_PRIVATE, count, 0,
                    0, 0);
 }
 

@@ -81,15 +81,15 @@ class ThreadContextBase {
 
 typedef ThreadContextBase *(*ThreadContextFactory)(Tid tid);
 
-class ThreadRegistry {
+class MUTEX ThreadRegistry {
  public:
   ThreadRegistry(ThreadContextFactory factory);
   void GetNumberOfThreads(uptr *total = nullptr, uptr *running = nullptr,
                           uptr *alive = nullptr);
 
-  void Lock() { mtx_.Lock(); }
-  void CheckLocked() const { mtx_.CheckLocked(); }
-  void Unlock() { mtx_.Unlock(); }
+  void Lock() ACQUIRE() { mtx_.Lock(); }
+  void CheckLocked() const CHECK_LOCKED { mtx_.CheckLocked(); }
+  void Unlock() RELEASE() { mtx_.Unlock(); }
 
   // Should be guarded by ThreadRegistryLock.
   ThreadContextBase *GetThreadLocked(Tid tid) { return threads_[tid]; }

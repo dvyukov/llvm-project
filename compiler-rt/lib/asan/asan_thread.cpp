@@ -510,11 +510,11 @@ void ForEachExtraStackRange(tid_t os_id, RangeIteratorCallback callback,
   fake_stack->ForEachFakeFrame(callback, arg);
 }
 
-void LockThreadRegistry() {
+void LockThreadRegistry() ACQUIRE(__asan::asanThreadRegistry()) {
   __asan::asanThreadRegistry().Lock();
 }
 
-void UnlockThreadRegistry() {
+void UnlockThreadRegistry() RELEASE(__asan::asanThreadRegistry()) {
   __asan::asanThreadRegistry().Unlock();
 }
 

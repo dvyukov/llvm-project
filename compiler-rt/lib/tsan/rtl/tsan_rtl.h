@@ -416,9 +416,9 @@ void InitializeInterceptors();
 void InitializeLibIgnore();
 void InitializeDynamicAnnotations();
 
-void ForkBefore(ThreadState* thr, uptr pc) ACQUIRE(ctx->slots_mtx);
-void ForkParentAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx);
-void ForkChildAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx);
+void ForkBefore(ThreadState* thr, uptr pc) ACQUIRE(ctx->slots_mtx, ctx->thread_registry);
+void ForkParentAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx, ctx->thread_registry);
+void ForkChildAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx, ctx->thread_registry);
 
 void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 Shadow old, AccessType typ);
