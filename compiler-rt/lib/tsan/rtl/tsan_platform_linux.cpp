@@ -130,7 +130,7 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
     mem[MemOther] += rss;
 }
 
-void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime, uptr nthread, uptr nlive) {
+void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
   uptr mem[MemCount];
   internal_memset(mem, 0, sizeof(mem));
   GetMemoryProfile(FillProfileCallback, mem, MemCount);
@@ -142,18 +142,25 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime, uptr nthread, uptr
     Lock l(&ctx->trace_part_mtx);
     trace_mem = ctx->trace_part_count * sizeof(TracePart);
   }
-  uptr ntraced = atomic_load_relaxed(&ctx->traced_threads);
+  uptr nthread, nlive;
+  ctx->thread_registry.GetNumberOfThreads(&nthread, &nlive);
+  uptr internal_stats[AllocatorStatCount];
+  internal_allocator()->GetStats(internal_stats);
+  // All these are allocated from the common mmap region.
+  mem[MemMmap] -= mem_block_mem + sync_obj_mem + trace_mem +
+      stacks->allocated + internal_stats[AllocatorStatMapped];
   internal_snprintf(buf, buf_size,
-      "uptime %03llu.%02llus: epoch %zu RSS %zd MB: shadow:%zd meta:%zd file:%zd"
-      " mmap:%zd heap:%zd other:%zd memblocks:%zd syncobj:%zu"
-      " trace:%zu stacks=%zd[%zd] threads=%zd/%zd/%zd\n",
-      uptime / (1000*1000*1000), (uptime / (10*1000*1000)) % 100, ctx->global_epoch,
+      "uptime %llus [%zu]: RSS %zd MB: shadow:%zd meta:%zd file:%zd"
+      " mmap:%zd heap:%zd other:%zd intalloc:%zd memblocks:%zd syncobj:%zu"
+      " trace:%zu stacks=%zd[%zd] threads=%zd/%zd\n",
+      uptime / (1000*1000*1000), ctx->global_epoch,
       mem[MemTotal] >> 20, mem[MemShadow] >> 20,
                     mem[MemMeta] >> 20, mem[MemFile] >> 20, mem[MemMmap] >> 20,
                     mem[MemHeap] >> 20, mem[MemOther] >> 20,
+                    internal_stats[AllocatorStatMapped] >> 20,
                     mem_block_mem >> 20, sync_obj_mem >> 20, trace_mem >> 20,
                     stacks->allocated >> 20, stacks->n_uniq_ids,
-                    nlive, ntraced, nthread);
+                    nlive, nthread);
 }
 
 #if !SANITIZER_GO

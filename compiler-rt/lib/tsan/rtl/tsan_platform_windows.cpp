@@ -20,7 +20,7 @@
 
 namespace __tsan {
 
-void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime, uptr nthread, uptr nlive) {
+void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
 }
 
 void InitializePlatformEarly() {

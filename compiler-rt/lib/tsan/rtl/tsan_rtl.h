@@ -267,7 +267,6 @@ class ThreadContext final : public ThreadContextBase {
    VectorClock* sync;
    uptr sync_epoch;
    Trace trace;
-   bool traced = false;
 
    // Override superclass callbacks.
    void OnDead() override;

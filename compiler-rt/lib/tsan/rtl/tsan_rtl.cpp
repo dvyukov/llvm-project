@@ -81,7 +81,7 @@ static TracePart* TracePartAlloc() {
       u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
       DCHECK(traced_threads);
       //!!! consider flags()->trace_parts or flags()->history_size;
-      u32 max_parts = traced_threads * 4;
+      u32 max_parts = traced_threads * 3;
       if (ctx->trace_part_count < max_parts) {
         ctx->trace_part_count++;
         alloc = true;
@@ -93,11 +93,10 @@ static TracePart* TracePartAlloc() {
   if (!part) {
     Lock lock(&ctx->busy_mtx);
     part = ctx->trace_part_recycle.PopFront();
-    CHECK(part); //!!! can we guarantee this? provided increased capacity above
+    CHECK(part); //!!! can we guarantee this never happens?
     Lock trace_lock(&part->trace->mtx);
     TracePart* part1 = part->trace->parts.PopFront();
     CHECK_EQ(part, part1);
-    CHECK_GE(part->trace->parts.Size(), 2);
     part->trace = nullptr;
   }
   return part;
@@ -127,12 +126,6 @@ void DoResetImpl() {
               static_cast<Tid>(i));
       if (tctx->thr)
         tctx->thr->last_slot = nullptr;
-      if (!tctx->thr && tctx->traced) {
-        u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
-        DCHECK(traced_threads);
-        atomic_store_relaxed(&ctx->traced_threads, traced_threads - 1);
-        tctx->traced = false;
-      }
       // Potentially we could purge all ThreadStatusDead threads from the
       // registry. Since we reset all shadow, they can't race with anything
       // anymore. However, their tid's can still be stored in some aux places
@@ -142,12 +135,11 @@ void DoResetImpl() {
       auto parts = &tctx->trace.parts;
       while (!parts->Empty()) {
         auto part = parts->Front();
-        if (parts->Size() >= 3)
+        if (parts->Size() >= 3 || !tctx->thr)
           ctx->trace_part_recycle.Remove(part);
         DCHECK(!ctx->trace_part_recycle.Queued(part));
         if (attached && parts->Size() == 1) {
-          //!!! reset thr->trace_pos to the end of the part to force it to
-          //! switch
+          //!!! reset thr->trace_pos to the end of the part to force it to switch
           break;
         }
         parts->Remove(part);
@@ -404,11 +396,8 @@ ThreadState::ThreadState(Tid tid)
 void MemoryProfiler(u64 uptime) {
   if (ctx->memprof_fd == kInvalidFd)
     return;
-  uptr n_threads;
-  uptr n_running_threads;
-  ctx->thread_registry.GetNumberOfThreads(&n_threads, &n_running_threads);
   InternalMmapVector<char> buf(4096);
-  WriteMemoryProfile(buf.data(), buf.size(), uptime, n_threads, n_running_threads);
+  WriteMemoryProfile(buf.data(), buf.size(), uptime);
   WriteToFile(ctx->memprof_fd, buf.data(), internal_strlen(buf.data()));
 }
 
@@ -665,8 +654,8 @@ void Initialize(ThreadState *thr) {
 
 #if !SANITIZER_GO
   Symbolizer::LateInitialize();
-#endif
   InitializeMemoryProfiler();
+#endif
   ctx->initialized = true;
 
   if (flags()->stop_on_start) {
@@ -818,7 +807,6 @@ void TraceSwitch(ThreadState* thr) {
   Trace* trace = &thr->tctx->trace;
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   DCHECK_EQ((uptr)(pos + 1) & 0xff0, 0);
-  DCHECK(thr->tctx->traced);
   auto part = trace->parts.Back();
   if (part) {
     Event* end = &part->events[TracePart::kSize];

@@ -68,16 +68,14 @@ static void AddFrame(void *ctx, const char *function_name, const char *file,
 // Symbolizer makes lots of intercepted calls. If we try to process them,
 // at best it will cause deadlocks on internal mutexes.
 struct SymbolizerScope : ScopedIgnoreInterceptors {
-  SymbolizerScope() {
 #if !SANITIZER_GO
+  SymbolizerScope() {
     cur_thread()->in_symbolizer++;
-#endif
   }
   ~SymbolizerScope() {
-#if !SANITIZER_GO
     cur_thread()->in_symbolizer--;
-#endif
   }
+#endif
 };
 
 SymbolizedStack *SymbolizeCode(uptr addr) {
@@ -116,6 +114,7 @@ bool SymbolizeData(uptr addr, ReportLocation* loc) {
 }
 
 void SymbolizerFlush() {
+  SymbolizerScope scope;
   Symbolizer::GetOrInit()->Flush();
 }
 

@@ -209,7 +209,6 @@ void ThreadContext::OnStarted(void* arg) {
   thr->tctx = this;
   u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
   atomic_store_relaxed(&ctx->traced_threads, traced_threads + 1);
-  traced = true;
 }
 
 void ThreadFinish(ThreadState *thr) {
@@ -248,6 +247,18 @@ void ThreadContext::OnFinished() {
   atomic_store_relaxed(&thr->trace_pos, 0);
   thr->tctx = nullptr;
   thr = nullptr;
+  {
+    Lock lock(&ctx->busy_mtx);
+    auto parts = &trace.parts;
+    auto prev = parts->Prev(parts->Back());
+    if (prev)
+      ctx->trace_part_recycle.PushBack(prev);
+    if (parts->Back())
+      ctx->trace_part_recycle.PushBack(parts->Back());
+  }
+  u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
+  CHECK(traced_threads);
+  atomic_store_relaxed(&ctx->traced_threads, traced_threads - 1);
 }
 
 struct ConsumeThreadContext {
