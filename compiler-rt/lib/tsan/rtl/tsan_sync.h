@@ -113,6 +113,8 @@ class MetaMap {
 
   void OnProcIdle(Processor *proc);
 
+  void GetMemoryStats(uptr* mem_block_mem, uptr* sync_obj_mem) const;
+
  private:
   static const u32 kFlagMask  = 3u << 30;
   static const u32 kFlagBlock = 1u << 30;

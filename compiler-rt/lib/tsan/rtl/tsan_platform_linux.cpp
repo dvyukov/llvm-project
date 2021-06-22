@@ -130,19 +130,30 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
     mem[MemOther] += rss;
 }
 
-void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
+void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime, uptr nthread, uptr nlive) {
   uptr mem[MemCount];
-  internal_memset(mem, 0, sizeof(mem[0]) * MemCount);
-  __sanitizer::GetMemoryProfile(FillProfileCallback, mem, 7);
+  internal_memset(mem, 0, sizeof(mem));
+  GetMemoryProfile(FillProfileCallback, mem, MemCount);
   StackDepotStats *stacks = StackDepotGetStats();
+  uptr mem_block_mem, sync_obj_mem;
+  ctx->metamap.GetMemoryStats(&mem_block_mem, &sync_obj_mem);
+  uptr trace_mem;
+  {
+    Lock l(&ctx->trace_part_mtx);
+    trace_mem = ctx->trace_part_count * sizeof(TracePart);
+  }
+  uptr ntraced = atomic_load_relaxed(&ctx->traced_threads);
   internal_snprintf(buf, buf_size,
-                    "RSS %zd MB: shadow:%zd meta:%zd file:%zd mmap:%zd"
-                    " heap:%zd other:%zd stacks=%zd[%zd] nthr=%zd/%zd\n",
-                    mem[MemTotal] >> 20, mem[MemShadow] >> 20,
+      "uptime %03llu.%02llus: epoch %zu RSS %zd MB: shadow:%zd meta:%zd file:%zd"
+      " mmap:%zd heap:%zd other:%zd memblocks:%zd syncobj:%zu"
+      " trace:%zu stacks=%zd[%zd] threads=%zd/%zd/%zd\n",
+      uptime / (1000*1000*1000), (uptime / (10*1000*1000)) % 100, ctx->global_epoch,
+      mem[MemTotal] >> 20, mem[MemShadow] >> 20,
                     mem[MemMeta] >> 20, mem[MemFile] >> 20, mem[MemMmap] >> 20,
                     mem[MemHeap] >> 20, mem[MemOther] >> 20,
-                    stacks->allocated >> 20, stacks->n_uniq_ids, nlive,
-                    nthread);
+                    mem_block_mem >> 20, sync_obj_mem >> 20, trace_mem >> 20,
+                    stacks->allocated >> 20, stacks->n_uniq_ids,
+                    nlive, ntraced, nthread);
 }
 
 #if !SANITIZER_GO

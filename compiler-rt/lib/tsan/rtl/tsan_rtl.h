@@ -324,6 +324,7 @@ struct Context {
   DDetector *dd;
 
   Flags flags;
+  fd_t memprof_fd;
 
   Mutex slots_mtx;
   TidSlot slots[kSlotCount];

@@ -111,6 +111,10 @@ class DenseSlabAlloc {
     }
   }
 
+  uptr AllocatedMemory() const {
+    return fillpos_ * kL2Size * sizeof(T);
+  }
+
  private:
   T *map_[kL1Size];
   SpinMutex mtx_;

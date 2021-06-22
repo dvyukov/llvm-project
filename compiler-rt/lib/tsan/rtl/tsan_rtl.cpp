@@ -401,14 +401,38 @@ ThreadState::ThreadState(Tid tid)
 }
 
 #if !SANITIZER_GO
-#  if 0
-static void MemoryProfiler(Context* ctx, fd_t fd, int i) {
+void MemoryProfiler(u64 uptime) {
+  if (ctx->memprof_fd == kInvalidFd)
+    return;
   uptr n_threads;
   uptr n_running_threads;
   ctx->thread_registry.GetNumberOfThreads(&n_threads, &n_running_threads);
   InternalMmapVector<char> buf(4096);
-  WriteMemoryProfile(buf.data(), buf.size(), n_threads, n_running_threads);
-  WriteToFile(fd, buf.data(), internal_strlen(buf.data()));
+  WriteMemoryProfile(buf.data(), buf.size(), uptime, n_threads, n_running_threads);
+  WriteToFile(ctx->memprof_fd, buf.data(), internal_strlen(buf.data()));
+}
+
+void InitializeMemoryProfiler() {
+  ctx->memprof_fd = kInvalidFd;
+  const char* fname = flags()->profile_memory;
+  if (!fname || !fname[0])
+    return;
+  if (internal_strcmp(fname, "stdout") == 0) {
+    ctx->memprof_fd = 1;
+  } else if (internal_strcmp(fname, "stderr") == 0) {
+    ctx->memprof_fd = 2;
+  } else {
+    InternalScopedString filename;
+    filename.append("%s.%d", fname, (int)internal_getpid());
+    ctx->memprof_fd = OpenFile(filename.data(), WrOnly);
+    if (ctx->memprof_fd == kInvalidFd) {
+      Printf("ThreadSanitizer: failed to open memory profile file '%s'\n",
+           filename.data());
+      return;
+    }
+  }
+  MemoryProfiler(0);
+  MaybeSpawnBackgroundThread();
 }
 
 static void* BackgroundThread(void* arg) {
@@ -416,67 +440,40 @@ static void* BackgroundThread(void* arg) {
   // We don't use ScopedIgnoreInterceptors, because we want ignores to be
   // enabled even when the thread function exits (e.g. during pthread thread
   // shutdown code).
-  cur_thread_init();
-  cur_thread()->ignore_interceptors++;
-  const u64 kMs2Ns = 1000 * 1000;
+  cur_thread_init()->ignore_interceptors++;
+  const u64 flush_symbolizer = flags()->flush_symbolizer_ms * 1000 * 1000;
+  const u64 start = NanoTime();
 
-  // Write memory profile if requested.
-  fd_t mprof_fd = kInvalidFd;
-  if (flags()->profile_memory && flags()->profile_memory[0]) {
-    if (internal_strcmp(flags()->profile_memory, "stdout") == 0) {
-      mprof_fd = 1;
-    } else if (internal_strcmp(flags()->profile_memory, "stderr") == 0) {
-      mprof_fd = 2;
-    } else {
-      InternalScopedString filename;
-      filename.append("%s.%d", flags()->profile_memory, (int)internal_getpid());
-      fd_t fd = OpenFile(filename.data(), WrOnly);
-      if (fd == kInvalidFd) {
-        Printf("ThreadSanitizer: failed to open memory profile file '%s'\n",
-               filename.data());
-      } else {
-        mprof_fd = fd;
-      }
-    }
-  }
-
-  u64 last_flush = NanoTime();
-  uptr last_rss = 0;
-  for (int i = 0;
-       atomic_load(&ctx->stop_background_thread, memory_order_relaxed) == 0;
-       i++) {
-    internal_usleep(100*1000);
+  //u64 last_flush = NanoTime();
+  //uptr last_rss = 0;
+  while (!atomic_load_relaxed(&ctx->stop_background_thread)) {
+    internal_usleep(1000 * 1000);
     u64 now = NanoTime();
 
-    if (mprof_fd != kInvalidFd)
-      MemoryProfiler(ctx, mprof_fd, i);
+    MemoryProfiler(now - start);
 
     // Flush symbolizer cache if requested.
-    if (flags()->flush_symbolizer_ms > 0) {
-      u64 last =
-          atomic_load(&ctx->last_symbolize_time_ns, memory_order_relaxed);
-      if (last != 0 && last + flags()->flush_symbolizer_ms * kMs2Ns < now) {
-        Lock l(&ctx->report_mtx);
-        ScopedErrorReportLock l2;
+    if (flush_symbolizer > 0) {
+      u64 last = atomic_load_relaxed(&ctx->last_symbolize_time_ns);
+      if (last && last + flush_symbolizer < now) {
+        ScopedErrorReportLock lock;
         SymbolizerFlush();
-        atomic_store(&ctx->last_symbolize_time_ns, 0, memory_order_relaxed);
+        atomic_store_relaxed(&ctx->last_symbolize_time_ns, 0);
       }
     }
   }
   return nullptr;
 }
-#  endif
 
 static void StartBackgroundThread() {
-  //!!! do we still need the background thread?
-  // ctx->background_thread = internal_start_thread(&BackgroundThread, 0);
+  ctx->background_thread = internal_start_thread(&BackgroundThread, 0);
 }
 
 #ifndef __mips__
 static void StopBackgroundThread() {
-  // atomic_store(&ctx->stop_background_thread, 1, memory_order_relaxed);
-  // internal_join_thread(ctx->background_thread);
-  // ctx->background_thread = 0;
+  atomic_store(&ctx->stop_background_thread, 1, memory_order_relaxed);
+  internal_join_thread(ctx->background_thread);
+  ctx->background_thread = 0;
 }
 #endif
 #endif
@@ -669,6 +666,7 @@ void Initialize(ThreadState *thr) {
 #if !SANITIZER_GO
   Symbolizer::LateInitialize();
 #endif
+  InitializeMemoryProfiler();
   ctx->initialized = true;
 
   if (flags()->stop_on_start) {
