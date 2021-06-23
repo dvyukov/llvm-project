@@ -50,6 +50,10 @@ TSAN_FLAG(int, atexit_sleep_ms, 1000,
           "(useful to catch \"at exit\" races).")
 TSAN_FLAG(const char *, profile_memory, "",
           "If set, periodically write memory profile to that file.")
+#if SANITIZER_LINUX
+TSAN_FLAG(bool, profile_memory_fast, false, "Don't parse whole /proc/self/smaps,"
+    " and only get RSS from /proc/self/statm instead.")
+#endif
 TSAN_FLAG(int, flush_memory_ms, 0, "Flush shadow memory every X ms.")
 TSAN_FLAG(int, flush_symbolizer_ms, 5000, "Flush symbolizer caches every X ms.")
 TSAN_FLAG(
@@ -83,4 +87,5 @@ TSAN_FLAG(bool, ignore_noninstrumented_modules, SANITIZER_MAC ? true : false,
           "modules.")
 TSAN_FLAG(bool, shared_ptr_interceptor, true,
           "Track atomic reference counting in libc++ shared_ptr and weak_ptr.")
-TSAN_FLAG(int, trace_parts, 32, "Number of trace parts per sid.")
+TSAN_FLAG(bool, mutex_coop, false, "Resolve contention on mutexes.")
+TSAN_FLAG(bool, mutex_coop2, true, "Resolve contention on mutexes.")

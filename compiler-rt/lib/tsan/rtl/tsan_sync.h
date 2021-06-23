@@ -54,6 +54,7 @@ struct SyncVar {
 
   uptr addr;  // overwritten by DenseSlabAlloc freelist
   Mutex mtx;
+  Mutex coop;
   StackID creation_stack_id;
   Tid owner_tid; // Set only by exclusive owners.
   FastState last_lock;

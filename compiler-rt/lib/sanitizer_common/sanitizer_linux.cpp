@@ -692,12 +692,12 @@ void BlockingMutex::CheckLocked() const {
 Semaphore::Semaphore() { atomic_store_relaxed(&state_, 0); }
 
 void Semaphore::Wait() {
-  u32 count = atomic_load(&state_, memory_order_acquire);
+  u32 count = atomic_load(&state_, memory_order_relaxed);
   for (;;) {
     if (count == 0) {
       internal_syscall(SYSCALL(futex), (uptr)&state_, FUTEX_WAIT_PRIVATE, 0, 0,
                        0, 0);
-      count = atomic_load(&state_, memory_order_acquire);
+      count = atomic_load(&state_, memory_order_relaxed);
       continue;
     }
     if (atomic_compare_exchange_weak(&state_, &count, count - 1,

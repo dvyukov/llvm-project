@@ -100,6 +100,8 @@ private:
 #endif  
 };
 
+// Semaphore provides destruction-safety:
+// last thread returned from Wait can destroy the object.
 class Semaphore {
  public:
   Semaphore();

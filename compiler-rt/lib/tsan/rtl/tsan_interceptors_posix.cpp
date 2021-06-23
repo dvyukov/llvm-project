@@ -844,7 +844,7 @@ STDCXX_INTERCEPTOR(int, __cxa_guard_acquire, atomic_uint32_t *g) {
   SCOPED_INTERCEPTOR_RAW(__cxa_guard_acquire, g);
   OnPotentiallyBlockingRegionBegin();
   auto on_exit = at_scope_exit(&OnPotentiallyBlockingRegionEnd);
-  for (;;) {
+  for (int i = 0;; i++) {
     u32 cmp = atomic_load(g, memory_order_acquire);
     if (cmp == 0) {
       if (atomic_compare_exchange_strong(g, &cmp, 1<<16, memory_order_relaxed))
@@ -852,8 +852,11 @@ STDCXX_INTERCEPTOR(int, __cxa_guard_acquire, atomic_uint32_t *g) {
     } else if (cmp == 1) {
       Acquire(thr, pc, (uptr)g);
       return 0;
-    } else {
+    } else if (i < 1000) {
+    } else if (i < 1010) {
       internal_sched_yield();
+    } else {
+      internal_usleep(10);
     }
   }
 }
@@ -908,14 +911,15 @@ static void thread_finalize(void *v) {
 struct ThreadParam {
   void* (*callback)(void *arg);
   void *param;
-  atomic_uint32_t tid;
+  Tid tid;
+  Semaphore created;
+  Semaphore started;
 };
 
 extern "C" void *__tsan_thread_start_func(void *arg) {
   ThreadParam *p = (ThreadParam*)arg;
   void* (*callback)(void *arg) = p->callback;
   void *param = p->param;
-  int tid = 0;
   {
     cur_thread_init();
     ThreadState *thr = cur_thread();
@@ -930,12 +934,11 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
     }
     ThreadIgnoreEnd(thr);
 #endif
-    while ((tid = atomic_load(&p->tid, memory_order_acquire)) == 0)
-      internal_sched_yield();
+    p->created.Wait();
     Processor *proc = ProcCreate();
     ProcWire(proc, thr);
-    ThreadStart(thr, static_cast<Tid>(tid), GetTid(), ThreadType::Regular);
-    atomic_store(&p->tid, 0, memory_order_release);
+    ThreadStart(thr, p->tid, GetTid(), ThreadType::Regular);
+    p->started.Post();
   }
   void *res = callback(param);
   // Prevent the callback from being tail called,
@@ -974,7 +977,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
   ThreadParam p;
   p.callback = callback;
   p.param = param;
-  atomic_store(&p.tid, 0, memory_order_relaxed);
+  p.tid = kMainTid;
   int res = -1;
   {
     // Otherwise we see false positives in pthread stack manipulation.
@@ -983,9 +986,11 @@ TSAN_INTERCEPTOR(int, pthread_create,
     res = REAL(pthread_create)(th, attr, __tsan_thread_start_func, &p);
     ThreadIgnoreEnd(thr);
   }
+  if (attr == &myattr)
+    pthread_attr_destroy(&myattr);
   if (res == 0) {
-    Tid tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
-    CHECK_NE(tid, 0);
+    p.tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
+    CHECK_NE(p.tid, kMainTid);
     // Synchronization on p.tid serves two purposes:
     // 1. ThreadCreate must finish before the new thread starts.
     //    Otherwise the new thread can call pthread_detach, but the pthread_t
@@ -993,12 +998,9 @@ TSAN_INTERCEPTOR(int, pthread_create,
     // 2. ThreadStart must finish before this thread continues.
     //    Otherwise, this thread can call pthread_detach and reset thr->sync
     //    before the new thread got a chance to acquire from it in ThreadStart.
-    atomic_store(&p.tid, static_cast<int>(tid), memory_order_release);
-    while (atomic_load(&p.tid, memory_order_acquire) != 0)
-      internal_sched_yield();
+    p.created.Post();
+    p.started.Wait();
   }
-  if (attr == &myattr)
-    pthread_attr_destroy(&myattr);
   return res;
 }
 
@@ -1381,7 +1383,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_timedrdlock, void *m, void *abstime) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_timedrdlock, m, abstime);
   int res = BLOCK_REAL(pthread_rwlock_timedrdlock)(m, abstime);
   if (res == 0) {
-    MutexPostReadLock(thr, pc, (uptr)m);
+    MutexPostReadLock(thr, pc, (uptr)m, MutexFlagTryLock);
   }
   return res;
 }
@@ -1474,8 +1476,13 @@ TSAN_INTERCEPTOR(int, pthread_once, void *o, void (*f)()) {
       Release(thr, pc, (uptr)o);
     atomic_store(a, 2, memory_order_release);
   } else {
-    while (v != 2) {
-      internal_sched_yield();
+    for (int i = 0; v != 2; i++) {
+      if (i < 1000)
+        ;
+      else if (i < 1010)
+        internal_sched_yield();
+      else
+        internal_usleep(10);
       v = atomic_load(a, memory_order_acquire);
     }
     if (!thr->in_ignored_lib)

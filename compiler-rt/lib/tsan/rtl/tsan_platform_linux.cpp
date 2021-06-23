@@ -133,7 +133,10 @@ void FillProfileCallback(uptr p, uptr rss, bool file,
 void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
   uptr mem[MemCount];
   internal_memset(mem, 0, sizeof(mem));
-  GetMemoryProfile(FillProfileCallback, mem, MemCount);
+  if (flags()->profile_memory_fast)
+    mem[MemTotal] = GetRSS();
+  else
+    GetMemoryProfile(FillProfileCallback, mem, MemCount);
   StackDepotStats *stacks = StackDepotGetStats();
   uptr mem_block_mem, sync_obj_mem;
   ctx->metamap.GetMemoryStats(&mem_block_mem, &sync_obj_mem);
@@ -149,18 +152,19 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
   // All these are allocated from the common mmap region.
   mem[MemMmap] -= mem_block_mem + sync_obj_mem + trace_mem +
       stacks->allocated + internal_stats[AllocatorStatMapped];
+  if (s64(mem[MemMmap]) < 0)
+    mem[MemMmap] = 0;
   internal_snprintf(buf, buf_size,
-      "uptime %llus [%zu]: RSS %zd MB: shadow:%zd meta:%zd file:%zd"
+      "%llus [%zu]: RSS %zd MB: shadow:%zd meta:%zd file:%zd"
       " mmap:%zd heap:%zd other:%zd intalloc:%zd memblocks:%zd syncobj:%zu"
-      " trace:%zu stacks=%zd[%zd] threads=%zd/%zd\n",
+      " trace:%zu stacks=%zd threads=%zd/%zd\n",
       uptime / (1000*1000*1000), ctx->global_epoch,
       mem[MemTotal] >> 20, mem[MemShadow] >> 20,
                     mem[MemMeta] >> 20, mem[MemFile] >> 20, mem[MemMmap] >> 20,
                     mem[MemHeap] >> 20, mem[MemOther] >> 20,
                     internal_stats[AllocatorStatMapped] >> 20,
                     mem_block_mem >> 20, sync_obj_mem >> 20, trace_mem >> 20,
-                    stacks->allocated >> 20, stacks->n_uniq_ids,
-                    nlive, nthread);
+                    stacks->allocated >> 20, nlive, nthread);
 }
 
 #if !SANITIZER_GO

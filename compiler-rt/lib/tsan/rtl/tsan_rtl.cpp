@@ -229,12 +229,15 @@ TidSlot* FindAttachSlotImpl(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
     slot = ctx->free_slots.Front();
   DPrintf2("#%d: FindAttachSlotImpl: found slot %d\n", thr->tid,
            slot ? (u32)slot->sid : -1);
+  //!!! Need to do something better here.
+  /*
   if (!slot) {
     ctx->slots_mtx.Unlock();
     internal_sched_yield();
     ctx->slots_mtx.Lock();
     slot = ctx->free_slots.Front();
   }
+  */
   if (slot) {
     DCHECK(SlotUsable(slot));
     ctx->free_slots.Remove(slot);
@@ -760,6 +763,7 @@ void ForkChildAfter(ThreadState *thr, uptr pc) {
     // ignores for everything in the hope that we will exec soon.
     ctx->after_multithreaded_fork = true;
     thr->ignore_interceptors++;
+    thr->suppress_reports++;
     ThreadIgnoreBegin(thr, pc);
     ThreadIgnoreSyncBegin(thr, pc);
   }
@@ -825,11 +829,10 @@ void TraceSwitch(ThreadState* thr) {
     //!!! fill in the last slot with NopEvent
   }
 #if !SANITIZER_GO
-  // !!! can we still do this? should we at least rewind pos to beginning of
-  // part?
   if (ctx->after_multithreaded_fork) {
-    Event* ev;
-    CHECK(TraceAcquire(thr, &ev));
+    // We just need to survive till exec.
+    CHECK(part);
+    atomic_store_relaxed(&thr->trace_pos, (uptr)&part->events[0]);
     return;
   }
 #endif

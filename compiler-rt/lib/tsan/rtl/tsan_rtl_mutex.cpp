@@ -104,9 +104,23 @@ void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   // s will be destroyed and freed in MetaMap::FreeBlock.
 }
 
+void MutexCoop(ThreadState *thr, uptr pc, uptr addr, void (Mutex::*fn)()) {
+  if (!flags()->mutex_coop)
+    return;
+  SyncVar* s;
+  {
+    SlotLocker locker(thr);
+    s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
+  }
+  (s->coop.*fn)();
+}
+
 void MutexPreLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexPreLock %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  if ((flagz & MutexFlagTryLock) || !common_flags()->detect_deadlocks)
+  if (flagz & MutexFlagTryLock)
+    return;
+  MutexCoop(thr, pc, addr, &Mutex::Lock);
+  if (!common_flags()->detect_deadlocks)
     return;
   Callback cb(thr, pc);
   {
@@ -127,6 +141,8 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
     CHECK_GT(rec, 0);
   else
     rec = 1;
+  if (flagz & (MutexFlagTryLock | MutexFlagDoPreLockOnPostLock))
+    MutexCoop(thr, pc, addr, &Mutex::Lock);
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   SlotLocker locker(thr);
@@ -219,11 +235,13 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
     Callback cb(thr, pc);
     ReportDeadlock(thr, pc, ctx->dd->GetReport(&cb));
   }
+  MutexCoop(thr, pc, addr, &Mutex::Unlock);
   return rec;
 }
 
 void MutexPreReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexPreReadLock %zx flagz=0x%x\n", thr->tid, addr, flagz);
+  MutexCoop(thr, pc, addr, &Mutex::ReadLock);
   if ((flagz & MutexFlagTryLock) || !common_flags()->detect_deadlocks)
     return;
   Callback cb(thr, pc);
@@ -315,6 +333,7 @@ void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
     Callback cb(thr, pc);
     ReportDeadlock(thr, pc, ctx->dd->GetReport(&cb));
   }
+  MutexCoop(thr, pc, addr, &Mutex::ReadUnlock);
 }
 
 void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
@@ -325,12 +344,12 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
   thr->mset.Del(addr);
   StackID creation_stack_id;
   bool report_bad_unlock = false;
+  bool write = true;
   {
     SlotLocker locker(thr);
     auto s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
     Lock lock(&s->mtx);
     creation_stack_id = s->creation_stack_id;
-    bool write = true;
     if (s->owner_tid == kInvalidTid) {
       // Seems to be read unlock.
       write = false;
@@ -363,6 +382,7 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
     Callback cb(thr, pc);
     ReportDeadlock(thr, pc, ctx->dd->GetReport(&cb));
   }
+  MutexCoop(thr, pc, addr, write ? &Mutex::Unlock : &Mutex::ReadUnlock);
 }
 
 void MutexRepair(ThreadState *thr, uptr pc, uptr addr) {
