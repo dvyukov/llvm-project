@@ -159,7 +159,7 @@ bool ShouldReport(ThreadState *thr, ReportType typ) {
 
 ReportScope::ReportScope(ThreadState* thr)
     : SlotUnlocker(thr), registry_lock_(&ctx->thread_registry),
-      slots_lock_(&ctx->slots_mtx) {
+      slot_lock_(&ctx->slot_mtx) {
 }
 
 #if !SANITIZER_GO
@@ -287,11 +287,11 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
            static_cast<u32>(sid), static_cast<u32>(epoch), addr, size, isRead,
            isAtomic, isFreed);
 
-  ctx->slots_mtx.CheckLocked();
+  ctx->slot_mtx.CheckLocked(); // needed to prevent part recycling
   ctx->thread_registry.CheckLocked();
-  Lock lock(&ctx->busy_mtx); // to prevent part recycling
   TidSlot* slot = &ctx->slots[static_cast<uptr>(sid)];
   Tid tid = kInvalidTid;
+  //!!! do we need to lock the slot? what protects journal?
   for (uptr i = 0; i < slot->journal.Size(); i++) {
     if (i == slot->journal.Size() - 1 || slot->journal[i + 1].epoch > epoch) {
       tid = slot->journal[i].tid;

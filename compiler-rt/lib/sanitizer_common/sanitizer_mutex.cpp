@@ -27,4 +27,13 @@ void StaticSpinMutex::LockSlow() {
         return;
   }
 }
+
+#if SANITIZER_DEBUG && !SANITIZER_GO
+void DebugMutexLock(MutexType type) {
+}
+
+void DebugMutexUnlock(MutexType type) {
+}
+#endif
+
 }

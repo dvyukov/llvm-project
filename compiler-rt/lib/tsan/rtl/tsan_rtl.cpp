@@ -91,7 +91,7 @@ static TracePart* TracePartAlloc() {
   if (alloc)
     part = new (MmapOrDie(sizeof(TracePart), "TracePart")) TracePart();
   if (!part) {
-    Lock lock(&ctx->busy_mtx);
+    Lock lock(&ctx->slot_mtx);
     part = ctx->trace_part_recycle.PopFront();
     CHECK(part); //!!! can we guarantee this never happens?
     Lock trace_lock(&part->trace->mtx);
@@ -115,8 +115,7 @@ bool SlotUsable(TidSlot* slot) {
 }
 
 void DoResetImpl() {
-  ctx->slots_mtx.CheckLocked();
-  ctx->busy_mtx.Lock();
+  ctx->slot_mtx.CheckLocked();
   ctx->global_epoch++;
   {
     ThreadRegistryLock lock(&ctx->thread_registry);
@@ -124,8 +123,6 @@ void DoResetImpl() {
       ThreadContext* tctx =
           (ThreadContext*)ctx->thread_registry.GetThreadLocked(
               static_cast<Tid>(i));
-      if (tctx->thr)
-        tctx->thr->last_slot = nullptr;
       // Potentially we could purge all ThreadStatusDead threads from the
       // registry. Since we reset all shadow, they can't race with anything
       // anymore. However, their tid's can still be stored in some aux places
@@ -152,22 +149,16 @@ void DoResetImpl() {
     }
   }
 
-  CHECK_EQ(ctx->free_slots.Size() + ctx->busy_slots.Size() + ctx->used_slots,
-           kSlotCount);
-  while (ctx->free_slots.PopFront()) {
+  CHECK_EQ(ctx->slot_queue.Size() + ctx->used_slots, kSlotCount);
+  ctx->used_slots = 0;
+  while (ctx->slot_queue.PopFront()) {
   }
   for (auto slot = &ctx->slots[0]; slot < &ctx->slots[kSlotCount]; slot++) {
     slot->clock.Reset();
     slot->journal.Reset();
-    if (slot->thr) {
-      slot->thr = nullptr;
-      ctx->busy_slots.Remove(slot);
-    }
-    DCHECK(!ctx->free_slots.Queued(slot));
-    ctx->free_slots.PushBack(slot);
+    slot->thr = nullptr;
+    ctx->slot_queue.PushBack(slot);
   }
-  CHECK_EQ(ctx->busy_slots.Size(), 0);
-  ctx->used_slots = 0;
 
   DPrintf("Resetting shadow...\n");
   if (!MmapFixedNoReserve(ShadowBeg(), ShadowEnd() - ShadowBeg(), "shadow")) {
@@ -176,7 +167,6 @@ void DoResetImpl() {
   }
   DPrintf("Resetting meta shadow...\n");
   ctx->metamap.ResetClocks();
-  ctx->busy_mtx.Unlock();
 }
 
 // Clang does not understand locking all slots in the loop:
@@ -189,75 +179,10 @@ void DoReset() NO_THREAD_SAFETY_ANALYSIS {
     slot.mtx.Unlock();
 }
 
-TidSlot* PreemptSlot(ThreadState* thr)
-    REQUIRES(ctx->slots_mtx) NO_THREAD_SAFETY_ANALYSIS {
-  TidSlot* slot = nullptr;
-  for (;;) {
-    if (slot)
-      slot->mtx.Lock();
-    Lock lock(&ctx->busy_mtx);
-    if (ctx->busy_slots.Size() <= 1) {
-      if (slot)
-        slot->mtx.Unlock();
-      return nullptr;
-    }
-    TidSlot* slot1 = ctx->busy_slots.Front();
-    if (slot1 != slot) {
-      if (slot)
-        slot->mtx.Unlock();
-      slot = slot1;
-      continue;
-    }
-    ctx->busy_slots.PopFront();
-    break;
-  }
-  DPrintf("#%d: preempting sid=%d tid=%d\n", thr->tid, (u32)slot->sid,
-          slot->thr->tid);
-  slot->clock = slot->thr->clock;
-  slot->thr = nullptr;
-  slot->mtx.Unlock();
-  if (!SlotUsable(slot)) {
-    ctx->used_slots++;
-    return nullptr;
-  }
-  return slot;
-}
-
-TidSlot* FindAttachSlotImpl(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
-  TidSlot* slot = thr->last_slot;
-  if (!slot || slot->thr || !SlotUsable(slot))
-    slot = ctx->free_slots.Front();
-  DPrintf2("#%d: FindAttachSlotImpl: found slot %d\n", thr->tid,
-           slot ? (u32)slot->sid : -1);
-  //!!! Need to do something better here.
-  /*
-  if (!slot) {
-    ctx->slots_mtx.Unlock();
-    internal_sched_yield();
-    ctx->slots_mtx.Lock();
-    slot = ctx->free_slots.Front();
-  }
-  */
-  if (slot) {
-    DCHECK(SlotUsable(slot));
-    ctx->free_slots.Remove(slot);
-    return slot;
-  }
-  return PreemptSlot(thr);
-}
-
-TidSlot* FindAttachSlot(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
-  CHECK(!thr->slot);
-  // int dump = -1;
-  for (;;) {
-    //!!! handle the case when all slots are busy, but not exhausted (>256
-    //! threads), just wait
-    TidSlot* slot = FindAttachSlotImpl(thr);
-    //!!! if InitTrace fails we still can try other slots?
-    if (slot)
-      return slot;
-    //!!! we could estimate threshold based on number of waiting threads and
-    //! number of CPUs
+TidSlot* FindOneSlotAndLock(ThreadState* thr) REQUIRES(ctx->slot_mtx) NO_THREAD_SAFETY_ANALYSIS {
+  //!!! if there are too few of them, return null
+    //!!! move this condition to FindSlotAndLockImpl
+    /*    
     if (ctx->used_slots < kMaxSid - 50) {
       //!!! block for free slots somehow
       ctx->slots_mtx.Unlock();
@@ -265,21 +190,53 @@ TidSlot* FindAttachSlot(ThreadState* thr) REQUIRES(ctx->slots_mtx) {
       ctx->slots_mtx.Lock();
       continue;
     }
-    VPrintf(1, "#%d: InitiateReset: %s exhaustion\n", thr->tid,
-            slot ? "trace" : "slot");
-    DoReset();
+    */
+  TidSlot* slot = ctx->slot_queue.PopFront();
+  if (!slot)
+    return nullptr;
+  slot->mtx.Lock();
+  CHECK(!thr->slot_locked);
+  thr->slot_locked = true;
+  if (slot->thr) {
+    DPrintf("#%d: preempting sid=%d tid=%d\n",
+        thr->tid, (u32)slot->sid, slot->thr->tid);
+    slot->clock = slot->thr->clock;
+    slot->thr = nullptr;
+  }
+  return slot;
+}
+
+TidSlot* FindSlotAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx) NO_THREAD_SAFETY_ANALYSIS {
+  CHECK(!thr->slot);
+  Lock lock(&ctx->slot_mtx);
+  for (;;) {
+    TidSlot* slot = FindOneSlotAndLock(thr);
+    if (!slot) {
+      DPrintf("#%d: DoReset\n", thr->tid);
+      DoReset();
+      continue;
+    }
+    if (!SlotUsable(slot)) {
+      CHECK(thr->slot_locked);
+      thr->slot_locked = false;
+      slot->mtx.Unlock();
+      ctx->used_slots++;
+      continue;
+    }
+    ctx->slot_queue.PushBack(slot);
+    return slot;
   }
 }
 
-void SlotAttach(ThreadState* thr) {
-  Lock lock(&ctx->slots_mtx);
-  TidSlot* slot = FindAttachSlot(thr);
+//!!! needs to return a locked slot
+void SlotAttachAndLock(ThreadState* thr) {
+  //Lock lock(&ctx->slots_mtx);
+  TidSlot* slot = FindSlotAndLock(thr);
   DPrintf("#%d: SlotAttach: slot=%u\n", thr->tid, slot->sid);
   CHECK(!slot->thr);
   CHECK(!thr->slot);
   slot->thr = thr;
   thr->slot = slot;
-  thr->last_slot = slot;
   Epoch epoch = EpochInc(slot->clock.Get(slot->sid));
   CHECK(!EpochOverflow(epoch));
   slot->clock.Set(slot->sid, epoch);
@@ -296,20 +253,33 @@ void SlotAttach(ThreadState* thr) {
   thr->fast_state.SetSid(slot->sid);
   thr->fast_state.SetEpoch(thr->clock.Get(slot->sid));
   slot->journal.PushBack({thr->tid, epoch});
-  {
-    Lock lock(&ctx->busy_mtx);
-    ctx->busy_slots.PushBack(slot);
-  }
 }
 
+//!!! Do we now need SlotDetach at all?
+// We could just leave it for future preemption?
 void SlotDetach(ThreadState* thr) {
+  TidSlot* slot = thr->slot;
+  Lock lock(&slot->mtx);
+  thr->slot = nullptr;
+  if (thr == slot->thr) {
+    slot->thr = nullptr;
+    return;
+  }
+  //!!! do we need this? what exactly happens with the trace?
+  if (thr->slot_epoch != ctx->global_epoch) {
+    CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
+    TracePartFree(thr->tctx->trace.parts.PopFront());
+    atomic_store_relaxed(&thr->trace_pos, 0);
+    thr->trace_prev_pc = 0;
+  }
+  
+/*
   Lock lock(&ctx->slots_mtx);
   CHECK(thr->slot);
   TidSlot* slot = thr->slot;
   DPrintf("#%d: SlotDetach: slot=%u\n", thr->tid, slot->sid);
   if (thr != slot->thr) {
     thr->slot = nullptr;
-    thr->last_slot = nullptr;
     if (thr->slot_epoch != ctx->global_epoch) {
       CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
       TracePartFree(thr->tctx->trace.parts.PopFront());
@@ -330,24 +300,28 @@ void SlotDetach(ThreadState* thr) {
     ctx->free_slots.PushBack(slot);
   else
     ctx->used_slots++;
+*/
 }
 
-void InitiateReset(ThreadState* thr, bool force) {
-  SlotUnlocker unlocker(thr);
-  SlotDetach(thr);
-  if (force) {
-    Lock lock(&ctx->slots_mtx);
-    DoReset();
-  }
-  SlotAttach(thr);
-}
-
-void SlotLock(ThreadState* thr) {
+void SlotLock(ThreadState* thr) NO_THREAD_SAFETY_ANALYSIS {
   DCHECK(!thr->slot_locked);
   thr->slot->mtx.Lock();
   thr->slot_locked = true;
-  if (thr != thr->slot->thr || thr->fast_state.epoch() == kEpochLast)
-    InitiateReset(thr, false);
+  if (LIKELY(thr == thr->slot->thr && thr->fast_state.epoch() != kEpochLast))
+    return;
+  if (thr != thr->slot->thr) {
+    if (thr->slot_epoch != ctx->global_epoch) {
+      CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
+      TracePartFree(thr->tctx->trace.parts.PopFront());
+      atomic_store_relaxed(&thr->trace_pos, 0);
+      thr->trace_prev_pc = 0;
+    }
+  } else {
+    thr->slot->thr = nullptr;
+  }
+  SlotUnlock(thr);
+  thr->slot = nullptr;
+  SlotAttachAndLock(thr);
 }
 
 void SlotUnlock(ThreadState* thr) {
@@ -362,13 +336,13 @@ Context::Context()
         return new (Alloc(sizeof(ThreadContext))) ThreadContext(tid);
       }),
       racy_mtx(MutexTypeRacy), racy_stacks(), racy_addresses(),
-      fired_suppressions_mtx(MutexTypeFired), slots_mtx(MutexTypeSlots),
-      busy_mtx(MutexTypeBusy), trace_part_mtx(MutexTypeTraceAlloc) {
+      fired_suppressions_mtx(MutexTypeFired), slot_mtx(MutexTypeSlots),
+      trace_part_mtx(MutexTypeTraceAlloc) {
   fired_suppressions.reserve(8);
   for (uptr i = 0; i < ARRAY_SIZE(slots); i++) {
     TidSlot* slot = &slots[i];
     slot->sid = static_cast<Sid>(i);
-    free_slots.PushBack(slot);
+    slot_queue.PushBack(slot);
   }
   global_epoch = 1;
 }
@@ -725,7 +699,7 @@ int Finalize(ThreadState* thr) {
 
 #if !SANITIZER_GO
 void ForkBefore(ThreadState* thr, uptr pc) {
-  ctx->slots_mtx.Lock();
+  ctx->slot_mtx.Lock();
   ctx->thread_registry.Lock();
   ScopedErrorReportLock::Lock();
   // Suppress all reports in the pthread_atfork callbacks.
@@ -740,14 +714,14 @@ void ForkParentAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ScopedErrorReportLock::Unlock();
   ctx->thread_registry.Unlock();
-  ctx->slots_mtx.Unlock();
+  ctx->slot_mtx.Unlock();
 }
 
 void ForkChildAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ScopedErrorReportLock::Unlock();
   ctx->thread_registry.Unlock();
-  ctx->slots_mtx.Unlock();
+  ctx->slot_mtx.Unlock();
 
   uptr nthread = 0;
   ctx->thread_registry.GetNumberOfThreads(0, 0, &nthread /* alive threads */);
@@ -839,12 +813,14 @@ void TraceSwitch(ThreadState* thr) {
   SlotLocker locker(thr, true);
   Event* new_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   CHECK(pos == new_pos || new_pos == nullptr);
-  while (!(part = TracePartAlloc()))
-    InitiateReset(thr, true);
+  part = TracePartAlloc();
+  CHECK(part);
   part->trace = trace;
   part->start_stack.Init(thr->shadow_stack,
                          thr->shadow_stack_pos - thr->shadow_stack);
   part->start_mset = thr->mset;
+  //!!! what epoch is this? from what slot?
+  //!!! how does trace replay make sense out of thi?
   part->start_epoch = thr->fast_state.epoch();
   part->prev_pc = thr->trace_prev_pc;
   {
@@ -853,10 +829,10 @@ void TraceSwitch(ThreadState* thr) {
     atomic_store_relaxed(&thr->trace_pos, (uptr)&part->events[0]);
   }
   {
-    Lock lock(&ctx->busy_mtx);
-    DCHECK(ctx->busy_slots.Queued(thr->slot));
-    ctx->busy_slots.Remove(thr->slot);
-    ctx->busy_slots.PushBack(thr->slot);
+    Lock lock(&ctx->slot_mtx);
+    DCHECK(ctx->slot_queue.Queued(thr->slot));
+    ctx->slot_queue.Remove(thr->slot);
+    ctx->slot_queue.PushBack(thr->slot);
     if (trace->parts.Size() >= 3)
       ctx->trace_part_recycle.PushBack(
           trace->parts.Prev(trace->parts.Prev(part)));

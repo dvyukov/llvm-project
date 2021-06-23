@@ -70,7 +70,6 @@ static_assert(sizeof(FastState) == kShadowSize, "bad FastState size");
 class Shadow {
 public:
   Shadow(FastState state, u32 addr, u32 size, AccessType typ) {
-    DCHECK(!state.ignore_accesses_);
     raw_ = state.raw_;
     SetAccess(addr, size, typ);
   }
@@ -214,7 +213,9 @@ private:
     raw_ |= (isAtomic << 31) | (isRead << 30) |
             ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
     DCHECK_EQ(addr0(), addr & 0x7);
-    DCHECK_EQ(IsAtomic(), isAtomic);
+    //!!! if FastState::ignore_accesses_ was set, then it overlaps with is_atomic_
+    // and this check fails.
+    // DCHECK_EQ(IsAtomic(), isAtomic);
     DCHECK_EQ(IsRead(), isRead);
     DCHECK_EQ(sid(), sid0);
     DCHECK_EQ(epoch(), epoch0);

@@ -202,7 +202,6 @@ struct ThreadState {
   DDLogicalThread *dd_lt;
 
   TidSlot* slot;
-  TidSlot* last_slot;
   uptr slot_epoch;
   bool slot_locked;
 
@@ -325,22 +324,21 @@ struct Context {
   Flags flags;
   fd_t memprof_fd;
 
-  Mutex slots_mtx;
   TidSlot slots[kSlotCount];
-  IList<TidSlot, &TidSlot::node> free_slots GUARDED_BY(slots_mtx);
-  uptr used_slots GUARDED_BY(slots_mtx);
-  uptr global_epoch;
-  atomic_uint32_t traced_threads;
-
-  Mutex busy_mtx;
-  IList<TidSlot, &TidSlot::node> busy_slots GUARDED_BY(busy_mtx);
+  Mutex slot_mtx;
+  //IList<TidSlot, &TidSlot::node> free_slots GUARDED_BY(slots_mtx);
+  //Mutex busy_mtx;
+  uptr used_slots GUARDED_BY(slot_mtx);
+  uptr global_epoch; // guarded by slot_mtx and by all slot mutexes
+  IList<TidSlot, &TidSlot::node> slot_queue GUARDED_BY(slot_mtx);
   IList<TraceHeader, &TraceHeader::global, TracePart>
-      trace_part_recycle GUARDED_BY(busy_mtx);
+      trace_part_recycle GUARDED_BY(slot_mtx);
 
   Mutex trace_part_mtx;
   IList<TraceHeader, &TraceHeader::global, TracePart>
       trace_part_cache GUARDED_BY(trace_part_mtx);
   u32 trace_part_count GUARDED_BY(trace_part_mtx);
+  atomic_uint32_t traced_threads;
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
@@ -416,9 +414,9 @@ void InitializeInterceptors();
 void InitializeLibIgnore();
 void InitializeDynamicAnnotations();
 
-void ForkBefore(ThreadState* thr, uptr pc) ACQUIRE(ctx->slots_mtx, ctx->thread_registry);
-void ForkParentAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx, ctx->thread_registry);
-void ForkChildAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slots_mtx, ctx->thread_registry);
+void ForkBefore(ThreadState* thr, uptr pc) ACQUIRE(ctx->slot_mtx, ctx->thread_registry);
+void ForkParentAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slot_mtx, ctx->thread_registry);
+void ForkChildAfter(ThreadState* thr, uptr pc) RELEASE(ctx->slot_mtx, ctx->thread_registry);
 
 void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 Shadow old, AccessType typ);
@@ -538,7 +536,7 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceAcquire(ThreadState* thr,
   // TraceSwitch acquires these mutexes, so we lock them here to detect
   // deadlocks more reliably.
   DCHECK((ctx->trace_part_mtx.Lock(), ctx->trace_part_mtx.Unlock(), true));
-  DCHECK((ctx->busy_mtx.Lock(), ctx->busy_mtx.Unlock(), true));
+  DCHECK((ctx->slot_mtx.Lock(), ctx->slot_mtx.Unlock(), true));
   DCHECK((thr->tctx->trace.mtx.Lock(), thr->tctx->trace.mtx.Unlock(), true));
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   TracePart* current = thr->tctx->trace.parts.Back();
@@ -637,7 +635,7 @@ ALWAYS_INLINE uptr HeapEnd() {
 }
 #endif
 
-void SlotAttach(ThreadState* thr);
+void SlotAttachAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx);
 void SlotDetach(ThreadState* thr);
 void SlotLock(ThreadState* thr) ACQUIRE(thr->slot->mtx);
 void SlotUnlock(ThreadState* thr) RELEASE(thr->slot->mtx);
@@ -690,7 +688,7 @@ public:
 
 private:
   ThreadRegistryLock registry_lock_;
-  Lock slots_lock_;
+  Lock slot_lock_;
 };
 
 ALWAYS_INLINE void ProcessPendingSignals(ThreadState* thr) {

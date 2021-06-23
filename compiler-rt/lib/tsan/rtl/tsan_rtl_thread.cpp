@@ -160,10 +160,10 @@ void ThreadStart(ThreadState* thr, Tid tid, tid_t os_id,
                  ThreadType thread_type) {
   ctx->thread_registry.StartThread(tid, os_id, thread_type, thr);
   if (!thr->ignore_sync) {
-    SlotAttach(thr);
-    SlotLocker locker(thr);
+    SlotAttachAndLock(thr);
     if (thr->tctx->sync_epoch == ctx->global_epoch)
       thr->clock.Acquire(thr->tctx->sync);
+    SlotUnlock(thr);
   }
   Free(thr->tctx->sync);
 
@@ -248,7 +248,7 @@ void ThreadContext::OnFinished() {
   thr->tctx = nullptr;
   thr = nullptr;
   {
-    Lock lock(&ctx->busy_mtx);
+    Lock lock(&ctx->slot_mtx);
     auto parts = &trace.parts;
     auto prev = parts->Prev(parts->Back());
     if (prev)

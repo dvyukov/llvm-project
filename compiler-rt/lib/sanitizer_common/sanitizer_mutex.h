@@ -64,6 +64,7 @@ class SpinMutex : public StaticSpinMutex {
 typedef uptr MutexType;
 
 enum {
+  MutexInvalid,
   MutexUnchecked,
   MutexLeaf,
   MutexLastCommon,
