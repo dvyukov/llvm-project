@@ -103,17 +103,8 @@ void ThreadContextBase::Reset() {
 // ThreadRegistry implementation.
 
 ThreadRegistry::ThreadRegistry(ThreadContextFactory factory)
-    : context_factory_(factory), mtx_(), alive_threads_(), running_threads_() {
+    : context_factory_(factory), mtx_(MutexThreadRegistry), total_threads_(), running_threads_() {
   threads_.Initialize(1024);
-}
-
-void ThreadRegistry::GetNumberOfThreads(uptr *total, uptr *running,
-                                        uptr *alive) {
-  BlockingMutexLock l(&mtx_);
-  if (total)
-    *total = static_cast<uptr>(threads_.size());
-  if (running) *running = running_threads_;
-  if (alive) *alive = alive_threads_;
 }
 
 Tid ThreadRegistry::CreateThread(uptr user_id, bool detached, Tid parent_tid,
@@ -123,7 +114,7 @@ Tid ThreadRegistry::CreateThread(uptr user_id, bool detached, Tid parent_tid,
   ThreadContextBase *tctx = context_factory_(tid);
   threads_.push_back(tctx);
   CHECK_EQ(tctx->status, ThreadStatusInvalid);
-  alive_threads_++;
+  atomic_store_relaxed(&total_threads_, atomic_load_relaxed(&total_threads_) + 1);
   tctx->SetCreated(user_id, detached, parent_tid, arg);
   return tid;
 }
@@ -226,15 +217,14 @@ void ThreadRegistry::JoinThread(Tid tid, void *arg) {
 // create it, and so never called StartThread.
 ThreadStatus ThreadRegistry::FinishThread(Tid tid) {
   BlockingMutexLock l(&mtx_);
-  CHECK_GT(alive_threads_, 0);
-  alive_threads_--;
   ThreadContextBase *tctx = threads_[tid];
   CHECK_NE(tctx, 0);
   bool dead = tctx->detached;
   ThreadStatus prev_status = tctx->status;
   if (tctx->status == ThreadStatusRunning) {
-    CHECK_GT(running_threads_, 0);
-    running_threads_--;
+    u32 nthreads = atomic_load_relaxed(&running_threads_);
+    CHECK_GT(nthreads, 0);
+    atomic_store_relaxed(&running_threads_, nthreads - 1);
   } else {
     // The thread never really existed.
     CHECK_EQ(tctx->status, ThreadStatusCreated);
@@ -250,7 +240,7 @@ ThreadStatus ThreadRegistry::FinishThread(Tid tid) {
 void ThreadRegistry::StartThread(Tid tid, tid_t os_id, ThreadType thread_type,
                                  void *arg) {
   BlockingMutexLock l(&mtx_);
-  running_threads_++;
+  atomic_store_relaxed(&running_threads_, atomic_load_relaxed(&running_threads_) + 1);
   ThreadContextBase *tctx = threads_[tid];
   CHECK_NE(tctx, 0);
   CHECK_EQ(ThreadStatusCreated, tctx->status);

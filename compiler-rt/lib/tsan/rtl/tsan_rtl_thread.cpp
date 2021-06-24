@@ -118,12 +118,6 @@ void ThreadFinalize(ThreadState *thr) {
 #endif
 }
 
-int ThreadCount(ThreadState *thr) {
-  uptr result;
-  ctx->thread_registry.GetNumberOfThreads(0, 0, &result);
-  return (int)result;
-}
-
 struct OnCreatedArgs {
   VectorClock* sync;
   uptr sync_epoch;
@@ -207,8 +201,6 @@ void ThreadContext::OnStarted(void* arg) {
   thr->is_inited = true;
 #endif
   thr->tctx = this;
-  u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
-  atomic_store_relaxed(&ctx->traced_threads, traced_threads + 1);
 }
 
 void ThreadFinish(ThreadState *thr) {
@@ -237,28 +229,26 @@ void ThreadFinish(ThreadState *thr) {
 
   if (common_flags()->detect_deadlocks)
     ctx->dd->DestroyLogicalThread(thr->dd_lt);
-  thr->~ThreadState();
   SlotDetach(thr);
   ctx->thread_registry.FinishThread(thr->tid);
+  thr->~ThreadState();
 }
 
 void ThreadContext::OnFinished() {
-  trace.final_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
-  atomic_store_relaxed(&thr->trace_pos, 0);
-  thr->tctx = nullptr;
-  thr = nullptr;
-  {
-    Lock lock(&ctx->slot_mtx);
-    auto parts = &trace.parts;
+  Lock lock(&ctx->slot_mtx);
+  Trace* trace = &thr->tctx->trace;
+  Lock lock1(&trace->mtx);
+  auto parts = &trace->parts;
+  if (parts->Back()) {
     auto prev = parts->Prev(parts->Back());
     if (prev)
       ctx->trace_part_recycle.PushBack(prev);
-    if (parts->Back())
-      ctx->trace_part_recycle.PushBack(parts->Back());
+    ctx->trace_part_recycle.PushBack(parts->Back());
   }
-  u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
-  CHECK(traced_threads);
-  atomic_store_relaxed(&ctx->traced_threads, traced_threads - 1);
+  trace->final_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
+  atomic_store_relaxed(&thr->trace_pos, 0);
+  thr->tctx = nullptr;
+  thr = nullptr;
 }
 
 struct ConsumeThreadContext {

@@ -145,8 +145,8 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
     Lock l(&ctx->trace_part_mtx);
     trace_mem = ctx->trace_part_count * sizeof(TracePart);
   }
-  uptr nthread, nlive;
-  ctx->thread_registry.GetNumberOfThreads(&nthread, &nlive);
+  u32 nrunning = ctx->thread_registry.RunningThreads();
+  u32 nthread = ctx->thread_registry.TotalThreads();
   uptr internal_stats[AllocatorStatCount];
   internal_allocator()->GetStats(internal_stats);
   // All these are allocated from the common mmap region.
@@ -157,14 +157,14 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
   internal_snprintf(buf, buf_size,
       "%llus [%zu]: RSS %zd MB: shadow:%zd meta:%zd file:%zd"
       " mmap:%zd heap:%zd other:%zd intalloc:%zd memblocks:%zd syncobj:%zu"
-      " trace:%zu stacks=%zd threads=%zd/%zd\n",
+      " trace:%zu stacks=%zd threads=%u/%u\n",
       uptime / (1000*1000*1000), ctx->global_epoch,
       mem[MemTotal] >> 20, mem[MemShadow] >> 20,
                     mem[MemMeta] >> 20, mem[MemFile] >> 20, mem[MemMmap] >> 20,
                     mem[MemHeap] >> 20, mem[MemOther] >> 20,
                     internal_stats[AllocatorStatMapped] >> 20,
                     mem_block_mem >> 20, sync_obj_mem >> 20, trace_mem >> 20,
-                    stacks->allocated >> 20, nlive, nthread);
+                    stacks->allocated >> 20, nrunning, nthread);
 }
 
 #if !SANITIZER_GO

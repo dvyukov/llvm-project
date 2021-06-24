@@ -158,8 +158,9 @@ bool ShouldReport(ThreadState *thr, ReportType typ) {
 }
 
 ReportScope::ReportScope(ThreadState* thr)
-    : SlotUnlocker(thr), registry_lock_(&ctx->thread_registry),
-      slot_lock_(&ctx->slot_mtx) {
+    : SlotUnlocker(thr)
+    , registry_lock_(&ctx->thread_registry)
+    , slot_lock_(&ctx->slot_mtx) {
 }
 
 #if !SANITIZER_GO

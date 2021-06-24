@@ -326,8 +326,6 @@ struct Context {
 
   TidSlot slots[kSlotCount];
   Mutex slot_mtx;
-  //IList<TidSlot, &TidSlot::node> free_slots GUARDED_BY(slots_mtx);
-  //Mutex busy_mtx;
   uptr used_slots GUARDED_BY(slot_mtx);
   uptr global_epoch; // guarded by slot_mtx and by all slot mutexes
   IList<TidSlot, &TidSlot::node> slot_queue GUARDED_BY(slot_mtx);
@@ -338,7 +336,6 @@ struct Context {
   IList<TraceHeader, &TraceHeader::global, TracePart>
       trace_part_cache GUARDED_BY(trace_part_mtx);
   u32 trace_part_count GUARDED_BY(trace_part_mtx);
-  atomic_uint32_t traced_threads;
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
@@ -490,7 +487,6 @@ void ThreadJoin(ThreadState* thr, uptr pc, Tid tid);
 void ThreadDetach(ThreadState* thr, uptr pc, Tid tid);
 void ThreadFinalize(ThreadState *thr);
 void ThreadSetName(ThreadState *thr, const char *name);
-int ThreadCount(ThreadState *thr);
 void ThreadNotJoined(ThreadState* thr, uptr pc, Tid tid, uptr uid);
 void ProcessPendingSignalsImpl(ThreadState* thr);
 

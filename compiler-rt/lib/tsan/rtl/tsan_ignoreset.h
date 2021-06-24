@@ -21,7 +21,7 @@ class IgnoreSet {
  public:
   IgnoreSet();
   void Add(StackID stack_id);
-  void Reset();
+  void Reset() { size_ = 0; }
   uptr Size() const;
   StackID At(uptr i) const;
 

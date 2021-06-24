@@ -361,3 +361,29 @@ void Mutex::CheckLocked() {
 #endif
 
 }  // namespace __tsan
+
+
+#if SANITIZER_DEBUG && !SANITIZER_GO
+namespace __sanitizer {
+using namespace __tsan;
+MutexMeta mutex_meta[] = {
+    {MutexInvalid, "Invalid", {}},
+    {MutexThreadRegistry, "ThreadRegistry", {MutexTypeSlots, MutexTypeTrace}},
+    {MutexTypeReport, "Report", {MutexTypeTrace}},
+    {MutexTypeSyncVar, "SyncVar", {MutexTypeReport, MutexTypeTrace}},
+    {MutexTypeAnnotations, "Annotations", {MutexLeaf}},
+    {MutexTypeFired, "Fired", {MutexLeaf}},
+    {MutexTypeRacy, "Racy", {MutexLeaf}},
+    {MutexTypeGlobalProc, "GlobalProc", {}},
+    {MutexTypeTrace, "Trace", {}},
+    {MutexTypeTraceAlloc, "TraceAlloc", {MutexLeaf}},
+    {MutexTypeSlot, "Slot", {MutexMulti, MutexTypeTrace, MutexTypeSyncVar, MutexThreadRegistry, MutexTypeSlots}},
+    {MutexTypeSlots, "Slots", {MutexTypeTrace}},
+    {},
+};
+
+void PrintMutexPC(uptr pc) {
+  PrintStack(SymbolizeCode(StackTrace::GetPreviousInstructionPc(pc)));
+}
+}
+#endif

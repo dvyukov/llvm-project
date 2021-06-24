@@ -61,18 +61,35 @@ class SpinMutex : public StaticSpinMutex {
   }
 };
 
-typedef uptr MutexType;
+typedef int MutexType;
 
 enum {
-  MutexInvalid,
-  MutexUnchecked,
-  MutexLeaf,
+  MutexInvalid = 0,
+  MutexThreadRegistry,
   MutexLastCommon,
+  // Type for legacy mutexes that are not checked for deadlocks.
+  MutexUnchecked = -1,
+  // The leaf mutexes can be locked under any other mutex,
+  // but no other mutex can be locked while under a leaf mutex.
+  MutexLeaf = -1,
+  // Multiple mutexes of this type can be locked at the same time.
+  MutexMulti = -3,
 };
 
 #if SANITIZER_DEBUG && !SANITIZER_GO
-void DebugMutexLock(MutexType type);
+void DebugMutexLock(MutexType type, uptr pc);
 void DebugMutexUnlock(MutexType type);
+
+struct MutexMeta {
+  MutexType type;
+  const char* name;
+  // The table fixes what mutexes can be locked under what mutexes.
+  // E.g. if the entry for MutexTypeFoo contains MutexTypeBar,
+  // then Bar mutex can be locked while under Foo mutex.
+  // The MutexTypeLeaf mutexes can be locked under any other mutexes,
+  // but can't lock any other mutexes.
+  MutexType can_lock[10];
+};
 #endif
 
 class CheckedMutex {
@@ -83,9 +100,9 @@ protected:
 #endif
   }
 
-  void DebugLock() {
+  void DebugLock(uptr pc) {
 #if SANITIZER_DEBUG && !SANITIZER_GO
-    DebugMutexLock(type_);
+    DebugMutexLock(type_, pc);
 #endif  
   }
 
@@ -133,7 +150,7 @@ class MUTEX Mutex : public CheckedMutex {
   }
 
   void Lock() ACQUIRE() {
-    DebugLock();
+    DebugLock(GET_CALLER_PC());
     u64 reset_mask = ~0ull;
     u64 state = atomic_load_relaxed(&state_);
     for (;;) {
@@ -181,7 +198,7 @@ class MUTEX Mutex : public CheckedMutex {
   }
 
   void ReadLock() ACQUIRE_SHARED() {
-    DebugLock();
+    DebugLock(GET_CALLER_PC());
     u64 state = atomic_load_relaxed(&state_);
     for (;;) {
       u64 new_state;
@@ -255,45 +272,6 @@ class MUTEX Mutex : public CheckedMutex {
 
 typedef Mutex RWMutex;
 typedef Mutex BlockingMutex;
-
-
-/*
-template <MutexType Type, typename Base = Mutex>
-class MUTEX CheckedMutex : Base {
-public:
-  bool TryLock() {
-    bool res = Base::TryLock();
-    if (res)
-      DebugMutexLock(Type);
-    return res;
-  }
-
-  void Lock() {
-    DebugMutexLock(Type);
-    Base::Lock();
-  }
-
-  void Unlock() {
-    Base::Unlock();
-    DebugMutexUnlock(Type);
-  }
-
-  void ReadLock() {
-    DebugMutexLock(Type);
-    Base::ReadLock();
-  }
-
-  void ReadUnlock() {
-    Base::ReadUnlock();
-    DebugMutexUnlock(Type);
-  }
-};
-*/
-
-
-
-
-
 
 template <typename MutexType>
 class SCOPED_LOCK GenericScopedLock {

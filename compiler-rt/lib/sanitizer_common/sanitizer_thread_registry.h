@@ -84,8 +84,6 @@ typedef ThreadContextBase *(*ThreadContextFactory)(Tid tid);
 class MUTEX ThreadRegistry {
  public:
   ThreadRegistry(ThreadContextFactory factory);
-  void GetNumberOfThreads(uptr *total = nullptr, uptr *running = nullptr,
-                          uptr *alive = nullptr);
 
   void Lock() ACQUIRE() { mtx_.Lock(); }
   void CheckLocked() const CHECK_LOCKED { mtx_.CheckLocked(); }
@@ -94,10 +92,8 @@ class MUTEX ThreadRegistry {
   // Should be guarded by ThreadRegistryLock.
   ThreadContextBase *GetThreadLocked(Tid tid) { return threads_[tid]; }
 
-  u32 NumThreadsLocked() const {
-    CheckLocked();
-    return threads_.size();
-  }
+  //!!! Remove
+  u32 NumThreadsLocked() const { return TotalThreads(); }
 
   Tid CreateThread(uptr user_id, bool detached, Tid parent_tid, void *arg);
 
@@ -125,13 +121,16 @@ class MUTEX ThreadRegistry {
   void StartThread(Tid tid, tid_t os_id, ThreadType thread_type, void *arg);
   void SetThreadUserId(Tid tid, uptr user_id);
 
+  u32 TotalThreads() const { return atomic_load_relaxed(&total_threads_); }
+  u32 RunningThreads() const { return atomic_load_relaxed(&running_threads_); }
+
  private:
   const ThreadContextFactory context_factory_;
 
   BlockingMutex mtx_;
   InternalMmapVectorNoCtor<ThreadContextBase *, Tid> threads_;
-  uptr alive_threads_;  // Created or running.
-  uptr running_threads_;
+  atomic_uint32_t total_threads_;
+  atomic_uint32_t running_threads_;
 };
 
 typedef GenericScopedLock<ThreadRegistry> ThreadRegistryLock;

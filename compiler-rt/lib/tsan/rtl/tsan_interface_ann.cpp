@@ -428,7 +428,6 @@ void __tsan_mutex_post_signal(void *addr, unsigned flagz) {
 INTERFACE_ATTRIBUTE
 void __tsan_mutex_pre_divert(void *addr, unsigned flagz) {
   SCOPED_ANNOTATION(__tsan_mutex_pre_divert);
-  //if (flags()->mutex_coop2)
   // Exit from ignore region started in __tsan_mutex_pre_lock/unlock/signal.
   ThreadIgnoreSyncEnd(thr);
   ThreadIgnoreEnd(thr);

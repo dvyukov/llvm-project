@@ -239,7 +239,7 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   ThreadSignalContext *ctx = (ThreadSignalContext*)thr->signal_ctx;
   if (ctx == 0 && !thr->is_dead) {
     ctx = (ThreadSignalContext*)MmapOrDie(sizeof(*ctx), "ThreadSignalContext");
-    // MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
+    //!!! MemoryResetRange(thr, (uptr)&SigCtx, (uptr)ctx, sizeof(*ctx));
     thr->signal_ctx = ctx;
   }
   return ctx;

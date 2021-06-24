@@ -28,12 +28,8 @@ enum {
   MutexTypeGlobalProc,
   MutexTypeTrace,
   MutexTypeTraceAlloc,
-  MutexTypeSlots,
-  MutexTypeBusy,
   MutexTypeSlot,
-
-  // This must be the last.
-  MutexTypeCount
+  MutexTypeSlots,
 };
 
 /*
@@ -183,13 +179,6 @@ class InternalDeadlockDetector {
   void Unlock(MutexType t);
   void CheckNoLocks();
  private:
-   struct LockDesc {
-     u64 seq;
-     uptr pc;
-     int recursion;
-   };
-  u64 seq_;
-  LockDesc locked_[MutexTypeCount];
 };
 
 void InitializeMutex();

@@ -79,22 +79,25 @@ void IList<Base, Node, Elem>::Push(Elem* e, INode* after) {
   INode* n = ToNode(e);
   DCHECK_EQ(n->next_, nullptr);
   DCHECK_EQ(n->prev_, nullptr);
-  n->next_ = after->next_;
+  INode* next = after->next_;
+  n->next_ = next;
   n->prev_ = after;
-  n->next_->prev_ = n;
-  n->prev_->next_ = n;
+  next->prev_ = n;
+  after->next_ = n;
   size_++;
 }
 
 template <typename Base, INode Base::*Node, typename Elem>
 void IList<Base, Node, Elem>::Remove(Elem* e) {
   INode* n = ToNode(e);
-  DCHECK(n->next_);
-  DCHECK(n->prev_);
-  n->next_->prev_ = n->prev_;
-  n->prev_->next_ = n->next_;
-  n->prev_ = n->next_ = nullptr;
+  INode* next = n->next_;
+  INode* prev = n->prev_;
+  DCHECK(next);
+  DCHECK(prev);
   DCHECK(size_);
+  next->prev_ = prev;
+  prev->next_ = next;
+  n->prev_ = n->next_ = nullptr;
   size_--;
 }
 

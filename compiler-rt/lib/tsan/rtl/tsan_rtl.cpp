@@ -68,32 +68,42 @@ void OnInitialize() {
 }
 #endif
 
-static TracePart* TracePartAlloc() {
+TracePart* TracePartAlloc() {
   TracePart* part;
   bool alloc = false;
   {
     Lock l(&ctx->trace_part_mtx);
     part = ctx->trace_part_cache.PopBack();
-    //!!! give each thread at least 1 trace part because stalled threads can
-    //! consume trace parts
-
     if (!part) {
-      u32 traced_threads = atomic_load_relaxed(&ctx->traced_threads);
-      DCHECK(traced_threads);
-      //!!! consider flags()->trace_parts or flags()->history_size;
-      u32 max_parts = traced_threads * 3;
+      //!!! use flags()->history_size to let users increase size of the trace as before
+      u32 nthreads = ctx->thread_registry.RunningThreads();
+      //!!! introduce per-thread limit as well, each thread must not create more than 3
+      //!!! otherwise currently if there are lots of inactive threads with short trace
+      // and a single active thread, it will create lots of parts on behalf of other threads
+      // this increases memory consumption as compared to the current version
+      // (where trace is per-thread).
+      u32 max_parts = nthreads * 3;
       if (ctx->trace_part_count < max_parts) {
         ctx->trace_part_count++;
         alloc = true;
       }
     }
   }
+#if SANITIZER_DEBUG
+  if (part) {
+    Lock lock(&ctx->slot_mtx);
+    CHECK(!ctx->trace_part_recycle.Queued(part));
+  }
+#endif
   if (alloc)
     part = new (MmapOrDie(sizeof(TracePart), "TracePart")) TracePart();
   if (!part) {
     Lock lock(&ctx->slot_mtx);
     part = ctx->trace_part_recycle.PopFront();
-    CHECK(part); //!!! can we guarantee this never happens?
+    //!!! can we guarantee this never happens?
+    // e.g. during some very unfortunate timing when all threads
+    // allocate parts, or lots of threads finish.
+    CHECK(part);
     Lock trace_lock(&part->trace->mtx);
     TracePart* part1 = part->trace->parts.PopFront();
     CHECK_EQ(part, part1);
@@ -102,23 +112,23 @@ static TracePart* TracePartAlloc() {
   return part;
 }
 
-static void TracePartFree(TracePart* part) {
-  Lock l(&ctx->trace_part_mtx); //!!! lock once in DoReset
+void TracePartFree(TracePart* part) {
+  //!!! lock once in DoReset
+  // Can DoReset race now with anything?
+  // I think not because all other callers hold slot lock.
+  Lock l(&ctx->trace_part_mtx);
   DCHECK(part->trace);
   part->trace = nullptr;
   ctx->trace_part_cache.PushBack(part);
 }
 
-bool SlotUsable(TidSlot* slot) {
-  DCHECK(!slot->thr);
-  return slot->clock.Get(slot->sid) != kEpochLast;
-}
-
-void DoResetImpl() {
-  ctx->slot_mtx.CheckLocked();
+void DoResetImpl(ThreadState* thr, uptr epoch) {
+  ThreadRegistryLock lock0(&ctx->thread_registry);
+  Lock lock1(&ctx->slot_mtx);
+  DPrintf("#%d: DoReset epoch=%d\n", thr->tid, epoch);
+  CHECK_EQ(ctx->global_epoch, epoch);
   ctx->global_epoch++;
   {
-    ThreadRegistryLock lock(&ctx->thread_registry);
     for (u32 i = ctx->thread_registry.NumThreadsLocked(); i--;) {
       ThreadContext* tctx =
           (ThreadContext*)ctx->thread_registry.GetThreadLocked(
@@ -134,7 +144,8 @@ void DoResetImpl() {
         auto part = parts->Front();
         if (parts->Size() >= 3 || !tctx->thr)
           ctx->trace_part_recycle.Remove(part);
-        DCHECK(!ctx->trace_part_recycle.Queued(part));
+        else
+          CHECK(!ctx->trace_part_recycle.Queued(part));
         if (attached && parts->Size() == 1) {
           //!!! reset thr->trace_pos to the end of the part to force it to switch
           break;
@@ -148,7 +159,8 @@ void DoResetImpl() {
       }
     }
   }
-
+  //!!! is slot_queue guaranteed to be empty now?
+  //!!! remove used_slots?
   CHECK_EQ(ctx->slot_queue.Size() + ctx->used_slots, kSlotCount);
   ctx->used_slots = 0;
   while (ctx->slot_queue.PopFront()) {
@@ -171,59 +183,61 @@ void DoResetImpl() {
 
 // Clang does not understand locking all slots in the loop:
 // error: expecting mutex 'slot.mtx' to be held at start of each loop
-void DoReset() NO_THREAD_SAFETY_ANALYSIS {
-  for (auto& slot : ctx->slots)
+void DoReset(ThreadState* thr, uptr epoch) NO_THREAD_SAFETY_ANALYSIS {
+  for (auto& slot : ctx->slots) {
     slot.mtx.Lock();
-  DoResetImpl();
+    if (UNLIKELY(epoch != ctx->global_epoch)) {
+      // Epoch can't change once we've locked the first slot.
+      CHECK_EQ(slot.sid, 0);
+      slot.mtx.Unlock();
+      return;
+    }
+  }
+  DoResetImpl(thr, epoch);
   for (auto& slot : ctx->slots)
     slot.mtx.Unlock();
 }
 
-TidSlot* FindOneSlotAndLock(ThreadState* thr) REQUIRES(ctx->slot_mtx) NO_THREAD_SAFETY_ANALYSIS {
-  //!!! if there are too few of them, return null
-    //!!! move this condition to FindSlotAndLockImpl
-    /*    
-    if (ctx->used_slots < kMaxSid - 50) {
-      //!!! block for free slots somehow
-      ctx->slots_mtx.Unlock();
-      internal_usleep(10 * 1000);
-      ctx->slots_mtx.Lock();
-      continue;
-    }
-    */
-  TidSlot* slot = ctx->slot_queue.PopFront();
-  if (!slot)
-    return nullptr;
-  slot->mtx.Lock();
-  CHECK(!thr->slot_locked);
-  thr->slot_locked = true;
-  if (slot->thr) {
-    DPrintf("#%d: preempting sid=%d tid=%d\n",
-        thr->tid, (u32)slot->sid, slot->thr->tid);
-    slot->clock = slot->thr->clock;
-    slot->thr = nullptr;
-  }
-  return slot;
-}
-
 TidSlot* FindSlotAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx) NO_THREAD_SAFETY_ANALYSIS {
   CHECK(!thr->slot);
-  Lock lock(&ctx->slot_mtx);
   for (;;) {
-    TidSlot* slot = FindOneSlotAndLock(thr);
+    TidSlot* slot;
+    uptr epoch;
+    {
+      Lock lock(&ctx->slot_mtx);
+      //!!! if there are too few of them, return null
+      // if (ctx->used_slots < kMaxSid - 50) {
+      slot = ctx->slot_queue.PopFront();
+      if (slot)
+        ctx->slot_queue.PushBack(slot);
+      epoch = ctx->global_epoch;
+    }
     if (!slot) {
-      DPrintf("#%d: DoReset\n", thr->tid);
-      DoReset();
+      DoReset(thr, epoch);
       continue;
     }
-    if (!SlotUsable(slot)) {
-      CHECK(thr->slot_locked);
+    slot->mtx.Lock();
+    CHECK(!thr->slot_locked);
+    thr->slot_locked = true;
+    if (slot->thr) {
+      DPrintf("#%d: preempting sid=%d tid=%d\n",
+          thr->tid, (u32)slot->sid, slot->thr->tid);
+      slot->clock = slot->thr->clock;
+      slot->thr = nullptr;
+    }
+    if (slot->clock.Get(slot->sid) == kEpochLast) {
+      {
+        //!!! do this on the next iteration.
+        Lock lock(&ctx->slot_mtx);
+        if (ctx->slot_queue.Queued(slot)) {
+          ctx->slot_queue.Remove(slot);
+          ctx->used_slots++;
+        }
+      }
       thr->slot_locked = false;
       slot->mtx.Unlock();
-      ctx->used_slots++;
       continue;
     }
-    ctx->slot_queue.PushBack(slot);
     return slot;
   }
 }
@@ -255,72 +269,52 @@ void SlotAttachAndLock(ThreadState* thr) {
   slot->journal.PushBack({thr->tid, epoch});
 }
 
+void SlotDetachImpl(ThreadState* thr) {
+  TidSlot* slot = thr->slot;
+  thr->slot = nullptr;
+  if (thr != slot->thr) {
+    slot = nullptr; // we don't own the slot anymore
+    if (thr->slot_epoch != ctx->global_epoch) {
+      //!!! Do we need to hold trace->mtx here?
+      auto parts = &thr->tctx->trace.parts;
+      // The trace can be completely empty in an unlikely event
+      // the thread is preempted right after it acquired the slot
+      // in ThreadStart and did not trace any events yet.
+      CHECK_LE(parts->Size(), 1);
+      auto part = parts->PopFront();
+      if (part)
+        TracePartFree(part);
+      atomic_store_relaxed(&thr->trace_pos, 0);
+      thr->trace_prev_pc = 0;
+    }
+  } else {
+    //!!! consider sending thr->slot as hint to FindSlotAndLock
+    // so that it can remove it from the ctx->slot_queue right away.
+    slot->thr = nullptr;
+    //!!! do we need to update whole clock or only own element?
+    //!!! maybe at least for exiting threads we can update only own elem?
+    slot->clock = thr->clock;
+  }
+}
+
 //!!! Do we now need SlotDetach at all?
 // We could just leave it for future preemption?
 void SlotDetach(ThreadState* thr) {
   TidSlot* slot = thr->slot;
   Lock lock(&slot->mtx);
-  thr->slot = nullptr;
-  if (thr == slot->thr) {
-    slot->thr = nullptr;
-    return;
-  }
-  //!!! do we need this? what exactly happens with the trace?
-  if (thr->slot_epoch != ctx->global_epoch) {
-    CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
-    TracePartFree(thr->tctx->trace.parts.PopFront());
-    atomic_store_relaxed(&thr->trace_pos, 0);
-    thr->trace_prev_pc = 0;
-  }
-  
-/*
-  Lock lock(&ctx->slots_mtx);
-  CHECK(thr->slot);
-  TidSlot* slot = thr->slot;
-  DPrintf("#%d: SlotDetach: slot=%u\n", thr->tid, slot->sid);
-  if (thr != slot->thr) {
-    thr->slot = nullptr;
-    if (thr->slot_epoch != ctx->global_epoch) {
-      CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
-      TracePartFree(thr->tctx->trace.parts.PopFront());
-      atomic_store_relaxed(&thr->trace_pos, 0);
-      thr->trace_prev_pc = 0;
-    }
-    return;
-  }
-  CHECK_EQ(slot->thr, thr);
-  thr->slot = nullptr;
-  slot->thr = nullptr;
-  slot->clock = thr->clock;
-  {
-    Lock lock(&ctx->busy_mtx);
-    ctx->busy_slots.Remove(slot);
-  }
-  if (SlotUsable(slot))
-    ctx->free_slots.PushBack(slot);
-  else
-    ctx->used_slots++;
-*/
+  SlotDetachImpl(thr);
 }
 
 void SlotLock(ThreadState* thr) NO_THREAD_SAFETY_ANALYSIS {
   DCHECK(!thr->slot_locked);
-  thr->slot->mtx.Lock();
+  TidSlot* slot = thr->slot;
+  slot->mtx.Lock();
   thr->slot_locked = true;
-  if (LIKELY(thr == thr->slot->thr && thr->fast_state.epoch() != kEpochLast))
+  if (LIKELY(thr == slot->thr && thr->fast_state.epoch() != kEpochLast))
     return;
-  if (thr != thr->slot->thr) {
-    if (thr->slot_epoch != ctx->global_epoch) {
-      CHECK_EQ(thr->tctx->trace.parts.Size(), 1);
-      TracePartFree(thr->tctx->trace.parts.PopFront());
-      atomic_store_relaxed(&thr->trace_pos, 0);
-      thr->trace_prev_pc = 0;
-    }
-  } else {
-    thr->slot->thr = nullptr;
-  }
-  SlotUnlock(thr);
-  thr->slot = nullptr;
+  SlotDetachImpl(thr);
+  thr->slot_locked = false;
+  slot->mtx.Unlock();
   SlotAttachAndLock(thr);
 }
 
@@ -417,6 +411,9 @@ static void* BackgroundThread(void* arg) {
     u64 now = NanoTime();
 
     MemoryProfiler(now - start);
+
+    //!!! we may still want a periodic shadow flush,
+    // otherwise we may consume more memory than v2
 
     // Flush symbolizer cache if requested.
     if (flush_symbolizer > 0) {
@@ -664,7 +661,7 @@ int Finalize(ThreadState* thr) {
   if (common_flags()->print_module_map == 1)
     DumpProcessMap();
 
-  if (flags()->atexit_sleep_ms > 0 && ThreadCount(thr) > 1)
+  if (flags()->atexit_sleep_ms > 0 && ctx->thread_registry.RunningThreads() > 1)
     internal_usleep(u64(flags()->atexit_sleep_ms) * 1000);
 
   {
@@ -699,8 +696,9 @@ int Finalize(ThreadState* thr) {
 
 #if !SANITIZER_GO
 void ForkBefore(ThreadState* thr, uptr pc) {
-  ctx->slot_mtx.Lock();
+  //!!! we probably should lock the current slot as well?
   ctx->thread_registry.Lock();
+  ctx->slot_mtx.Lock();
   ScopedErrorReportLock::Lock();
   // Suppress all reports in the pthread_atfork callbacks.
   // Reports will deadlock on the report_mtx.
@@ -713,18 +711,17 @@ void ForkBefore(ThreadState* thr, uptr pc) {
 void ForkParentAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ScopedErrorReportLock::Unlock();
-  ctx->thread_registry.Unlock();
   ctx->slot_mtx.Unlock();
+  ctx->thread_registry.Unlock();
 }
 
 void ForkChildAfter(ThreadState *thr, uptr pc) {
   thr->suppress_reports--;  // Enabled in ForkBefore.
   ScopedErrorReportLock::Unlock();
-  ctx->thread_registry.Unlock();
   ctx->slot_mtx.Unlock();
+  ctx->thread_registry.Unlock();
 
-  uptr nthread = 0;
-  ctx->thread_registry.GetNumberOfThreads(0, 0, &nthread /* alive threads */);
+  u32 nthread = ctx->thread_registry.RunningThreads();
   VPrintf(1,
           "ThreadSanitizer: forked new process with pid %d,"
           " parent had %d threads\n",
@@ -811,31 +808,33 @@ void TraceSwitch(ThreadState* thr) {
   }
 #endif
   SlotLocker locker(thr, true);
-  Event* new_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
-  CHECK(pos == new_pos || new_pos == nullptr);
   part = TracePartAlloc();
-  CHECK(part);
   part->trace = trace;
+  //!!! instead of storing start_stack/mset, trace corresponding events (func entry, mutex lock)?
   part->start_stack.Init(thr->shadow_stack,
                          thr->shadow_stack_pos - thr->shadow_stack);
   part->start_mset = thr->mset;
   //!!! what epoch is this? from what slot?
-  //!!! how does trace replay make sense out of thi?
+  //!!! how does trace replay make sense out of this?
+  //!!! we need to store (sid+epoch) pairs in the trace.
   part->start_epoch = thr->fast_state.epoch();
   part->prev_pc = thr->trace_prev_pc;
+  TracePart* recycle = nullptr;
   {
     Lock lock(&trace->mtx);
+    if (trace->parts.Size() >= 2)
+      recycle = trace->parts.Prev(trace->parts.Back());
     trace->parts.PushBack(part);
     atomic_store_relaxed(&thr->trace_pos, (uptr)&part->events[0]);
   }
   {
+    //!!! TracePartAlloc also locks ctx->slot_mtx.
+    // Is it possible to combine this critical section and the one in TracePartAlloc?
     Lock lock(&ctx->slot_mtx);
-    DCHECK(ctx->slot_queue.Queued(thr->slot));
     ctx->slot_queue.Remove(thr->slot);
     ctx->slot_queue.PushBack(thr->slot);
-    if (trace->parts.Size() >= 3)
-      ctx->trace_part_recycle.PushBack(
-          trace->parts.Prev(trace->parts.Prev(part)));
+    if (recycle)
+      ctx->trace_part_recycle.PushBack(recycle);
   }
 }
 
@@ -1348,9 +1347,9 @@ static void MemoryRangeSet(ThreadState* thr, uptr pc, uptr addr, uptr size,
 }
 
 void MemoryResetRange(ThreadState* thr, uptr pc, uptr addr, uptr size) {
-  DCHECK_EQ(addr % kShadowCell, 0);
-  size = RoundUp(size, kShadowCell);
-  MemoryRangeSet(thr, pc, addr, size, 0);
+  uptr addr1 = RoundDown(addr, kShadowCell);
+  uptr size1 = RoundUp(size + addr - addr1, kShadowCell);
+  MemoryRangeSet(thr, pc, addr1, size1, 0);
 }
 
 void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
