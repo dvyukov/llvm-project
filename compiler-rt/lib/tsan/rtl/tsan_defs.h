@@ -75,11 +75,12 @@ typedef uptr AccessType;
 
 enum {
   AccessWrite = 0,
-  AccessRead = 1,
-  AccessAtomic = 2,
-  AccessFree = 4,
-  AccessVptr = 8,
-  AccessTemp = 16,
+  AccessRead = 1 << 0,
+  AccessAtomic = 1 << 1,
+  AccessFree = 1 << 2,
+  AccessVptr = 1 << 3,
+  AccessTemp = 1 << 4,
+  AccessExternal = 1 << 5,
 };
 
 const uptr kShadowStackSize = 64 * 1024;

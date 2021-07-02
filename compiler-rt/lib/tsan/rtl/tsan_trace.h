@@ -21,9 +21,8 @@
 namespace __tsan {
 
 enum EventType {
-  EventTypeAccessEx,
-  EventTypeFuncEnter,
-  EventTypeFuncExit,
+  EventTypeAccessExt,
+  EventTypeAccessRange,
   EventTypeLock,
   EventTypeRLock,
   EventTypeUnlock,
@@ -31,76 +30,93 @@ enum EventType {
 };
 
 struct Event {
-  u64 isAccess : 1;
+  u64 is_access : 1;
+  u64 is_func : 1;
   u64 type : 3;
-  u64 _ : 60;
+  u64 _ : 59;
 };
 static_assert(sizeof(Event) == 8, "bad Event size");
-static constexpr Event NopEvent = {1, 0, 0};
+static constexpr Event NopEvent = {1, 0, 0, 0};
 
 constexpr uptr kCompressedAddrBits = 44;
 
 struct EventAccess {
-  static constexpr uptr kPCBits = 14;
+  static constexpr uptr kPCBits = 15;
 
-  u64 isAccess : 1;
+  u64 is_access : 1;
   u64 isRead : 1;
   u64 isAtomic : 1;
-  u64 isExternalPC : 1;
   u64 sizeLog : 2;
   u64 pcDelta : kPCBits;
   u64 addr : kCompressedAddrBits;
 };
-static_assert(sizeof(EventAccess) == 8, "bad MopEvent size");
+static_assert(sizeof(EventAccess) == 8, "bad EventAccess size");
 
-struct EventAccessEx {
-  static constexpr uptr kSizeLoBits = 12;
+struct EventFunc {
+  u64 is_access : 1;
+  u64 is_func : 1;
+  u64 pc : 62;
+};
+static_assert(sizeof(EventFunc) == 8, "bad EventFunc size");
 
-  u64 isAccess : 1;
+struct EventAccessExt {
+  u64 is_access : 1;
+  u64 is_func : 1;
   u64 type : 3;
   u64 isRead : 1;
   u64 isAtomic : 1;
+  u64 sizeLog : 2;
+  u64 _ : 11;
+  u64 addr : kCompressedAddrBits;
+  u64 pc;
+};
+static_assert(sizeof(EventAccessExt) == 16, "bad EventAccessExt size");
+
+struct EventAccessRange {
+  static constexpr uptr kSizeLoBits = 13;
+
+  u64 is_access : 1;
+  u64 is_func : 1;
+  u64 type : 3;
+  u64 isRead : 1;
   u64 isFreed : 1;
-  u64 isExternalPC : 1;
   u64 sizeLo : kSizeLoBits;
   u64 pc : kCompressedAddrBits;
   u64 addr : kCompressedAddrBits;
-  u64 sizeHi : 20;
+  u64 sizeHi : 64 - kCompressedAddrBits;
 };
-static_assert(sizeof(EventAccessEx) == 16, "bad EventAccessEx size");
+static_assert(sizeof(EventAccessRange) == 16, "bad EventAccessRange size");
 
 struct EventLock {
-  static constexpr uptr kStackIDLoBits = 16;
+  static constexpr uptr kStackIDLoBits = 15;
 
-  u64 isAccess : 1;
+  u64 is_access : 1;
+  u64 is_func : 1;
   u64 type : 3;
   u64 pc : kCompressedAddrBits;
   u64 stackIDLo : kStackIDLoBits;
-  u64 stackIDHi : 16;
-  u64 isExternalPC : 1;
+  u64 stackIDHi : sizeof(StackID) * kByteBits - kStackIDLoBits;
   u64 _ : 3;
   u64 addr : kCompressedAddrBits;
 };
 static_assert(sizeof(EventLock) == 16, "bad EventLock size");
 
 struct EventUnlock {
-  u64 isAccess : 1;
+  u64 is_access : 1;
+  u64 is_func : 1;
   u64 type : 3;
-  u64 _ : 16;
+  u64 _ : 15;
   u64 addr : kCompressedAddrBits;
 };
 static_assert(sizeof(EventUnlock) == 8, "bad EventUnlock size");
 
-struct EventPC {
-  u64 isAccess : 1;
+struct EventRelease {
+  u64 is_access : 1;
+  u64 is_func : 1;
   u64 type : 3;
-  u64 isExternalPC : 1;
-  u64 _ : 15;
-  u64 pc : kCompressedAddrBits;
+  u64 _ : 59;
 };
-static_assert(sizeof(EventPC) == 8, "bad EventPC size");
-
-struct TracePart;
+static_assert(sizeof(EventRelease) == 8, "bad EventRelease size");
 
 struct TraceHeader {
   Trace* trace = nullptr;

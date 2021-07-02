@@ -234,9 +234,11 @@ uptr RestoreAddr(uptr addr) {
 #endif
 }
 
+/*
 uptr RestorePC(uptr pc, bool isExternal) {
   return RestoreAddr(pc) | (isExternal ? kExternalPCBit : 0);
 }
+*/
 
 template <typename Func>
 void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
@@ -253,14 +255,16 @@ void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
       end = last_pos;
     for (Event* evp = &part->events[0]; evp < end; evp++) {
       Event* evp0 = evp;
-      if (!evp->isAccess) {
+      if (!evp->is_access && !evp->is_func) {
         switch (evp->type) {
         case EventTypeRelease:
           evEpoch = EpochInc(evEpoch);
           if (evEpoch > epoch)
             return;
           break;
-        case EventTypeAccessEx:
+        case EventTypeAccessExt:
+          [[fallthrough]];
+        case EventTypeAccessRange:
           [[fallthrough]];
         case EventTypeLock:
           [[fallthrough]];
@@ -333,20 +337,18 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
   bool found = false;
   TraceReplay(
       trace, last_part, last_pos, epoch, [&](Epoch evEpoch, Event* evp) {
-        if (evp->isAccess) {
+        if (evp->is_access) {
           if (evp->type == 0 && evp->_ == 0) // NopEvent
             return;
           auto ev = reinterpret_cast<EventAccess*>(evp);
           //!!! also check access size and type (read/atomic).
           uptr evAddr = RestoreAddr(ev->addr);
           uptr evSize = 1 << ev->sizeLog;
-          uptr evPC = (prev_pc & ~kExternalPCBit) + ev->pcDelta -
-                      (1 << (EventAccess::kPCBits - 1));
-          evPC = RestorePC(evPC, ev->isExternalPC); //!!! is this fine?
+          uptr evPC = prev_pc + ev->pcDelta - (1 << (EventAccess::kPCBits - 1));
           prev_pc = evPC;
           DPrintf2("  Access: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n", evPC,
                    evAddr, evSize, ev->isRead, ev->isAtomic);
-          if (type == EventTypeAccessEx && evEpoch == epoch && addr >= evAddr &&
+          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
               addr + size <= evAddr + evSize && isRead == ev->isRead &&
               isAtomic == ev->isAtomic && !isFreed) {
             DPrintf2("    MATCHED\n");
@@ -357,52 +359,72 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
           }
           return;
         }
+        if (evp->is_func) {
+          auto ev = reinterpret_cast<EventFunc*>(evp);
+          if (ev->pc) {
+            DPrintf2("  FuncEnter: pc=0x%zx\n", ev->pc);
+            if (stack.Size() < pos + 2)
+              stack.Resize(pos + 2);
+            stack[pos++] = ev->pc;
+          } else {
+            DPrintf2("  FuncExit\n");
+            // Note: we may remember a truncated stack trace in
+            // the trace part header, then we can have func exit
+            // events that exit from non-existent frames.
+            if (pos > 0)
+              pos--;
+          }
+          return;
+        }
         switch (evp->type) {
-        case EventTypeAccessEx: {
-          auto ev = reinterpret_cast<EventAccessEx*>(evp);
+        case EventTypeAccessExt: {
+          auto ev = reinterpret_cast<EventAccessExt*>(evp);
           uptr evAddr = RestoreAddr(ev->addr);
-          uptr evSize = (ev->sizeHi << EventAccessEx::kSizeLoBits) + ev->sizeLo;
-          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
-          prev_pc = evPC;
+          uptr evSize = 1 << ev->sizeLog;
+          prev_pc = ev->pc;
           DPrintf2(
-              "  AccessEx: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu/%llu\n",
-              evPC, evAddr, evSize, ev->isRead, ev->isAtomic, ev->isFreed);
+              "  AccessExt: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n",
+              ev->pc, evAddr, evSize, ev->isRead, ev->isAtomic);
           //!!! also check access size and type (read/atomic).
-          if (type == EventTypeAccessEx && evEpoch == epoch && addr >= evAddr &&
+          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
               addr + size <= evAddr + evSize && isRead == ev->isRead &&
-              isAtomic == ev->isAtomic && isFreed == ev->isFreed) {
+              isAtomic == ev->isAtomic && !isFreed) {
             DPrintf2("    MATCHED\n");
-            stack[pos] = evPC;
+            stack[pos] = ev->pc;
             stk->Init(&stack[0], pos + 1);
             *pmset = mset;
             found = true;
           }
           break;
         }
-        case EventTypeFuncEnter: {
-          auto ev = reinterpret_cast<EventPC*>(evp);
-          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
-          DPrintf2("  FuncEnter: pc=0x%zx\n", evPC);
-          if (stack.Size() < pos + 2)
-            stack.Resize(pos + 2);
-          stack[pos++] = evPC;
+        case EventTypeAccessRange: {
+          auto ev = reinterpret_cast<EventAccessRange*>(evp);
+          uptr evAddr = RestoreAddr(ev->addr);
+          uptr evSize = (ev->sizeHi << EventAccessRange::kSizeLoBits) + ev->sizeLo;
+          uptr ev_pc = RestoreAddr(ev->pc);
+          prev_pc = ev_pc;
+          DPrintf2(
+              "  AccessRange: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n",
+              ev_pc, evAddr, evSize, ev->isRead, ev->isFreed);
+          //!!! also check access size and type (read/atomic).
+          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
+              addr + size <= evAddr + evSize && isRead == ev->isRead &&
+              !isAtomic && isFreed == ev->isFreed) {
+            DPrintf2("    MATCHED\n");
+            stack[pos] = ev_pc;
+            stk->Init(&stack[0], pos + 1);
+            *pmset = mset;
+            found = true;
+          }
           break;
         }
-        case EventTypeFuncExit:
-          DPrintf2("  FuncExit\n");
-          // Note: we may remember a truncated stack trace in
-          // the trace part header, then we can have func exit
-          // events that exit from non-existent frames.
-          if (pos > 0)
-            pos--;
-          break;
         case EventTypeLock:
           [[fallthrough]];
         case EventTypeRLock: {
           auto ev = reinterpret_cast<EventLock*>(evp);
           bool isWrite = ev->type == EventTypeLock;
           uptr evAddr = RestoreAddr(ev->addr);
-          uptr evPC = RestorePC(ev->pc, ev->isExternalPC);
+          uptr evPC = RestoreAddr(ev->pc);
           StackID stackID = static_cast<StackID>(
               (ev->stackIDHi << EventLock::kStackIDLoBits) + ev->stackIDLo);
           DPrintf2("  Lock: pc=0x%zx addr=0x%llx stack=%u write=%d\n", evPC,
@@ -634,7 +656,7 @@ void ReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   // then we try to report and fail to restore traces
   {
     ReportScope report_scope(thr);
-    if (!RestoreStack(EventTypeAccessEx, s[1].sid(), s[1].epoch(), addr1,
+    if (!RestoreStack(EventTypeAccessExt, s[1].sid(), s[1].epoch(), addr1,
                       s[1].size(), s[1].IsRead(), s[1].IsAtomic(),
                       s[1].IsFree(), &tids[1], &traces[1], mset[1], &tags[1]))
       return;

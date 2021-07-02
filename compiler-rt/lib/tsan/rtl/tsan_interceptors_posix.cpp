@@ -1951,11 +1951,13 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
   int ignore_accesses = thr->ignore_accesses;
   int ignore_interceptors = thr->ignore_interceptors;
   int ignore_sync = thr->ignore_sync;
+  int in_symbolizer = thr->in_symbolizer;
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_accesses = 0;
     thr->fast_state.SetIgnoreAccesses(false);
     thr->ignore_interceptors = 0;
     thr->ignore_sync = 0;
+    thr->in_symbolizer = 0;
   }
   // Ensure that the handler does not spoil errno.
   const int saved_errno = errno;
@@ -1973,6 +1975,7 @@ void CallUserSignalHandler(ThreadState* thr, bool sync, bool acquire, int sig,
     thr->fast_state.SetIgnoreAccesses(ignore_accesses);
     thr->ignore_interceptors = ignore_interceptors;
     thr->ignore_sync = ignore_sync;
+    thr->in_symbolizer = in_symbolizer;
   }
   // We do not detect errno spoiling for SIGTERM,
   // because some SIGTERM handlers do spoil errno but reraise SIGTERM,

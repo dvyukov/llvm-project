@@ -565,18 +565,17 @@ template <typename EventT> void TraceEvent(ThreadState* thr, EventT ev) {
   TraceRelease(thr, evp);
 }
 
-ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceFunc(ThreadState* thr,
-                                                EventType type, uptr pc = 0) {
-  DCHECK(type == EventTypeFuncEnter || type == EventTypeFuncExit);
+ALWAYS_INLINE WARN_UNUSED_RESULT
+bool TryTraceFunc(ThreadState* thr, uptr pc = 0) {
   if (!kCollectHistory)
     return true;
-  EventPC* ev;
-  if (!TraceAcquire(thr, &ev))
+  EventFunc* ev;
+  if (UNLIKELY(!TraceAcquire(thr, &ev)))
     return false;
-  ev->isAccess = 0;
-  ev->type = type;
-  ev->isExternalPC = 0;
-  ev->_ = 0;
+  //!!! this can be a bit more efficient because top 4 PC bits are 0s,
+  // so we can avoid masking them, and instead just or isAccess/type/isExternalPC to the PC.
+  ev->is_access = 0;
+  ev->is_func = 1;
   ev->pc = pc;
   TraceRelease(thr, ev);
   return true;
@@ -595,7 +594,7 @@ void TraceRestartFuncEntry(ThreadState* thr, uptr pc);
 ALWAYS_INLINE
 void FuncEntry(ThreadState* thr, uptr pc) {
   DPrintf2("#%d: FuncEntry %p\n", (int)thr->fast_state.sid(), (void*)pc);
-  if (!TraceFunc(thr, EventTypeFuncEnter, pc))
+  if (UNLIKELY(!TryTraceFunc(thr, pc)))
     return TraceRestartFuncEntry(thr, pc);
   DCHECK_GE(thr->shadow_stack_pos, thr->shadow_stack);
 #if !SANITIZER_GO
@@ -611,7 +610,7 @@ void FuncEntry(ThreadState* thr, uptr pc) {
 ALWAYS_INLINE
 void FuncExit(ThreadState* thr) {
   DPrintf2("#%d: FuncExit\n", (int)thr->fast_state.sid());
-  if (!TraceFunc(thr, EventTypeFuncExit, 0))
+  if (UNLIKELY(!TryTraceFunc(thr, 0)))
     return TraceRestartFuncExit(thr);
   DCHECK_GT(thr->shadow_stack_pos, thr->shadow_stack);
 #if !SANITIZER_GO

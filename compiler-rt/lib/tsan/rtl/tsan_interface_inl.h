@@ -51,35 +51,35 @@ void __tsan_write8(void* addr) {
 }
 
 void __tsan_read1_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessRead);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessRead | AccessExternal);
 }
 
 void __tsan_read2_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessRead);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessRead | AccessExternal);
 }
 
 void __tsan_read4_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessRead);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessRead | AccessExternal);
 }
 
 void __tsan_read8_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessRead);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessRead | AccessExternal);
 }
 
 void __tsan_write1_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessWrite);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 1, AccessWrite | AccessExternal);
 }
 
 void __tsan_write2_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessWrite);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 2, AccessWrite | AccessExternal);
 }
 
 void __tsan_write4_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessWrite);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 4, AccessWrite | AccessExternal);
 }
 
 void __tsan_write8_pc(void* addr, void* pc) {
-  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessWrite);
+  MemoryAccess(cur_thread(), STRIP_PAC_PC(pc), (uptr)addr, 8, AccessWrite | AccessExternal);
 }
 
 ALWAYS_INLINE USED void __tsan_unaligned_read2(const void* addr) {

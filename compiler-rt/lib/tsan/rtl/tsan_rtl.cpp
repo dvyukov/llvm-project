@@ -983,40 +983,36 @@ char* DumpShadow(char* buf, RawShadow raw) {
 }
 
 ALWAYS_INLINE WARN_UNUSED_RESULT
-bool TraceMemoryAccess(ThreadState* thr,
-                                                        uptr pc, uptr addr,
-                                                        uptr size, AccessType typ) {
+bool TraceMemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ) {
   DCHECK(size == 1 || size == 2 || size == 4 || size == 8);
   if (!kCollectHistory)
     return true;
   EventAccess* ev;
   if (!TraceAcquire(thr, &ev))
     return false;
+  u64 size_log = size == 1 ? 0 : size == 2 ? 1 : size == 4 ? 2 : 3;
   uptr pcDelta = pc - thr->trace_prev_pc + (1 << (EventAccess::kPCBits - 1));
   thr->trace_prev_pc = pc;
   if (LIKELY(pcDelta < (1 << EventAccess::kPCBits))) {
-    ev->isAccess = 1;
+    ev->is_access = 1;
     ev->isRead = !!(typ & AccessRead);
     ev->isAtomic = !!(typ & AccessAtomic);
-    ev->isExternalPC = 0; //!!!
-    ev->sizeLog = size == 1 ? 0 : size == 2 ? 1 : size == 4 ? 2 : 3;
+    ev->sizeLog = size_log;
     ev->pcDelta = pcDelta;
     DCHECK_EQ(ev->pcDelta, pcDelta);
     ev->addr = addr;
     TraceRelease(thr, ev);
     return true;
   }
-  auto evex = reinterpret_cast<EventAccessEx*>(ev);
-  evex->isAccess = 0;
-  evex->type = EventTypeAccessEx;
+  auto evex = reinterpret_cast<EventAccessExt*>(ev);
+  evex->is_access = 0;
+  evex->is_func = 0;
+  evex->type = EventTypeAccessExt;
   evex->isRead = !!(typ & AccessRead);
   evex->isAtomic = !!(typ & AccessAtomic);
-  evex->isFreed = 0;
-  evex->isExternalPC = 0; //!!!
-  evex->sizeLo = size;
-  evex->pc = pc;
+  evex->sizeLog = size_log;
   evex->addr = addr;
-  evex->sizeHi = 0;
+  evex->pc = pc;
   TraceRelease(thr, evex);
   return true;
 }
@@ -1204,21 +1200,19 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool
 TryTraceMemoryAccessRange(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ) {
   if (!kCollectHistory)
     return true;
-  EventAccessEx* ev;
+  EventAccessRange* ev;
   if (!TraceAcquire(thr, &ev))
     return false;
   thr->trace_prev_pc = pc;
-  ev->isAccess = 0;
-  ev->type = EventTypeAccessEx;
-  //!!! store type directly?
+  ev->is_access = 0;
+  ev->is_func = 0;
+  ev->type = EventTypeAccessRange;
   ev->isRead = !!(typ & AccessRead);
-  ev->isAtomic = !!(typ & AccessAtomic);
   ev->isFreed = !!(typ & AccessFree);
-  ev->isExternalPC = 0; //!!!
   ev->sizeLo = size;
   ev->pc = pc;
   ev->addr = addr;
-  ev->sizeHi = size >> EventAccessEx::kSizeLoBits;
+  ev->sizeHi = size >> EventAccessRange::kSizeLoBits;
   TraceRelease(thr, ev);
   return true;
 }
@@ -1498,12 +1492,14 @@ void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
   if (!kCollectHistory)
     return;
   //!!! should these events set trace_prev_pc as well?
-  EventLock ev = {};
+  EventLock ev;
+  ev.is_access = 0;
+  ev.is_func = 0;
   ev.type = type;
-  ev.isExternalPC = 0; //!!! handle
   ev.pc = pc;
   ev.stackIDLo = static_cast<u64>(stk);
   ev.stackIDHi = static_cast<u64>(stk) >> EventLock::kStackIDLoBits;
+  ev._ = 0;
   ev.addr = addr;
   TraceEvent(thr, ev);
 }
@@ -1511,9 +1507,11 @@ void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
 void TraceMutexUnlock(ThreadState* thr, uptr addr) {
   if (!kCollectHistory)
     return;
-  EventUnlock ev;                      //!!! = {};
-  internal_memset(&ev, 0, sizeof(ev)); //!!!
+  EventUnlock ev;
+  ev.is_access = 0;
+  ev.is_func = 0;
   ev.type = EventTypeUnlock;
+  ev._ = 0;
   ev.addr = addr;
   TraceEvent(thr, ev);
 }
@@ -1521,9 +1519,11 @@ void TraceMutexUnlock(ThreadState* thr, uptr addr) {
 void TraceRelease(ThreadState* thr) {
   if (!kCollectHistory)
     return;
-  EventPC ev;                          //!!! = {};
-  internal_memset(&ev, 0, sizeof(ev)); //!!!
+  EventRelease ev;
+  ev.is_access = 0;
+  ev.is_func = 0;
   ev.type = EventTypeRelease;
+  ev._ = 0;
   TraceEvent(thr, ev);
 }
 
