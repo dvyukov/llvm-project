@@ -167,6 +167,12 @@ jptr __tsan_java_find(jptr *from_ptr, jptr to) {
   return 0;
 }
 
+void __tsan_java_reset() {
+  SCOPED_JAVA_FUNC(__tsan_java_reset);
+  DPrintf("#%d: java_reset()\n", thr->tid);
+  DoReset(thr, 0);
+}
+
 void __tsan_java_finalize() {
   SCOPED_JAVA_FUNC(__tsan_java_finalize);
   DPrintf("#%d: java_finalize()\n", thr->tid);

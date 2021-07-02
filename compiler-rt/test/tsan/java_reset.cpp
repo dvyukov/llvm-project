@@ -1,7 +1,4 @@
-// RUN: %clangxx_tsan -O1 %s -o %t && %deflake %run %t | FileCheck %s
-
-// __tsan_java_move is broken.
-// XFAIL: *
+// RUN: %clangxx_tsan -O1 %s -o %t && %run %t | FileCheck %s
 
 #include "java.h"
 
@@ -28,6 +25,7 @@ int main() {
   pthread_create(&th, 0, Thread, 0);
   *(int*)varaddr = 43;
   __tsan_java_move(varaddr, varaddr2, kBlockSize);
+  __tsan_java_reset();
   barrier_wait(&barrier);
   pthread_join(th, 0);
   __tsan_java_free(varaddr2, kBlockSize);
@@ -35,9 +33,5 @@ int main() {
   return __tsan_java_fini();
 }
 
-// CHECK: WARNING: ThreadSanitizer: data race
-// CHECK: Write of size 4
-// CHECK:   #0 Thread
-// CHECK: Previous write of size 4
-// CHECK:   #0 main
+// CHECK-NOT: WARNING: ThreadSanitizer:
 // CHECK: DONE

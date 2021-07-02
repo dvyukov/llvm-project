@@ -126,7 +126,8 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
   ThreadRegistryLock lock0(&ctx->thread_registry);
   Lock lock1(&ctx->slot_mtx);
   DPrintf("#%d: DoReset epoch=%d\n", thr->tid, epoch);
-  CHECK_EQ(ctx->global_epoch, epoch);
+  if (epoch)
+    CHECK_EQ(ctx->global_epoch, epoch);
   ctx->global_epoch++;
   {
     for (u32 i = ctx->thread_registry.NumThreadsLocked(); i--;) {
@@ -186,7 +187,7 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
 void DoReset(ThreadState* thr, uptr epoch) NO_THREAD_SAFETY_ANALYSIS {
   for (auto& slot : ctx->slots) {
     slot.mtx.Lock();
-    if (UNLIKELY(epoch != ctx->global_epoch)) {
+    if (UNLIKELY(epoch != 0 && epoch != ctx->global_epoch)) {
       // Epoch can't change once we've locked the first slot.
       CHECK_EQ(slot.sid, 0);
       slot.mtx.Unlock();

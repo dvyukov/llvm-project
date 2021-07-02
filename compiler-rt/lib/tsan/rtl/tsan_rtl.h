@@ -635,6 +635,7 @@ void SlotAttachAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx);
 void SlotDetach(ThreadState* thr);
 void SlotLock(ThreadState* thr) ACQUIRE(thr->slot->mtx);
 void SlotUnlock(ThreadState* thr) RELEASE(thr->slot->mtx);
+void DoReset(ThreadState* thr, uptr epoch);
 
 ThreadState *FiberCreate(ThreadState *thr, uptr pc, unsigned flags);
 void FiberDestroy(ThreadState *thr, uptr pc, ThreadState *fiber);
@@ -677,14 +678,15 @@ private:
   bool locked_;
 };
 
-class ReportScope : SlotUnlocker {
+class ReportScope {
 public:
   ReportScope(ThreadState* thr);
   ReportScope(const ReportScope&) = delete;
 
 private:
+  SlotLocker slot_locker_;
   ThreadRegistryLock registry_lock_;
-  Lock slot_lock_;
+  Lock slots_lock_;
 };
 
 ALWAYS_INLINE void ProcessPendingSignals(ThreadState* thr) {

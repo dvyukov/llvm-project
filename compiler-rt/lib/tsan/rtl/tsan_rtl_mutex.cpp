@@ -459,8 +459,10 @@ void IncrementEpoch(ThreadState* thr) {
   TraceRelease(thr);
   Epoch epoch = EpochInc(thr->fast_state.epoch());
   if (!EpochOverflow(epoch)) {
+    Sid sid = thr->fast_state.sid();
+    thr->clock.Set(sid, epoch);
+    thr->slot->clock.Set(sid, epoch);
     thr->fast_state.SetEpoch(epoch);
-    thr->clock.Set(thr->fast_state.sid(), epoch);
   }
 }
 
@@ -468,19 +470,9 @@ void AcquireGlobal(ThreadState* thr, uptr pc) {
   DPrintf("#%d: AcquireGlobal\n", thr->tid);
   if (thr->ignore_sync)
     return;
-  {
-    //!!! do we need to lock all individual slots now?
-    //Lock lock(&ctx->slots_mtx);
-    //!!! this can fail due to setting older epoch
-    // if our slot has expired.
-    /*
-    for (auto& slot : ctx->slots)
-      thr->clock.Set(slot.sid,
-                     (slot.thr ? slot.thr->clock : slot.clock).Get(slot.sid));
-    */
-  }
-  SlotLock(thr);
-  SlotUnlock(thr);
+  SlotLocker locker(thr);
+  for (auto& slot : ctx->slots)
+    thr->clock.Set(slot.sid, slot.clock.Get(slot.sid));
 }
 
 #if !SANITIZER_GO
@@ -490,19 +482,9 @@ void AfterSleep(ThreadState *thr, uptr pc) {
     return;
   thr->last_sleep_stack_id = CurrentStackId(thr, pc);
   thr->last_sleep_clock.Reset();
-  {
-    //!!! do we need to lock all individual slots now?
-    //Lock lock(&ctx->slots_mtx);
-    /*
-    for (auto& slot : ctx->slots)
-      thr->last_sleep_clock.Set(
-          slot.sid, (slot.thr ? slot.thr->clock : slot.clock).Get(slot.sid));
-    */
-  }
-  //!!! need to memorize ctx->global_epoch with the clock
-  // and later somehow validate it
-  SlotLock(thr);
-  SlotUnlock(thr);
+  SlotLocker locker(thr);
+  for (auto& slot : ctx->slots)
+    thr->last_sleep_clock.Set(slot.sid, slot.clock.Get(slot.sid));
 }
 #endif
 

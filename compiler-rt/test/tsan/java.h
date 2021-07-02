@@ -9,6 +9,7 @@ void __tsan_java_alloc(jptr ptr, jptr size);
 void __tsan_java_free(jptr ptr, jptr size);
 jptr __tsan_java_find(jptr *from_ptr, jptr to);
 void __tsan_java_move(jptr src, jptr dst, jptr size);
+void __tsan_java_reset();
 void __tsan_java_finalize();
 void __tsan_java_mutex_lock(jptr addr);
 void __tsan_java_mutex_unlock(jptr addr);
