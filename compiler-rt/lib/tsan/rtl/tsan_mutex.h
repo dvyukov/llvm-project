@@ -27,7 +27,6 @@ enum {
   MutexTypeRacy,
   MutexTypeGlobalProc,
   MutexTypeTrace,
-  MutexTypeTraceAlloc,
   MutexTypeSlot,
   MutexTypeSlots,
 };

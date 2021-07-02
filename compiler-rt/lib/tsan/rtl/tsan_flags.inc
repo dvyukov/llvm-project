@@ -66,12 +66,9 @@ TSAN_FLAG(bool, running_on_valgrind, false,
           "Controls whether RunningOnValgrind() returns true or false.")
 // There are a lot of goroutines in Go, so we use smaller history.
 TSAN_FLAG(
-    int, history_size, SANITIZER_GO ? 1 : 3,
+    int, history_size, 0,
     "Per-thread history size, controls how many previous memory accesses "
-    "are remembered per thread.  Possible values are [0..7]. "
-    "history_size=0 amounts to 32K memory accesses.  Each next value doubles "
-    "the amount of memory accesses, up to history_size=7 that amounts to "
-    "4M memory accesses.  The default value is 2 (128K memory accesses).")
+    "are remembered per thread.")
 TSAN_FLAG(int, io_sync, 1,
           "Controls level of synchronization implied by IO operations. "
           "0 - no synchronization "

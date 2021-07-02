@@ -68,58 +68,46 @@ void OnInitialize() {
 }
 #endif
 
-TracePart* TracePartAlloc() {
-  TracePart* part;
-  bool alloc = false;
+TracePart* TracePartAlloc(ThreadState* thr) {
+  TracePart* part = nullptr;
   {
-    Lock l(&ctx->trace_part_mtx);
-    part = ctx->trace_part_cache.PopBack();
-    if (!part) {
-      //!!! use flags()->history_size to let users increase size of the trace as before
-      u32 nthreads = ctx->thread_registry.RunningThreads();
-      //!!! introduce per-thread limit as well, each thread must not create more than 3
-      //!!! otherwise currently if there are lots of inactive threads with short trace
-      // and a single active thread, it will create lots of parts on behalf of other threads
-      // this increases memory consumption as compared to the current version
-      // (where trace is per-thread).
-      u32 max_parts = nthreads * 3;
-      if (ctx->trace_part_count < max_parts) {
-        ctx->trace_part_count++;
-        alloc = true;
+    Lock lock(&ctx->slot_mtx);
+    // We need at least 3 parts per thread, because last 2 parts
+    // are not queued into ctx->trace_part_recycle.
+    uptr max_parts = Max(3, flags()->history_size);
+    Trace* trace = &thr->tctx->trace;
+    if (trace->parts_allocated == max_parts || ctx->trace_part_slack != 0) {
+      part = ctx->trace_part_recycle.PopFront();
+      DPrintf("#%d: TracePartAlloc: part=%p\n", thr->tid, part);
+      if (part && part->trace) {
+        Trace* trace1 = part->trace;
+        part->trace = nullptr;
+        Lock trace_lock(&trace1->mtx);
+        TracePart* part1 = trace1->parts.PopFront();
+        CHECK_EQ(part, part1);
+        if (trace1->parts_allocated > trace1->parts.Size()) {
+          ctx->trace_part_slack += trace1->parts_allocated - trace1->parts.Size();
+          trace1->parts_allocated = trace1->parts.Size();
+        }
       }
     }
+    if (trace->parts_allocated < max_parts) {
+      trace->parts_allocated++;
+      if (ctx->trace_part_slack)
+        ctx->trace_part_slack--;
+    }
+    if (!part)
+      ctx->trace_part_count++;
   }
-#if SANITIZER_DEBUG
-  if (part) {
-    Lock lock(&ctx->slot_mtx);
-    CHECK(!ctx->trace_part_recycle.Queued(part));
-  }
-#endif
-  if (alloc)
+  if (!part)
     part = new (MmapOrDie(sizeof(TracePart), "TracePart")) TracePart();
-  if (!part) {
-    Lock lock(&ctx->slot_mtx);
-    part = ctx->trace_part_recycle.PopFront();
-    //!!! can we guarantee this never happens?
-    // e.g. during some very unfortunate timing when all threads
-    // allocate parts, or lots of threads finish.
-    CHECK(part);
-    Lock trace_lock(&part->trace->mtx);
-    TracePart* part1 = part->trace->parts.PopFront();
-    CHECK_EQ(part, part1);
-    part->trace = nullptr;
-  }
   return part;
 }
 
-void TracePartFree(TracePart* part) {
-  //!!! lock once in DoReset
-  // Can DoReset race now with anything?
-  // I think not because all other callers hold slot lock.
-  Lock l(&ctx->trace_part_mtx);
+void TracePartFree(TracePart* part) REQUIRES(ctx->slot_mtx) {
   DCHECK(part->trace);
   part->trace = nullptr;
-  ctx->trace_part_cache.PushBack(part);
+  ctx->trace_part_recycle.PushFront(part);
 }
 
 void DoResetImpl(ThreadState* thr, uptr epoch) {
@@ -138,9 +126,10 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
       // registry. Since we reset all shadow, they can't race with anything
       // anymore. However, their tid's can still be stored in some aux places
       // (e.g. tid of thread that created something).
-      Lock lock(&tctx->trace.mtx);
+      auto trace = &tctx->trace;
+      Lock lock(&trace->mtx);
       bool attached = tctx->thr && tctx->thr->slot;
-      auto parts = &tctx->trace.parts;
+      auto parts = &trace->parts;
       while (!parts->Empty()) {
         auto part = parts->Front();
         if (parts->Size() >= 3 || !tctx->thr)
@@ -158,12 +147,12 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
         atomic_store_relaxed(&tctx->thr->trace_pos, 0);
         tctx->thr->trace_prev_pc = 0;
       }
+      if (trace->parts_allocated > trace->parts.Size()) {
+        ctx->trace_part_slack += trace->parts_allocated - trace->parts.Size();
+        trace->parts_allocated = trace->parts.Size();
+      }
     }
   }
-  //!!! is slot_queue guaranteed to be empty now?
-  //!!! remove used_slots?
-  CHECK_EQ(ctx->slot_queue.Size() + ctx->used_slots, kSlotCount);
-  ctx->used_slots = 0;
   while (ctx->slot_queue.PopFront()) {
   }
   for (auto slot = &ctx->slots[0]; slot < &ctx->slots[kSlotCount]; slot++) {
@@ -207,7 +196,7 @@ TidSlot* FindSlotAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx) NO_THREAD_SAF
     {
       Lock lock(&ctx->slot_mtx);
       //!!! if there are too few of them, return null
-      // if (ctx->used_slots < kMaxSid - 50) {
+      // otherwise threads can be constantly preempting each other when few slots left
       slot = ctx->slot_queue.PopFront();
       if (slot)
         ctx->slot_queue.PushBack(slot);
@@ -230,10 +219,8 @@ TidSlot* FindSlotAndLock(ThreadState* thr) ACQUIRE(thr->slot->mtx) NO_THREAD_SAF
       {
         //!!! do this on the next iteration.
         Lock lock(&ctx->slot_mtx);
-        if (ctx->slot_queue.Queued(slot)) {
+        if (ctx->slot_queue.Queued(slot))
           ctx->slot_queue.Remove(slot);
-          ctx->used_slots++;
-        }
       }
       thr->slot_locked = false;
       slot->mtx.Unlock();
@@ -283,8 +270,10 @@ void SlotDetachImpl(ThreadState* thr) {
       // in ThreadStart and did not trace any events yet.
       CHECK_LE(parts->Size(), 1);
       auto part = parts->PopFront();
-      if (part)
+      if (part) {
+        Lock l(&ctx->slot_mtx);
         TracePartFree(part);
+      }
       atomic_store_relaxed(&thr->trace_pos, 0);
       thr->trace_prev_pc = 0;
     }
@@ -331,8 +320,7 @@ Context::Context()
         return new (Alloc(sizeof(ThreadContext))) ThreadContext(tid);
       }),
       racy_mtx(MutexTypeRacy), racy_stacks(), racy_addresses(),
-      fired_suppressions_mtx(MutexTypeFired), slot_mtx(MutexTypeSlots),
-      trace_part_mtx(MutexTypeTraceAlloc) {
+      fired_suppressions_mtx(MutexTypeFired), slot_mtx(MutexTypeSlots) {
   fired_suppressions.reserve(8);
   for (uptr i = 0; i < ARRAY_SIZE(slots); i++) {
     TidSlot* slot = &slots[i];
@@ -809,7 +797,7 @@ void TraceSwitch(ThreadState* thr) {
   }
 #endif
   SlotLocker locker(thr, true);
-  part = TracePartAlloc();
+  part = TracePartAlloc(thr);
   part->trace = trace;
   //!!! instead of storing start_stack/mset, trace corresponding events (func entry, mutex lock)?
   part->start_stack.Init(thr->shadow_stack,

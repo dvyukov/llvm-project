@@ -376,7 +376,6 @@ MutexMeta mutex_meta[] = {
     {MutexTypeRacy, "Racy", {MutexLeaf}},
     {MutexTypeGlobalProc, "GlobalProc", {}},
     {MutexTypeTrace, "Trace", {}},
-    {MutexTypeTraceAlloc, "TraceAlloc", {MutexLeaf}},
     {MutexTypeSlot, "Slot", {MutexMulti, MutexTypeTrace, MutexTypeSyncVar, MutexThreadRegistry, MutexTypeSlots}},
     {MutexTypeSlots, "Slots", {MutexTypeTrace}},
     {},

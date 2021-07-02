@@ -247,6 +247,10 @@ void ThreadContext::OnFinished() {
   }
   trace->final_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   atomic_store_relaxed(&thr->trace_pos, 0);
+  if (trace->parts_allocated > 1) {
+    ctx->trace_part_slack += trace->parts_allocated - 1;
+    trace->parts_allocated = 1;
+  }
   thr->tctx = nullptr;
   thr = nullptr;
 }

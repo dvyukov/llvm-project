@@ -133,6 +133,7 @@ struct Trace {
   Mutex mtx;
   IList<TraceHeader, &TraceHeader::trace_parts, TracePart> parts;
   Event* final_pos = nullptr;
+  uptr parts_allocated = 0;
 
   Trace() : mtx(MutexTypeTrace) {
   }

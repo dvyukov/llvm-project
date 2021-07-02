@@ -142,7 +142,7 @@ void WriteMemoryProfile(char *buf, uptr buf_size, u64 uptime) {
   ctx->metamap.GetMemoryStats(&mem_block_mem, &sync_obj_mem);
   uptr trace_mem;
   {
-    Lock l(&ctx->trace_part_mtx);
+    Lock l(&ctx->slot_mtx);
     trace_mem = ctx->trace_part_count * sizeof(TracePart);
   }
   u32 nrunning = ctx->thread_registry.RunningThreads();

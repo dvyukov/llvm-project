@@ -326,16 +326,12 @@ struct Context {
 
   TidSlot slots[kSlotCount];
   Mutex slot_mtx;
-  uptr used_slots GUARDED_BY(slot_mtx);
   uptr global_epoch; // guarded by slot_mtx and by all slot mutexes
   IList<TidSlot, &TidSlot::node> slot_queue GUARDED_BY(slot_mtx);
   IList<TraceHeader, &TraceHeader::global, TracePart>
       trace_part_recycle GUARDED_BY(slot_mtx);
-
-  Mutex trace_part_mtx;
-  IList<TraceHeader, &TraceHeader::global, TracePart>
-      trace_part_cache GUARDED_BY(trace_part_mtx);
-  u32 trace_part_count GUARDED_BY(trace_part_mtx);
+  uptr trace_part_count GUARDED_BY(slot_mtx);
+  uptr trace_part_slack GUARDED_BY(slot_mtx);
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
@@ -531,7 +527,6 @@ ALWAYS_INLINE WARN_UNUSED_RESULT bool TraceAcquire(ThreadState* thr,
                                                    EventT** ev) {
   // TraceSwitch acquires these mutexes, so we lock them here to detect
   // deadlocks more reliably.
-  DCHECK((ctx->trace_part_mtx.Lock(), ctx->trace_part_mtx.Unlock(), true));
   DCHECK((ctx->slot_mtx.Lock(), ctx->slot_mtx.Unlock(), true));
   DCHECK((thr->tctx->trace.mtx.Lock(), thr->tctx->trace.mtx.Unlock(), true));
   Event* pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
