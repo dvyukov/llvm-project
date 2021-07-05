@@ -114,6 +114,22 @@ void __tsan_java_free(jptr ptr, jptr size) {
   ctx->metamap.FreeRange(thr->proc(), ptr, size);
 }
 
+uptr move_count;
+uptr move_bytes;
+u64 move_last;
+
+void __tsan_java_reset() {
+  SCOPED_JAVA_FUNC(__tsan_java_reset);
+  DPrintf("#%d: java_reset()\n", thr->tid);
+  //DoReset(thr, 0);
+  u64 now = NanoTime();
+  Printf("JAVA MOVE: %ums obj=%zu bytes=%zu\n", (move_last ? (unsigned)((now - move_last) / 1000 / 1000) : 0u),
+    move_count, move_bytes);
+  move_count = 0;
+  move_bytes = 0;
+  move_last = now;
+}
+
 void __tsan_java_move(jptr src, jptr dst, jptr size) {
   SCOPED_JAVA_FUNC(__tsan_java_move);
   DPrintf("#%d: java_move(%p, %p, %p)\n", thr->tid, src, dst, size);
@@ -138,6 +154,8 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   for (; d != dend; d++)
     *d = 0;
 
+  move_count++;
+  move_bytes += size;
 
   // Move shadow.
   /*
@@ -173,12 +191,6 @@ jptr __tsan_java_find(jptr *from_ptr, jptr to) {
     }
   }
   return 0;
-}
-
-void __tsan_java_reset() {
-  SCOPED_JAVA_FUNC(__tsan_java_reset);
-  DPrintf("#%d: java_reset()\n", thr->tid);
-  //DoReset(thr, 0);
 }
 
 void __tsan_java_finalize() {

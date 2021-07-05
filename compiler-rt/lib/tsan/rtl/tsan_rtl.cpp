@@ -759,8 +759,14 @@ StackID CurrentStackId(ThreadState* thr, uptr pc) {
     thr->shadow_stack_pos[0] = pc;
     thr->shadow_stack_pos++;
   }
+  bool inserted = false;
   StackID id = StackDepotPut(
-      StackTrace(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack));
+      StackTrace(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack), &inserted);
+  static int count = 0;
+  if (inserted && ((++count) % (64 << 10)) == 0) {
+    Printf("\nNEW STACK:\n");
+    PrintStack(id);
+  }
   if (pc != 0)
     thr->shadow_stack_pos--;
   return id;
