@@ -809,10 +809,6 @@ void TraceSwitch(ThreadState* thr) {
   part->start_stack.Init(thr->shadow_stack,
                          thr->shadow_stack_pos - thr->shadow_stack);
   part->start_mset = thr->mset;
-  //!!! what epoch is this? from what slot?
-  //!!! how does trace replay make sense out of this?
-  //!!! we need to store (sid+epoch) pairs in the trace.
-  part->start_epoch = thr->fast_state.epoch();
   part->prev_pc = thr->trace_prev_pc;
   TracePart* recycle = nullptr;
   {
@@ -821,6 +817,7 @@ void TraceSwitch(ThreadState* thr) {
       recycle = trace->parts.Prev(trace->parts.Back());
     trace->parts.PushBack(part);
     atomic_store_relaxed(&thr->trace_pos, (uptr)&part->events[0]);
+    TraceTime(thr);
   }
   {
     //!!! TracePartAlloc also locks ctx->slot_mtx.
@@ -1522,13 +1519,16 @@ void TraceMutexUnlock(ThreadState* thr, uptr addr) {
   TraceEvent(thr, ev);
 }
 
-void TraceRelease(ThreadState* thr) {
+void TraceTime(ThreadState* thr) {
   if (!kCollectHistory)
     return;
-  EventRelease ev;
+  FastState fast_state = thr->fast_state;
+  EventTime ev;
   ev.is_access = 0;
   ev.is_func = 0;
-  ev.type = EventTypeRelease;
+  ev.type = EventTypeTime;
+  ev.sid = static_cast<u64>(fast_state.sid());
+  ev.epoch = static_cast<u64>(fast_state.epoch());
   ev._ = 0;
   TraceEvent(thr, ev);
 }

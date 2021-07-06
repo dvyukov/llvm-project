@@ -584,7 +584,7 @@ bool TryTraceFunc(ThreadState* thr, uptr pc = 0) {
 void TraceMutexLock(ThreadState* thr, EventType type, uptr pc, uptr addr,
                     StackID stk);
 void TraceMutexUnlock(ThreadState* thr, uptr addr);
-void TraceRelease(ThreadState* thr);
+void TraceTime(ThreadState* thr);
 
 void GrowShadowStack(ThreadState* thr);
 

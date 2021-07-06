@@ -456,13 +456,13 @@ void ReleaseStoreAcquire(ThreadState* thr, uptr pc, uptr addr) {
 void IncrementEpoch(ThreadState* thr) {
   DCHECK(!thr->ignore_sync);
   DCHECK(thr->slot_locked);
-  TraceRelease(thr);
   Epoch epoch = EpochInc(thr->fast_state.epoch());
   if (!EpochOverflow(epoch)) {
     Sid sid = thr->fast_state.sid();
     thr->clock.Set(sid, epoch);
     thr->slot->clock.Set(sid, epoch);
     thr->fast_state.SetEpoch(epoch);
+    TraceTime(thr);
   }
 }
 

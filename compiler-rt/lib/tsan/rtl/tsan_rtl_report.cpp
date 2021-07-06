@@ -234,17 +234,12 @@ uptr RestoreAddr(uptr addr) {
 #endif
 }
 
-/*
-uptr RestorePC(uptr pc, bool isExternal) {
-  return RestoreAddr(pc) | (isExternal ? kExternalPCBit : 0);
-}
-*/
-
 template <typename Func>
-void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
+void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Sid sid, Epoch epoch,
                  Func f) {
   TracePart* part = trace->parts.Front();
-  Epoch evEpoch = part->start_epoch;
+  Sid ev_sid = kFreeSid;
+  Epoch ev_epoch = kEpochOver;
   for (;;) {
     DCHECK_EQ(part->trace, trace);
     // Note: an event can't start in the last element.
@@ -257,11 +252,14 @@ void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
       Event* evp0 = evp;
       if (!evp->is_access && !evp->is_func) {
         switch (evp->type) {
-        case EventTypeRelease:
-          evEpoch = EpochInc(evEpoch);
-          if (evEpoch > epoch)
+        case EventTypeTime: {
+          auto ev = reinterpret_cast<EventTime*>(evp);
+          ev_sid = static_cast<Sid>(ev->sid);
+          ev_epoch = static_cast<Epoch>(ev->epoch);
+          if (ev_sid == sid && ev_epoch > epoch)
             return;
           break;
+        }
         case EventTypeAccessExt:
           [[fallthrough]];
         case EventTypeAccessRange:
@@ -272,7 +270,9 @@ void TraceReplay(Trace* trace, TracePart* last, Event* last_pos, Epoch epoch,
           evp++;
         }
       }
-      f(evEpoch, evp0);
+      CHECK_NE(ev_sid, kFreeSid);
+      CHECK_NE(ev_epoch, kEpochOver);
+      f(ev_sid, ev_epoch, evp0);
     }
     if (part == last)
       return;
@@ -336,7 +336,8 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
   MutexSet mset = first_part->start_mset;
   bool found = false;
   TraceReplay(
-      trace, last_part, last_pos, epoch, [&](Epoch evEpoch, Event* evp) {
+      trace, last_part, last_pos, sid, epoch, [&](Sid ev_sid, Epoch ev_epoch, Event* evp) {
+        bool match = ev_sid == sid && ev_epoch == epoch;
         if (evp->is_access) {
           if (evp->type == 0 && evp->_ == 0) // NopEvent
             return;
@@ -348,7 +349,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
           prev_pc = evPC;
           DPrintf2("  Access: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n", evPC,
                    evAddr, evSize, ev->isRead, ev->isAtomic);
-          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
+          if (match && type == EventTypeAccessExt && addr >= evAddr &&
               addr + size <= evAddr + evSize && isRead == ev->isRead &&
               isAtomic == ev->isAtomic && !isFreed) {
             DPrintf2("    MATCHED\n");
@@ -386,7 +387,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
               "  AccessExt: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n",
               ev->pc, evAddr, evSize, ev->isRead, ev->isAtomic);
           //!!! also check access size and type (read/atomic).
-          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
+          if (match && type == EventTypeAccessExt && addr >= evAddr &&
               addr + size <= evAddr + evSize && isRead == ev->isRead &&
               isAtomic == ev->isAtomic && !isFreed) {
             DPrintf2("    MATCHED\n");
@@ -407,7 +408,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
               "  AccessRange: pc=0x%zx addr=0x%llx/%llu type=%llu/%llu\n",
               ev_pc, evAddr, evSize, ev->isRead, ev->isFreed);
           //!!! also check access size and type (read/atomic).
-          if (type == EventTypeAccessExt && evEpoch == epoch && addr >= evAddr &&
+          if (match && type == EventTypeAccessExt && addr >= evAddr &&
               addr + size <= evAddr + evSize && isRead == ev->isRead &&
               !isAtomic && isFreed == ev->isFreed) {
             DPrintf2("    MATCHED\n");
@@ -430,7 +431,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
           DPrintf2("  Lock: pc=0x%zx addr=0x%llx stack=%u write=%d\n", evPC,
                    evAddr, stackID, isWrite);
           mset.Add(evAddr, stackID, isWrite);
-          if (type == EventTypeLock && evEpoch == epoch && addr == evAddr) {
+          if (match && type == EventTypeLock && addr == evAddr) {
             DPrintf2("    MATCHED\n");
             stack[pos] = evPC;
             stk->Init(&stack[0], pos + 1);

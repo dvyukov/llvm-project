@@ -26,7 +26,7 @@ enum EventType {
   EventTypeLock,
   EventTypeRLock,
   EventTypeUnlock,
-  EventTypeRelease,
+  EventTypeTime,
 };
 
 struct Event {
@@ -110,13 +110,15 @@ struct EventUnlock {
 };
 static_assert(sizeof(EventUnlock) == 8, "bad EventUnlock size");
 
-struct EventRelease {
+struct EventTime {
   u64 is_access : 1;
   u64 is_func : 1;
   u64 type : 3;
-  u64 _ : 59;
+  u64 sid : 8;
+  u64 epoch : kEpochBits;
+  u64 _ : 64 - 13 - kEpochBits;
 };
-static_assert(sizeof(EventRelease) == 8, "bad EventRelease size");
+static_assert(sizeof(EventTime) == 8, "bad EventTime size");
 
 struct TraceHeader {
   Trace* trace = nullptr;
@@ -124,7 +126,6 @@ struct TraceHeader {
   INode global;
   VarSizeStackTrace start_stack;
   MutexSet start_mset;
-  Epoch start_epoch = kEpochZero;
   uptr prev_pc = 0;
 #if !SANITIZER_GO
   BufferedStackTrace stack0;  // Start stack for the trace.
