@@ -257,7 +257,7 @@ void __tsan_release_merge(ThreadState *thr, void *addr) {
 }
 
 void __tsan_finalizer_goroutine(ThreadState *thr) {
-  AcquireGlobal(thr, 0);
+  AcquireGlobal(thr);
 }
 
 void __tsan_mutex_before_lock(ThreadState *thr, uptr addr, uptr write) {

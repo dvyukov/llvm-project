@@ -2653,12 +2653,6 @@ void InitializeInterceptors() {
   REAL(memcpy) = internal_memcpy;
 #endif
 
-  // Instruct libc malloc to consume less memory.
-#if SANITIZER_GLIBC
-  mallopt(1, 0);  // M_MXFAST
-  mallopt(-3, 32*1024);  // M_MMAP_THRESHOLD
-#endif
-
   new(interceptor_ctx()) InterceptorContext();
 
   InitializeCommonInterceptors();

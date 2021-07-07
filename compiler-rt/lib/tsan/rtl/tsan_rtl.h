@@ -513,7 +513,7 @@ void Acquire(ThreadState *thr, uptr pc, uptr addr);
 // handle Go finalizers. Namely, finalizer goroutine executes AcquireGlobal
 // right before executing finalizers. This provides a coarse, but simple
 // approximation of the actual required synchronization.
-void AcquireGlobal(ThreadState *thr, uptr pc);
+void AcquireGlobal(ThreadState *thr);
 void Release(ThreadState *thr, uptr pc, uptr addr);
 void ReleaseStoreAcquire(ThreadState *thr, uptr pc, uptr addr);
 void ReleaseStore(ThreadState *thr, uptr pc, uptr addr);

@@ -55,7 +55,7 @@ void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s) {
 
 void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexCreate %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  if (!(flagz & MutexFlagLinkerInit) && IsAppMem(addr))
+  if (!(flagz & MutexFlagLinkerInit) && pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessWrite);
   SlotLocker locker(thr);
   auto s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -96,7 +96,7 @@ void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
     s->Reset();
   }
   // Imitate a memory write to catch unlock-destroy races.
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessWrite | AccessFree);
   if (unlock_locked && ShouldReport(thr, ReportTypeMutexDestroyLocked))
     ReportDestroyLocked(thr, pc, addr, last_lock, creation_stack_id);
@@ -129,7 +129,7 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
     CHECK_GT(rec, 0);
   else
     rec = 1;
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   SlotLocker locker(thr);
   auto s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -180,7 +180,7 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
 
 int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexUnlock %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   StackID creation_stack_id;
   TraceMutexUnlock(thr, addr);
@@ -246,7 +246,7 @@ void MutexPreReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 
 void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexPostReadLock %zx flagz=0x%x\n", thr->tid, addr, flagz);
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   SlotLocker locker(thr);
   auto s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -289,7 +289,7 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 
 void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadUnlock %zx\n", thr->tid, addr);
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   TraceMutexUnlock(thr, addr);
   thr->mset.Del(addr);
@@ -331,7 +331,7 @@ void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
 
 void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadOrWriteUnlock %zx\n", thr->tid, addr);
-  if (IsAppMem(addr))
+  if (pc && IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, AccessRead | AccessAtomic);
   TraceMutexUnlock(thr, addr);
   thr->mset.Del(addr);
@@ -466,7 +466,7 @@ void IncrementEpoch(ThreadState* thr) {
   }
 }
 
-void AcquireGlobal(ThreadState* thr, uptr pc) {
+void AcquireGlobal(ThreadState* thr) {
   DPrintf("#%d: AcquireGlobal\n", thr->tid);
   if (thr->ignore_sync)
     return;

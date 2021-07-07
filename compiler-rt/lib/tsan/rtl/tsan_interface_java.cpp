@@ -37,20 +37,9 @@ struct JavaContext {
 
 class ScopedJavaFunc {
  public:
-  ScopedJavaFunc(ThreadState *thr, uptr pc)
-      : thr_(thr) {
-    InitializeMaybe(thr_);
-    FuncEntry(thr, pc);
-  }
-
   ~ScopedJavaFunc() {
-    // FIXME(dvyukov): process pending signals.
-    FuncExit(thr_);
     CheckNoLocks();
   }
-
- private:
-  ThreadState *thr_;
 };
 
 static u64 jctx_buf[sizeof(JavaContext) / sizeof(u64) + 1];
@@ -60,14 +49,13 @@ static JavaContext *jctx;
 
 #define SCOPED_JAVA_FUNC(func)                                                 \
   ThreadState* thr = cur_thread();                                             \
-  const uptr caller_pc = GET_CALLER_PC();                                      \
-  const uptr pc = StackTrace::GetCurrentPc();                                  \
-  (void)pc;                                                                    \
-  ScopedJavaFunc scoped(thr, caller_pc);                                       \
+  (void)thr; \
+  ScopedJavaFunc scoped;                                       \
   /**/
 
 void __tsan_java_init(jptr heap_begin, jptr heap_size) {
   SCOPED_JAVA_FUNC(__tsan_java_init);
+  InitializeMaybe(thr);
   DPrintf("#%d: java_init(%p, %p)\n", thr->tid, heap_begin, heap_size);
   DCHECK_EQ(jctx, 0);
   DCHECK_GT(heap_begin, 0);
@@ -98,7 +86,7 @@ void __tsan_java_alloc(jptr ptr, jptr size) {
   DCHECK_GE(ptr, jctx->heap_begin);
   DCHECK_LE(ptr + size, jctx->heap_begin + jctx->heap_size);
 
-  OnUserAlloc(thr, pc, ptr, size, false);
+  OnUserAlloc(thr, 0, ptr, size, false);
 }
 
 void __tsan_java_free(jptr ptr, jptr size) {
@@ -196,7 +184,7 @@ jptr __tsan_java_find(jptr *from_ptr, jptr to) {
 void __tsan_java_finalize() {
   SCOPED_JAVA_FUNC(__tsan_java_finalize);
   DPrintf("#%d: java_finalize()\n", thr->tid);
-  AcquireGlobal(thr, pc);
+  AcquireGlobal(thr);
 }
 
 void __tsan_java_mutex_lock(jptr addr) {
@@ -206,7 +194,7 @@ void __tsan_java_mutex_lock(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  MutexPostLock(thr, pc, addr, MutexFlagLinkerInit | MutexFlagWriteReentrant |
+  MutexPostLock(thr, 0, addr, MutexFlagLinkerInit | MutexFlagWriteReentrant |
       MutexFlagDoPreLockOnPostLock);
 }
 
@@ -217,7 +205,7 @@ void __tsan_java_mutex_unlock(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  MutexUnlock(thr, pc, addr);
+  MutexUnlock(thr, 0, addr);
 }
 
 void __tsan_java_mutex_read_lock(jptr addr) {
@@ -227,7 +215,7 @@ void __tsan_java_mutex_read_lock(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  MutexPostReadLock(thr, pc, addr, MutexFlagLinkerInit |
+  MutexPostReadLock(thr, 0, addr, MutexFlagLinkerInit |
       MutexFlagWriteReentrant | MutexFlagDoPreLockOnPostLock);
 }
 
@@ -238,7 +226,7 @@ void __tsan_java_mutex_read_unlock(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  MutexReadUnlock(thr, pc, addr);
+  MutexReadUnlock(thr, 0, addr);
 }
 
 void __tsan_java_mutex_lock_rec(jptr addr, int rec) {
@@ -249,7 +237,7 @@ void __tsan_java_mutex_lock_rec(jptr addr, int rec) {
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
   DCHECK_GT(rec, 0);
 
-  MutexPostLock(thr, pc, addr, MutexFlagLinkerInit | MutexFlagWriteReentrant |
+  MutexPostLock(thr, 0, addr, MutexFlagLinkerInit | MutexFlagWriteReentrant |
       MutexFlagDoPreLockOnPostLock | MutexFlagRecursiveLock, rec);
 }
 
@@ -260,7 +248,7 @@ int __tsan_java_mutex_unlock_rec(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  return MutexUnlock(thr, pc, addr, MutexFlagRecursiveUnlock);
+  return MutexUnlock(thr, 0, addr, MutexFlagRecursiveUnlock);
 }
 
 void __tsan_java_acquire(jptr addr) {
@@ -270,7 +258,7 @@ void __tsan_java_acquire(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  Acquire(thr, caller_pc, addr);
+  Acquire(thr, 0, addr);
 }
 
 void __tsan_java_release(jptr addr) {
@@ -280,7 +268,7 @@ void __tsan_java_release(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  Release(thr, caller_pc, addr);
+  Release(thr, 0, addr);
 }
 
 void __tsan_java_release_store(jptr addr) {
@@ -290,5 +278,5 @@ void __tsan_java_release_store(jptr addr) {
   DCHECK_GE(addr, jctx->heap_begin);
   DCHECK_LT(addr, jctx->heap_begin + jctx->heap_size);
 
-  ReleaseStore(thr, caller_pc, addr);
+  ReleaseStore(thr, 0, addr);
 }
