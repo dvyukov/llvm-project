@@ -239,11 +239,9 @@ void ThreadContext::OnFinished() {
   Trace* trace = &thr->tctx->trace;
   Lock lock1(&trace->mtx);
   auto parts = &trace->parts;
-  if (parts->Back()) {
-    auto prev = parts->Prev(parts->Back());
-    if (prev)
-      ctx->trace_part_recycle.PushBack(prev);
-    ctx->trace_part_recycle.PushBack(parts->Back());
+  while (trace->local_head) {
+    ctx->trace_part_recycle.PushBack(trace->local_head);
+    trace->local_head = parts->Next(trace->local_head);
   }
   trace->final_pos = (Event*)atomic_load_relaxed(&thr->trace_pos);
   atomic_store_relaxed(&thr->trace_pos, 0);

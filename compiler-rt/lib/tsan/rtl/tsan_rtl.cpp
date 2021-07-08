@@ -72,8 +72,8 @@ TracePart* TracePartAlloc(ThreadState* thr) {
   TracePart* part = nullptr;
   {
     Lock lock(&ctx->slot_mtx);
-    // We need at least 3 parts per thread, because last 2 parts
-    // are not queued into ctx->trace_part_recycle.
+    // We need at least 3 parts per thread, because we want to keep at last
+    // 2 parts per thread that are not queued into ctx->trace_part_recycle.
     uptr max_parts = Max(3, flags()->history_size);
     Trace* trace = &thr->tctx->trace;
     if (trace->parts_allocated == max_parts || ctx->trace_part_slack != 0) {
@@ -81,8 +81,8 @@ TracePart* TracePartAlloc(ThreadState* thr) {
       DPrintf("#%d: TracePartAlloc: part=%p\n", thr->tid, part);
       if (part && part->trace) {
         Trace* trace1 = part->trace;
-        part->trace = nullptr;
         Lock trace_lock(&trace1->mtx);
+        part->trace = nullptr;
         TracePart* part1 = trace1->parts.PopFront();
         CHECK_EQ(part, part1);
         if (trace1->parts_allocated > trace1->parts.Size()) {
@@ -130,12 +130,14 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
       Lock lock(&trace->mtx);
       bool attached = tctx->thr && tctx->thr->slot;
       auto parts = &trace->parts;
+      bool local = false;
       while (!parts->Empty()) {
         auto part = parts->Front();
-        if (parts->Size() >= 3 || !tctx->thr)
-          ctx->trace_part_recycle.Remove(part);
-        else
+        local = local || part == trace->local_head;
+        if (local)
           CHECK(!ctx->trace_part_recycle.Queued(part));
+        else
+          ctx->trace_part_recycle.Remove(part);
         if (attached && parts->Size() == 1) {
           //!!! reset thr->trace_pos to the end of the part to force it to switch
           break;
@@ -143,6 +145,8 @@ void DoResetImpl(ThreadState* thr, uptr epoch) {
         parts->Remove(part);
         TracePartFree(part);
       }
+      CHECK_LE(parts->Size(), 1);
+      trace->local_head = parts->Front();
       if (tctx->thr && !tctx->thr->slot) {
         atomic_store_relaxed(&tctx->thr->trace_pos, 0);
         tctx->thr->trace_prev_pc = 0;
@@ -759,14 +763,8 @@ StackID CurrentStackId(ThreadState* thr, uptr pc) {
     thr->shadow_stack_pos[0] = pc;
     thr->shadow_stack_pos++;
   }
-  bool inserted = false;
   StackID id = StackDepotPut(
-      StackTrace(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack), &inserted);
-  static int count = 0;
-  if (inserted && ((++count) % (64 << 10)) == 0) {
-    Printf("\nNEW STACK:\n");
-    PrintStack(id);
-  }
+      StackTrace(thr->shadow_stack, thr->shadow_stack_pos - thr->shadow_stack));
   if (pc != 0)
     thr->shadow_stack_pos--;
   return id;
@@ -811,10 +809,16 @@ void TraceSwitch(ThreadState* thr) {
   part->start_mset = thr->mset;
   part->prev_pc = thr->trace_prev_pc;
   TracePart* recycle = nullptr;
+  // Keep roughly half of parts local to the thread (not queued into the recycle queue).
+  uptr local_parts = (Max(3, flags()->history_size) + 1) / 2;
   {
     Lock lock(&trace->mtx);
-    if (trace->parts.Size() >= 2)
-      recycle = trace->parts.Prev(trace->parts.Back());
+    if (trace->parts.Empty())
+      trace->local_head = part;
+    if (trace->parts.Size() >= local_parts) {
+      recycle = trace->local_head;
+      trace->local_head = trace->parts.Next(recycle);
+    }
     trace->parts.PushBack(part);
     atomic_store_relaxed(&thr->trace_pos, (uptr)&part->events[0]);
     TraceTime(thr);

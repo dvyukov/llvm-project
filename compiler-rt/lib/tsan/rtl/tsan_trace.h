@@ -122,8 +122,8 @@ static_assert(sizeof(EventTime) == 8, "bad EventTime size");
 
 struct TraceHeader {
   Trace* trace = nullptr;
-  INode trace_parts;
-  INode global;
+  INode trace_parts; // in Trace::parts
+  INode global; // in Contex::trace_part_recycle
   VarSizeStackTrace start_stack;
   MutexSet start_mset;
   uptr prev_pc = 0;
@@ -149,6 +149,7 @@ static_assert(sizeof(TracePart) == TracePart::kByteSize, "bad TracePart size");
 struct Trace {
   Mutex mtx;
   IList<TraceHeader, &TraceHeader::trace_parts, TracePart> parts;
+  TracePart* local_head; // first node non-queued into ctx->trace_part_recycle
   Event* final_pos = nullptr;
   uptr parts_allocated = 0;
 
