@@ -1056,6 +1056,10 @@ NOINLINE void DoReportRaceV(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 
 ALWAYS_INLINE
 bool ContainsSameAccessV(m128 shadow, m128 access, AccessType typ) {
+  //!!! we could check there is already a larger access of the same type,
+  // e.g. we just allocated a block (so it has an 8 byte write) and doing
+  // smaller writes to it, these don't need to be handled/stored separately.
+  // However, the check will be more expensive then.
   if (!(typ & AccessRead)) {
     const m128 same = _mm_cmpeq_epi32(shadow, access);
     return _mm_movemask_epi8(same);
@@ -1094,7 +1098,6 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   // E.g. mask_access == take zero, shift left by 8 shifting in 1s?
   const m128 mask_access = _mm_set1_epi32(0x000000ff);
   const m128 mask_sid = _mm_set1_epi32(0x0000ff00);
-  const m128 mask_access_sid = _mm_set1_epi32(0x0000ffff);
   const m128 mask_read_atomic = _mm_set1_epi32(0xc0000000);
   const m128 access_and = _mm_and_si128(access, shadow);
   const m128 access_xor = _mm_xor_si128(access, shadow);
@@ -1107,8 +1110,8 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   const m128 no_race =
       _mm_or_si128(_mm_or_si128(not_intersect, same_sid), both_read_or_atomic);
   const int race_mask = _mm_movemask_epi8(_mm_cmpeq_epi32(no_race, zero));
-  DPrintf2("  MOP: not_intersect=%V same_sid=%V both_read_or_atomic=%V "
-           "race_mask=%04x\n",
+  DPrintf2("#%d:  MOP: not_intersect=%V same_sid=%V both_read_or_atomic=%V "
+           "race_mask=%04x\n", (int)cur.sid(),
            not_intersect, same_sid, both_read_or_atomic, race_mask);
   if (UNLIKELY(race_mask))
     goto SHARED;
@@ -1116,6 +1119,13 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 STORE : {
   if (typ & AccessTemp)
     return false;
+  //!!! we could also replace different sid's if access is the same,
+  // rw weaker and happens before. However, just checking access below
+  // is not enough because we also need to check that !both_read_or_atomic
+  // (reads from different sids can be concurrent).
+  //!!! theoretically we could also replace smaller accesses with larger accesses,
+  // but it's unclear if it's worth doing.
+  const m128 mask_access_sid = _mm_set1_epi32(0x0000ffff);
   const m128 not_same_sid_access = _mm_and_si128(access_xor, mask_access_sid);
   const m128 same_sid_access = _mm_cmpeq_epi32(not_same_sid_access, zero);
   const m128 access_read_atomic =
@@ -1132,7 +1142,9 @@ STORE : {
     if (UNLIKELY(index == 0))
       index = (atomic_load_relaxed(&thr->trace_pos) / 2) % 16;
   }
+  DPrintf2("#%d:  MOP: replacing index=%d\n", (int)cur.sid(), index / 4);
   StoreShadow(&shadow_mem[index / 4], cur.raw());
+  //!!! consider zeroing other slots determined by rewrite_mask
   return false;
 }
 
@@ -1151,12 +1163,12 @@ SHARED:
   LOAD_EPOCH(2);
   LOAD_EPOCH(3);
 #undef LOAD_EPOCH
-  const m128 mask_epoch = _mm_set1_epi32(0x1fff0000);
+  const m128 mask_epoch = _mm_set1_epi32(0x3fff0000);
   const m128 shadow_epochs = _mm_and_si128(shadow, mask_epoch);
   const m128 concurrent = _mm_cmplt_epi32(thread_epochs, shadow_epochs);
   const int concurrent_mask = _mm_movemask_epi8(concurrent);
-  DPrintf2("  MOP: shadow_epochs=%V thread_epochs=%V concurrent_mask=%04x\n",
-           shadow_epochs, thread_epochs, concurrent_mask);
+  DPrintf2("#%d:  MOP: shadow_epochs=%V thread_epochs=%V concurrent_mask=%04x\n",
+            (int)cur.sid(), shadow_epochs, thread_epochs, concurrent_mask);
   if (LIKELY(concurrent_mask == 0))
     goto STORE;
 
@@ -1193,7 +1205,7 @@ MemoryAccess(ThreadState* thr, uptr pc, uptr addr, uptr size, AccessType typ) {
   // This is an optimized version of ContainsSameAccessSlow.
   const m128 access = _mm_set1_epi32(cur.raw());
   const m128 shadow = _mm_load_si128((m128*)shadow_mem);
-  DPrintf2("  MOP: shadow=%V access=%V\n", shadow, access);
+  DPrintf2("#%d:  MOP: shadow=%V access=%V\n", (int)cur.sid(), shadow, access);
   if (LIKELY(ContainsSameAccessV(shadow, access, typ)))
     return;
   if (UNLIKELY(fast_state.IgnoreAccesses()))

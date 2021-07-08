@@ -129,6 +129,7 @@ void ReportDesc::AddLocation(uptr addr, uptr size) {
     AddThread(create_tid);
     return;
   }
+  //!!! check if this is Java heap and find block start
   Allocator* a = allocator();
   if (a->PointerIsMine((void*)addr)) {
     void* block_begin = a->GetBlockBegin((void*)addr);

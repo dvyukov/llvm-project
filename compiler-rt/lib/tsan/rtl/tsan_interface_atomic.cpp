@@ -439,7 +439,7 @@ static bool AtomicCAS(ThreadState *thr, uptr pc,
     else if (IsAcquireOrder(mo))
       thr->clock.Acquire(s->clock);
   }
-  if (release)
+  if (success && release)
     IncrementEpoch(thr);
   return success;
 }
