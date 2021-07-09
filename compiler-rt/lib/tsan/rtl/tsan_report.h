@@ -152,6 +152,8 @@ class ReportDesc {
  private:
    RegionAlloc region;
 
+   void AddHeapLocation(uptr addr, MBlock* b);
+
    ReportDesc(const ReportDesc&) = delete;
    void operator=(const ReportDesc&) = delete;
 };

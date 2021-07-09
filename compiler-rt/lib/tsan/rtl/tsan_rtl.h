@@ -439,6 +439,7 @@ void PrintCurrentStack(ThreadState *thr, uptr pc);
 void PrintCurrentStackSlow(uptr pc);  // uses libunwind
 void PrintStack(StackTrace stack);
 void PrintStack(StackID id);
+MBlock* JavaHeapBlock(uptr addr, uptr* start);
 
 void Initialize(ThreadState *thr);
 void MaybeSpawnBackgroundThread();

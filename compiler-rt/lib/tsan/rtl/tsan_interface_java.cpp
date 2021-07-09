@@ -45,6 +45,21 @@ class ScopedJavaFunc {
 static u64 jctx_buf[sizeof(JavaContext) / sizeof(u64) + 1];
 static JavaContext *jctx;
 
+MBlock* JavaHeapBlock(uptr addr, uptr* start) {
+  if (!jctx || addr < jctx->heap_begin || addr >= jctx->heap_begin + jctx->heap_size)
+    return nullptr;
+  for (uptr p = RoundDown(addr, kMetaShadowCell); p >= jctx->heap_begin; p -= kMetaShadowCell) {
+    MBlock *b = ctx->metamap.GetBlock(p);
+    if (!b)
+      continue;
+    if (p + b->siz <= addr)
+      return nullptr;
+    *start = p;
+    return b;
+  }
+  return nullptr;
+}
+
 }  // namespace __tsan
 
 #define SCOPED_JAVA_FUNC(func)                                                 \
@@ -102,22 +117,6 @@ void __tsan_java_free(jptr ptr, jptr size) {
   ctx->metamap.FreeRange(thr->proc(), ptr, size);
 }
 
-uptr move_count;
-uptr move_bytes;
-u64 move_last;
-
-void __tsan_java_reset() {
-  SCOPED_JAVA_FUNC(__tsan_java_reset);
-  DPrintf("#%d: java_reset()\n", thr->tid);
-  //DoReset(thr, 0);
-  u64 now = NanoTime();
-  Printf("JAVA MOVE: %ums obj=%zu bytes=%zu\n", (move_last ? (unsigned)((now - move_last) / 1000 / 1000) : 0u),
-    move_count, move_bytes);
-  move_count = 0;
-  move_bytes = 0;
-  move_last = now;
-}
-
 void __tsan_java_move(jptr src, jptr dst, jptr size) {
   SCOPED_JAVA_FUNC(__tsan_java_move);
   DPrintf("#%d: java_move(%p, %p, %p)\n", thr->tid, src, dst, size);
@@ -134,34 +133,16 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   DCHECK_NE(size, 0);
 
   // Assuming it's not running concurrently with threads that do
-  // memory accesses and mutex operations (stop-the-world phase).
+  // memory accesses and mutex operations to the Java heap (stop-the-world phase).
   ctx->metamap.MoveMemory(src, dst, size);
 
+  // Clear the destination range.
+  // We used to move shadow from src to dst, but the trace format does not
+  // support that anymore as it contains addresses of accesses.
   RawShadow* d = (RawShadow*)MemToShadow(dst);
   RawShadow* dend = (RawShadow*)MemToShadow(dst + size);
   for (; d != dend; d++)
     *d = 0;
-
-  move_count++;
-  move_bytes += size;
-
-  // Move shadow.
-  /*
-  RawShadow* s = (RawShadow*)MemToShadow(src);
-  RawShadow* d = (RawShadow*)MemToShadow(dst);
-  RawShadow* send = (RawShadow*)MemToShadow(src + size);
-  uptr inc = 1;
-  if (dst > src) {
-    s = (RawShadow*)MemToShadow(src + size) - 1;
-    d = (RawShadow*)MemToShadow(dst + size) - 1;
-    send = (RawShadow*)MemToShadow(src) - 1;
-    inc = -1;
-  }
-  for (; s != send; s += inc, d += inc) {
-    *d = *s;
-    *s = 0;
-  }
-  */
 }
 
 jptr __tsan_java_find(jptr *from_ptr, jptr to) {

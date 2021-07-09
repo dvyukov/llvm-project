@@ -134,18 +134,14 @@ void ReportDesc::AddLocation(uptr addr, uptr size) {
   if (a->PointerIsMine((void*)addr)) {
     void* block_begin = a->GetBlockBegin((void*)addr);
     if (block_begin) {
-      if (MBlock* b = ctx->metamap.GetBlock((uptr)block_begin)) {
-        auto loc = *locs.PushBack(region.Alloc<ReportLocation>());
-        loc->type = ReportLocationHeap;
-        loc->heap_chunk_start = (uptr)block_begin;
-        loc->heap_chunk_size = b->siz;
-        loc->external_tag = b->tag;
-        loc->tid = b->tid;
-        loc->stack.stack = StackDepotGet(b->stk);
-        if (ThreadContext* tctx = FindThreadByTidLocked(b->tid))
-          AddThread(tctx);
-      }
+      if (MBlock* b = ctx->metamap.GetBlock((uptr)block_begin))
+        AddHeapLocation((uptr)block_begin, b);
     }
+    return;
+  }
+  uptr block_begin = 0;
+  if (MBlock* b = JavaHeapBlock(addr, &block_begin)) {
+    AddHeapLocation(block_begin, b);
     return;
   }
   bool is_stack = false;
@@ -163,6 +159,20 @@ void ReportDesc::AddLocation(uptr addr, uptr size) {
   loc->suppressable = true;
   loc->global.start = addr;
 }
+
+#if !SANITIZER_GO
+void ReportDesc::AddHeapLocation(uptr addr, MBlock* b) {
+  auto loc = *locs.PushBack(region.Alloc<ReportLocation>());
+  loc->type = ReportLocationHeap;
+  loc->heap_chunk_start = addr;
+  loc->heap_chunk_size = b->siz;
+  loc->external_tag = b->tag;
+  loc->tid = b->tid;
+  loc->stack.stack = StackDepotGet(b->stk);
+  if (ThreadContext* tctx = FindThreadByTidLocked(b->tid))
+    AddThread(tctx);
+}
+#endif
 
 void ReportDesc::AddStack(StackTrace stack, bool suppressable) {
   auto rs = *stacks.PushBack(region.Alloc<ReportStack>());
