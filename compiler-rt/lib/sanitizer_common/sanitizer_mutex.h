@@ -153,21 +153,29 @@ class MUTEX Mutex : public CheckedMutex {
     DebugLock(GET_CALLER_PC());
     u64 reset_mask = ~0ull;
     u64 state = atomic_load_relaxed(&state_);
-    for (;;) {
+    const uptr kMaxSpinIters = 1500;
+    for (uptr spin_iters = 0;;spin_iters++) {
       u64 new_state;
       bool locked = (state & (kWriterLock | kReaderLockMask)) != 0;
-      if (LIKELY(!locked))
-        new_state = state | kWriterLock;
-      else
-        new_state = state + kWaitingWriterInc;
-      new_state &= reset_mask;
+      if (LIKELY(!locked)) {
+        new_state = (state | kWriterLock) & reset_mask;
+      } else if (spin_iters > kMaxSpinIters) {
+        new_state = (state + kWaitingWriterInc) & reset_mask;
+      } else if ((state & kWriterWoken) == 0) {
+        new_state = state | kWriterWoken;
+      } else {
+        state = atomic_load(&state_, memory_order_relaxed);
+        continue;
+      }
       if (UNLIKELY(!atomic_compare_exchange_weak(&state_, &state, new_state, memory_order_acquire)))
         continue;
       if (LIKELY(!locked))
         return;
-      writers_.Wait();
-      state = atomic_load(&state_, memory_order_relaxed);
-      DCHECK_NE(state & kWriterWoken, 0);
+      if (spin_iters > kMaxSpinIters) {
+        writers_.Wait();
+        state = atomic_load(&state_, memory_order_relaxed);
+        DCHECK_NE(state & kWriterWoken, 0);
+      }
       reset_mask = ~kWriterWoken;
     }
   }
