@@ -44,9 +44,9 @@ namespace __tsan {
 // actually aliases of each other, and we cannot have different interceptors for
 // them, because they're actually the same function.  Thus, we have to stay
 // conservative and treat the non-barrier versions as mo_acq_rel.
-static constexpr morder kMacOrderBarrier = mo_acq_rel;
+static constexpr morder kMacOrderBarrier    = mo_acq_rel;
 static constexpr morder kMacOrderNonBarrier = mo_acq_rel;
-static constexpr morder kMacFailureOrder = mo_relaxed;
+static constexpr morder kMacFailureOrder    = mo_relaxed;
 
 #  define OSATOMIC_INTERCEPTOR(return_t, t, tsan_t, f, tsan_atomic_f, mo) \
     TSAN_INTERCEPTOR(return_t, f, t x, volatile t *ptr) {                 \
@@ -134,14 +134,14 @@ OSATOMIC_INTERCEPTORS_CAS(OSAtomicCompareAndSwap32, __tsan_atomic32, a32,
 OSATOMIC_INTERCEPTORS_CAS(OSAtomicCompareAndSwap64, __tsan_atomic64, a64,
                           int64_t)
 
-#  define OSATOMIC_INTERCEPTOR_BITOP(f, op, clear, mo)             \
-    TSAN_INTERCEPTOR(bool, f, uint32_t n, volatile void *ptr) {    \
-      SCOPED_TSAN_INTERCEPTOR(f, n, ptr);                          \
-      volatile char *byte_ptr = ((volatile char *)ptr) + (n >> 3); \
-      char bit = 0x80u >> (n & 7);                                 \
-      char mask = clear ? ~bit : bit;                              \
-      char orig_byte = op((volatile a8 *)byte_ptr, mask, mo);      \
-      return orig_byte & bit;                                      \
+#  define OSATOMIC_INTERCEPTOR_BITOP(f, op, clear, mo)                 \
+    TSAN_INTERCEPTOR(bool, f, uint32_t n, volatile void *ptr) {        \
+      SCOPED_TSAN_INTERCEPTOR(f, n, ptr);                              \
+      volatile char *byte_ptr = ((volatile char *)ptr) + (n >> 3);     \
+      char bit                = 0x80u >> (n & 7);                      \
+      char mask               = clear ? ~bit : bit;                    \
+      char orig_byte          = op((volatile a8 *)byte_ptr, mask, mo); \
+      return orig_byte & bit;                                          \
     }
 
 #  define OSATOMIC_INTERCEPTORS_BITOP(f, op, clear)               \
@@ -416,7 +416,7 @@ TSAN_INTERCEPTOR(int, swapcontext, ucontext_t *oucp, const ucontext_t *ucp) {
     errno = EINVAL;
     return -1;
   }
-  ThreadState *thr = cur_thread();
+  ThreadState *thr      = cur_thread();
   const int UCF_SWAPPED = 0x80000000;
   oucp->uc_onstack &= ~UCF_SWAPPED;
   thr->ignore_interceptors++;
@@ -439,12 +439,12 @@ namespace {
 struct fake_shared_weak_count {
   volatile a64 shared_owners;
   volatile a64 shared_weak_owners;
-  virtual void _unused_0x0() = 0;
-  virtual void _unused_0x8() = 0;
-  virtual void on_zero_shared() = 0;
-  virtual void _unused_0x18() = 0;
+  virtual void _unused_0x0()         = 0;
+  virtual void _unused_0x8()         = 0;
+  virtual void on_zero_shared()      = 0;
+  virtual void _unused_0x18()        = 0;
   virtual void on_zero_shared_weak() = 0;
-  virtual ~fake_shared_weak_count() = 0;  // suppress -Wnon-virtual-dtor
+  virtual ~fake_shared_weak_count()  = 0;  // suppress -Wnon-virtual-dtor
 };
 }  // namespace
 

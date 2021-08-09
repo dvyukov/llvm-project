@@ -1,5 +1,5 @@
 BasedOnStyle: Google
 AllowShortIfStatementsOnASingleLine: false
 IndentPPDirectives: AfterHash
-##AlignConsecutiveAssignments: true
+AlignConsecutiveAssignments: true
 

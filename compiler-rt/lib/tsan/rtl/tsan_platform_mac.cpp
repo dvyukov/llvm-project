@@ -47,7 +47,7 @@ namespace __tsan {
 #  if !SANITIZER_GO
 static void *SignalSafeGetOrAllocate(uptr *dst, uptr size) {
   atomic_uintptr_t *a = (atomic_uintptr_t *)dst;
-  void *val = (void *)atomic_load_relaxed(a);
+  void *val           = (void *)atomic_load_relaxed(a);
   atomic_signal_fence(memory_order_acquire);  // Turns the previous load into
                                               // acquire wrt signals.
   if (UNLIKELY(val == nullptr)) {
@@ -113,10 +113,10 @@ void cur_thread_finalize() {
 void FlushShadowMemory() {}
 
 static void RegionMemUsage(uptr start, uptr end, uptr *res, uptr *dirty) {
-  vm_address_t address = start;
+  vm_address_t address     = start;
   vm_address_t end_address = end;
-  uptr resident_pages = 0;
-  uptr dirty_pages = 0;
+  uptr resident_pages      = 0;
+  uptr dirty_pages         = 0;
   while (address < end_address) {
     vm_size_t vm_region_size;
     mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT;
@@ -133,7 +133,7 @@ static void RegionMemUsage(uptr start, uptr end, uptr *res, uptr *dirty) {
 
     address += vm_region_size;
   }
-  *res = resident_pages * GetPageSizeCached();
+  *res   = resident_pages * GetPageSizeCached();
   *dirty = dirty_pages * GetPageSizeCached();
 }
 
@@ -201,7 +201,7 @@ typedef void (*pthread_introspection_hook_t)(unsigned int event,
                                              size_t size);
 extern "C" pthread_introspection_hook_t pthread_introspection_hook_install(
     pthread_introspection_hook_t hook);
-static const uptr PTHREAD_INTROSPECTION_THREAD_CREATE = 1;
+static const uptr PTHREAD_INTROSPECTION_THREAD_CREATE    = 1;
 static const uptr PTHREAD_INTROSPECTION_THREAD_TERMINATE = 3;
 static pthread_introspection_hook_t prev_pthread_introspection_hook;
 static void my_pthread_introspection_hook(unsigned int event, pthread_t thread,
@@ -210,7 +210,7 @@ static void my_pthread_introspection_hook(unsigned int event, pthread_t thread,
     if (thread == pthread_self()) {
       // The current thread is a newly created GCD worker thread.
       ThreadState *thr = cur_thread();
-      Processor *proc = ProcCreate();
+      Processor *proc  = ProcCreate();
       ProcWire(proc, thr);
       ThreadState *parent_thread_state = nullptr;  // No parent.
       Tid tid = ThreadCreate(parent_thread_state, 0, (uptr)thread, true);
@@ -272,9 +272,9 @@ void InitializePlatform() {
 
 uptr ExtractLongJmpSp(uptr *env) {
   uptr mangled_sp = env[LONG_JMP_SP_ENV_SLOT];
-  uptr sp = mangled_sp ^ longjmp_xor_key;
-  sp = (uptr)ptrauth_auth_data((void *)sp, ptrauth_key_asdb,
-                               ptrauth_string_discriminator("sp"));
+  uptr sp         = mangled_sp ^ longjmp_xor_key;
+  sp              = (uptr)ptrauth_auth_data((void *)sp, ptrauth_key_asdb,
+                                            ptrauth_string_discriminator("sp"));
   return sp;
 }
 
@@ -282,13 +282,13 @@ uptr ExtractLongJmpSp(uptr *env) {
 void ImitateTlsWrite(ThreadState *thr, uptr tls_addr, uptr tls_size) {
   // The pointer to the ThreadState object is stored in the shadow memory
   // of the tls.
-  uptr tls_end = tls_addr + tls_size;
+  uptr tls_end         = tls_addr + tls_size;
   uptr thread_identity = (uptr)pthread_self();
   if (thread_identity == main_thread_identity) {
     MemoryRangeImitateWrite(thr, /*pc=*/2, tls_addr, tls_size);
   } else {
     uptr thr_state_start = thread_identity;
-    uptr thr_state_end = thr_state_start + sizeof(uptr);
+    uptr thr_state_end   = thr_state_start + sizeof(uptr);
     CHECK_GE(thr_state_start, tls_addr);
     CHECK_LE(thr_state_start, tls_addr + tls_size);
     CHECK_GE(thr_state_end, tls_addr);

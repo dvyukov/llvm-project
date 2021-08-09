@@ -64,7 +64,7 @@ static void AddFrame(void *ctx, const char *function_name, const char *file,
   SymbolizedStackBuilder *ssb = (struct SymbolizedStackBuilder *)ctx;
   if (ssb->tail) {
     ssb->tail->next = SymbolizedStack::New(ssb->addr);
-    ssb->tail = ssb->tail->next;
+    ssb->tail       = ssb->tail->next;
   } else {
     ssb->head = ssb->tail = SymbolizedStack::New(ssb->addr);
   }
@@ -75,7 +75,7 @@ static void AddFrame(void *ctx, const char *function_name, const char *file,
   if (file) {
     info->file = internal_strdup(file);
   }
-  info->line = line;
+  info->line   = line;
   info->column = column;
 }
 
@@ -97,9 +97,9 @@ SymbolizedStack *SymbolizeCode(uptr addr) {
     if (__tsan_symbolize_external(addr, func_buf, sizeof(func_buf), file_buf,
                                   sizeof(file_buf), &line, &col)) {
       frame->info.function = internal_strdup(func_buf);
-      frame->info.file = internal_strdup(file_buf);
-      frame->info.line = line;
-      frame->info.column = col;
+      frame->info.file     = internal_strdup(file_buf);
+      frame->info.line     = line;
+      frame->info.column   = col;
     }
     return frame;
   }

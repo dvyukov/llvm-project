@@ -128,15 +128,15 @@ void __tsan_java_move(jptr src, jptr dst, jptr size) {
   ctx->metamap.MoveMemory(src, dst, size);
 
   // Move shadow.
-  RawShadow *s = MemToShadow(src);
-  RawShadow *d = MemToShadow(dst);
+  RawShadow *s    = MemToShadow(src);
+  RawShadow *d    = MemToShadow(dst);
   RawShadow *send = MemToShadow(src + size);
-  uptr inc = 1;
+  uptr inc        = 1;
   if (dst > src) {
-    s = MemToShadow(src + size) - 1;
-    d = MemToShadow(dst + size) - 1;
+    s    = MemToShadow(src + size) - 1;
+    d    = MemToShadow(dst + size) - 1;
     send = MemToShadow(src) - 1;
-    inc = -1;
+    inc  = -1;
   }
   for (; s != send; s += inc, d += inc) {
     *d = *s;

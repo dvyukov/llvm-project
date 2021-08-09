@@ -32,7 +32,7 @@ inline bool in_symbolizer() {
 
 #define SCOPED_INTERCEPTOR_RAW(func, ...)      \
   cur_thread_init();                           \
-  ThreadState *thr = cur_thread();             \
+  ThreadState *thr     = cur_thread();         \
   const uptr caller_pc = GET_CALLER_PC();      \
   ScopedInterceptor si(thr, #func, caller_pc); \
   const uptr pc = GET_CURRENT_PC();            \

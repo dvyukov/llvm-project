@@ -77,7 +77,7 @@ struct OnStartedArgs {
 
 void ThreadContext::OnStarted(void *arg) {
   OnStartedArgs *args = static_cast<OnStartedArgs *>(arg);
-  thr = args->thr;
+  thr                 = args->thr;
   // RoundUp so that one trace part does not contain events
   // from different threads.
   epoch0 = RoundUp(epoch1 + 1, kTracePartSize);
@@ -86,15 +86,15 @@ void ThreadContext::OnStarted(void *arg) {
       ThreadState(ctx, tid, unique_id, epoch0, reuse_count, args->stk_addr,
                   args->stk_size, args->tls_addr, args->tls_size);
 #if !SANITIZER_GO
-  thr->shadow_stack = &ThreadTrace(thr->tid)->shadow_stack[0];
+  thr->shadow_stack     = &ThreadTrace(thr->tid)->shadow_stack[0];
   thr->shadow_stack_pos = thr->shadow_stack;
   thr->shadow_stack_end = thr->shadow_stack + kShadowStackSize;
 #else
   // Setup dynamic shadow stack.
   const int kInitStackSize = 8;
-  thr->shadow_stack = (uptr *)Alloc(kInitStackSize * sizeof(uptr));
-  thr->shadow_stack_pos = thr->shadow_stack;
-  thr->shadow_stack_end = thr->shadow_stack + kInitStackSize;
+  thr->shadow_stack        = (uptr *)Alloc(kInitStackSize * sizeof(uptr));
+  thr->shadow_stack_pos    = thr->shadow_stack;
+  thr->shadow_stack_end    = thr->shadow_stack + kInitStackSize;
 #endif
   if (common_flags()->detect_deadlocks)
     thr->dd_lt = ctx->dd->CreateLogicalThread(unique_id);
@@ -149,7 +149,7 @@ struct ThreadLeak {
 
 static void CollectThreadLeaks(ThreadContextBase *tctx_base, void *arg) {
   auto &leaks = *static_cast<Vector<ThreadLeak> *>(arg);
-  auto *tctx = static_cast<ThreadContext *>(tctx_base);
+  auto *tctx  = static_cast<ThreadContext *>(tctx_base);
   if (tctx->detached || tctx->status != ThreadStatusFinished)
     return;
   for (uptr i = 0; i < leaks.Size(); i++) {
@@ -414,7 +414,7 @@ void FiberSwitchImpl(ThreadState *from, ThreadState *to) {
 }
 
 ThreadState *FiberCreate(ThreadState *thr, uptr pc, unsigned flags) {
-  void *mem = Alloc(sizeof(ThreadState));
+  void *mem          = Alloc(sizeof(ThreadState));
   ThreadState *fiber = static_cast<ThreadState *>(mem);
   internal_memset(fiber, 0, sizeof(*fiber));
   Tid tid = ThreadCreate(thr, pc, 0, true);

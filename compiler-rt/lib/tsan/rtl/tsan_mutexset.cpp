@@ -34,18 +34,18 @@ void MutexSet::Add(u64 id, bool write, u64 epoch) {
   // On overflow, find the oldest mutex and drop it.
   if (size_ == kMaxSize) {
     u64 minepoch = (u64)-1;
-    u64 mini = (u64)-1;
+    u64 mini     = (u64)-1;
     for (uptr i = 0; i < size_; i++) {
       if (descs_[i].epoch < minepoch) {
         minepoch = descs_[i].epoch;
-        mini = i;
+        mini     = i;
       }
     }
     RemovePos(mini);
     CHECK_EQ(size_, kMaxSize - 1);
   }
   // Add new mutex descriptor.
-  descs_[size_].id = id;
+  descs_[size_].id    = id;
   descs_[size_].write = write;
   descs_[size_].epoch = epoch;
   descs_[size_].count = 1;

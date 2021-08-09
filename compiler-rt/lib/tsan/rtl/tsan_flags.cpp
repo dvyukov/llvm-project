@@ -61,9 +61,9 @@ void InitializeFlags(Flags *f, const char *env, const char *env_option_name) {
       // Go does not have mutexes.
       cf.detect_deadlocks = false;
     }
-    cf.print_suppressions = false;
-    cf.stack_trace_format = "    #%n %f %S %M";
-    cf.exitcode = 66;
+    cf.print_suppressions     = false;
+    cf.stack_trace_format     = "    #%n %f %S %M";
+    cf.exitcode               = 66;
     cf.intercept_tls_get_addr = true;
     OverrideCommonFlags(cf);
   }
@@ -97,9 +97,9 @@ void InitializeFlags(Flags *f, const char *env, const char *env_option_name) {
 
   // Sanity check.
   if (!f->report_bugs) {
-    f->report_thread_leaks = false;
+    f->report_thread_leaks   = false;
     f->report_destroy_locked = false;
-    f->report_signal_unsafe = false;
+    f->report_signal_unsafe  = false;
   }
 
   InitializeCommonFlags();

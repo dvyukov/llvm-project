@@ -47,7 +47,7 @@ class ScopedAnnotation {
 #define SCOPED_ANNOTATION_RET(typ, ret)                     \
   if (!flags()->enable_annotations)                         \
     return ret;                                             \
-  ThreadState *thr = cur_thread();                          \
+  ThreadState *thr     = cur_thread();                      \
   const uptr caller_pc = (uptr)__builtin_return_address(0); \
   ScopedAnnotation sa(thr, __func__, caller_pc);            \
   const uptr pc = StackTrace::GetCurrentPc();               \
@@ -89,11 +89,11 @@ static void AddExpectRace(ExpectRace *list, char *f, int l, uptr addr,
       return;
     }
   }
-  race = static_cast<ExpectRace *>(Alloc(sizeof(ExpectRace)));
-  race->addr = addr;
-  race->size = size;
-  race->file = f;
-  race->line = l;
+  race          = static_cast<ExpectRace *>(Alloc(sizeof(ExpectRace)));
+  race->addr    = addr;
+  race->size    = size;
+  race->file    = f;
+  race->line    = l;
   race->desc[0] = 0;
   atomic_store_relaxed(&race->hitcount, 0);
   atomic_store_relaxed(&race->addcount, 1);
@@ -102,16 +102,16 @@ static void AddExpectRace(ExpectRace *list, char *f, int l, uptr addr,
     for (; i < kMaxDescLen - 1 && desc[i]; i++) race->desc[i] = desc[i];
     race->desc[i] = 0;
   }
-  race->prev = list;
-  race->next = list->next;
+  race->prev       = list;
+  race->next       = list->next;
   race->next->prev = race;
-  list->next = race;
+  list->next       = race;
 }
 
 static ExpectRace *FindRace(ExpectRace *list, uptr addr, uptr size) {
   for (ExpectRace *race = list->next; race != list; race = race->next) {
     uptr maxbegin = max(race->addr, addr);
-    uptr minend = min(race->addr + race->size, addr + size);
+    uptr minend   = min(race->addr + race->size, addr + size);
     if (maxbegin < minend)
       return race;
   }

@@ -29,28 +29,28 @@ void __tsan_init() {
 void __tsan_flush_memory() { FlushShadowMemory(); }
 
 void __tsan_read16(void *addr) {
-  uptr pc = CALLERPC;
+  uptr pc          = CALLERPC;
   ThreadState *thr = cur_thread();
   MemoryAccess(thr, pc, (uptr)addr, 8, kAccessRead);
   MemoryAccess(thr, pc, (uptr)addr + 8, 8, kAccessRead);
 }
 
 void __tsan_write16(void *addr) {
-  uptr pc = CALLERPC;
+  uptr pc          = CALLERPC;
   ThreadState *thr = cur_thread();
   MemoryAccess(thr, pc, (uptr)addr, 8, kAccessWrite);
   MemoryAccess(thr, pc, (uptr)addr + 8, 8, kAccessWrite);
 }
 
 void __tsan_read16_pc(void *addr, void *pc) {
-  uptr pc_no_pac = STRIP_PAC_PC(pc);
+  uptr pc_no_pac   = STRIP_PAC_PC(pc);
   ThreadState *thr = cur_thread();
   MemoryAccess(thr, pc_no_pac, (uptr)addr, 8, kAccessRead);
   MemoryAccess(thr, pc_no_pac, (uptr)addr + 8, 8, kAccessRead);
 }
 
 void __tsan_write16_pc(void *addr, void *pc) {
-  uptr pc_no_pac = STRIP_PAC_PC(pc);
+  uptr pc_no_pac   = STRIP_PAC_PC(pc);
   ThreadState *thr = cur_thread();
   MemoryAccess(thr, pc_no_pac, (uptr)addr, 8, kAccessWrite);
   MemoryAccess(thr, pc_no_pac, (uptr)addr + 8, 8, kAccessWrite);
@@ -59,14 +59,14 @@ void __tsan_write16_pc(void *addr, void *pc) {
 // __tsan_unaligned_read/write calls are emitted by compiler.
 
 void __tsan_unaligned_read16(const void *addr) {
-  uptr pc = CALLERPC;
+  uptr pc          = CALLERPC;
   ThreadState *thr = cur_thread();
   UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, kAccessRead);
   UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, kAccessRead);
 }
 
 void __tsan_unaligned_write16(void *addr) {
-  uptr pc = CALLERPC;
+  uptr pc          = CALLERPC;
   ThreadState *thr = cur_thread();
   UnalignedMemoryAccess(thr, pc, (uptr)addr, 8, kAccessWrite);
   UnalignedMemoryAccess(thr, pc, (uptr)addr + 8, 8, kAccessWrite);

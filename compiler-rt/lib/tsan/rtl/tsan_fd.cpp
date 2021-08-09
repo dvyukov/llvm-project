@@ -20,7 +20,7 @@ namespace __tsan {
 
 const int kTableSizeL1 = 1024;
 const int kTableSizeL2 = 1024;
-const int kTableSize = kTableSizeL1 * kTableSizeL2;
+const int kTableSize   = kTableSizeL1 * kTableSizeL2;
 
 struct FdSync {
   atomic_uint64_t rc;
@@ -76,7 +76,7 @@ static FdDesc *fddesc(ThreadState *thr, uptr pc, int fd) {
   CHECK_GE(fd, 0);
   CHECK_LT(fd, kTableSize);
   atomic_uintptr_t *pl1 = &fdctx.tab[fd / kTableSizeL2];
-  uptr l1 = atomic_load(pl1, memory_order_consume);
+  uptr l1               = atomic_load(pl1, memory_order_consume);
   if (l1 == 0) {
     uptr size = kTableSizeL2 * sizeof(FdDesc);
     // We need this to reside in user memory to properly catch races on it.
@@ -110,7 +110,7 @@ static void init(ThreadState *thr, uptr pc, int fd, FdSync *s,
     unref(thr, pc, s);
     d->sync = &fdctx.globsync;
   }
-  d->creation_tid = thr->tid;
+  d->creation_tid   = thr->tid;
   d->creation_stack = CurrentStackId(thr, pc);
   if (write) {
     // To catch races between fd usage and open.
@@ -148,11 +148,11 @@ bool FdLocation(uptr addr, int *fd, Tid *tid, StackID *stack) {
     if (tab == 0)
       break;
     if (addr >= (uptr)tab && addr < (uptr)(tab + kTableSizeL2)) {
-      int l2 = (addr - (uptr)tab) / sizeof(FdDesc);
+      int l2    = (addr - (uptr)tab) / sizeof(FdDesc);
       FdDesc *d = &tab[l2];
-      *fd = l1 * kTableSizeL1 + l2;
-      *tid = d->creation_tid;
-      *stack = d->creation_stack;
+      *fd       = l1 * kTableSizeL1 + l2;
+      *tid      = d->creation_tid;
+      *stack    = d->creation_stack;
       return true;
     }
   }
@@ -212,8 +212,8 @@ void FdClose(ThreadState *thr, uptr pc, int fd, bool write) {
   // that creates fd, we will hit false postives.
   MemoryResetRange(thr, pc, (uptr)d, 8);
   unref(thr, pc, d->sync);
-  d->sync = 0;
-  d->creation_tid = kInvalidTid;
+  d->sync           = 0;
+  d->creation_tid   = kInvalidTid;
   d->creation_stack = kInvalidStackID;
 }
 

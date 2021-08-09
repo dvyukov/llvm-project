@@ -26,8 +26,8 @@ void VarSizeStackTrace::ResizeBuffer(uptr new_size) {
   trace_buffer = (new_size > 0)
                      ? (uptr *)Alloc(new_size * sizeof(trace_buffer[0]))
                      : nullptr;
-  trace = trace_buffer;
-  size = new_size;
+  trace        = trace_buffer;
+  size         = new_size;
 }
 
 void VarSizeStackTrace::Init(const uptr *pcs, uptr cnt, uptr extra_top_pc) {
@@ -49,7 +49,7 @@ void __sanitizer::BufferedStackTrace::UnwindImpl(uptr pc, uptr bp,
                                                  void *context,
                                                  bool request_fast,
                                                  u32 max_depth) {
-  uptr top = 0;
+  uptr top    = 0;
   uptr bottom = 0;
   GetThreadStackTopAndBottom(false, &top, &bottom);
   bool fast = StackTrace::WillUseFastUnwind(request_fast);

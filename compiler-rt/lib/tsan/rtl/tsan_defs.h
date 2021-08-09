@@ -59,7 +59,7 @@ constexpr uptr kThreadSlotCount = 256;
 enum class Epoch : u16 {};
 constexpr Epoch kEpochZero = static_cast<Epoch>(0);
 
-const int kClkBits = 42;
+const int kClkBits          = 42;
 const unsigned kMaxTidReuse = (1 << (64 - kClkBits)) - 1;
 
 struct ClockElem {
@@ -68,11 +68,11 @@ struct ClockElem {
 };
 
 struct ClockBlock {
-  static const uptr kSize = 512;
-  static const uptr kTableSize = kSize / sizeof(u32);
+  static const uptr kSize       = 512;
+  static const uptr kTableSize  = kSize / sizeof(u32);
   static const uptr kClockCount = kSize / sizeof(ClockElem);
-  static const uptr kRefIdx = kTableSize - 1;
-  static const uptr kBlockIdx = kTableSize - 2;
+  static const uptr kRefIdx     = kTableSize - 1;
+  static const uptr kBlockIdx   = kTableSize - 2;
 
   union {
     u32 table[kTableSize];
@@ -117,7 +117,7 @@ const uptr kMetaShadowSize = 4;
 #if TSAN_NO_HISTORY
 const bool kCollectHistory = false;
 #else
-const bool kCollectHistory = true;
+const bool kCollectHistory    = true;
 #endif
 
 // The following "build consistency" machinery ensures that all source files
@@ -183,11 +183,11 @@ class RegionAlloc;
 typedef uptr AccessType;
 
 enum : AccessType {
-  kAccessWrite = 0,
-  kAccessRead = 1 << 0,
+  kAccessWrite  = 0,
+  kAccessRead   = 1 << 0,
   kAccessAtomic = 1 << 1,
-  kAccessVptr = 1 << 2,  // read or write of an object virtual table pointer
-  kAccessFree = 1 << 3,  // synthetic memory access during memory freeing
+  kAccessVptr   = 1 << 2,  // read or write of an object virtual table pointer
+  kAccessFree   = 1 << 3,  // synthetic memory access during memory freeing
   kAccessExternalPC = 1 << 4,  // access PC can have kExternalPCBit set
 };
 
@@ -202,10 +202,10 @@ struct MBlock {
 COMPILER_CHECK(sizeof(MBlock) == 16);
 
 enum ExternalTag : uptr {
-  kExternalTagNone = 0,
+  kExternalTagNone                 = 0,
   kExternalTagSwiftModifyingAccess = 1,
-  kExternalTagFirstUserAvailable = 2,
-  kExternalTagMax = 1024,
+  kExternalTagFirstUserAvailable   = 2,
+  kExternalTagMax                  = 1024,
   // Don't set kExternalTagMax over 65,536, since MBlock only stores tags
   // as 16-bit values, see tsan_defs.h.
 };

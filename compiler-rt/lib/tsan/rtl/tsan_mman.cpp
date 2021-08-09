@@ -43,7 +43,7 @@ struct MapUnmapCallback {
     // Note the block does not contain any meta info at this point
     // (this happens after free).
     const uptr kMetaRatio = kMetaShadowCell / kMetaShadowSize;
-    const uptr kPageSize = GetPageSizeCached() * kMetaRatio;
+    const uptr kPageSize  = GetPageSizeCached() * kMetaRatio;
     // Block came from LargeMmapAllocator, so must be large.
     // We rely on this in the calculations below.
     CHECK_GE(size, 2 * kPageSize);
@@ -78,7 +78,7 @@ GlobalProc *global_proc() {
 }
 
 ScopedGlobalProcessor::ScopedGlobalProcessor() {
-  GlobalProc *gp = global_proc();
+  GlobalProc *gp   = global_proc();
   ThreadState *thr = cur_thread();
   if (thr->proc())
     return;
@@ -101,7 +101,7 @@ ScopedGlobalProcessor::ScopedGlobalProcessor() {
 }
 
 ScopedGlobalProcessor::~ScopedGlobalProcessor() {
-  GlobalProc *gp = global_proc();
+  GlobalProc *gp   = global_proc();
   ThreadState *thr = cur_thread();
   if (thr->proc() != gp->proc)
     return;

@@ -102,19 +102,19 @@ extern __sanitizer_FILE __sF[];
 extern __sanitizer_FILE *stdout, *stderr;
 #endif
 #if !SANITIZER_FREEBSD && !SANITIZER_MAC && !SANITIZER_NETBSD
-const int PTHREAD_MUTEX_RECURSIVE = 1;
+const int PTHREAD_MUTEX_RECURSIVE    = 1;
 const int PTHREAD_MUTEX_RECURSIVE_NP = 1;
 #else
-const int PTHREAD_MUTEX_RECURSIVE = 2;
-const int PTHREAD_MUTEX_RECURSIVE_NP = 2;
+const int PTHREAD_MUTEX_RECURSIVE       = 2;
+const int PTHREAD_MUTEX_RECURSIVE_NP    = 2;
 #endif
 #if !SANITIZER_FREEBSD && !SANITIZER_MAC && !SANITIZER_NETBSD
 const int EPOLL_CTL_ADD = 1;
 #endif
-const int SIGILL = 4;
+const int SIGILL  = 4;
 const int SIGTRAP = 5;
 const int SIGABRT = 6;
-const int SIGFPE = 8;
+const int SIGFPE  = 8;
 const int SIGSEGV = 11;
 const int SIGPIPE = 13;
 const int SIGTERM = 15;
@@ -122,8 +122,8 @@ const int SIGTERM = 15;
 const int SIGBUS = 10;
 const int SIGSYS = 12;
 #else
-const int SIGBUS = 7;
-const int SIGSYS = 31;
+const int SIGBUS                        = 7;
+const int SIGSYS                        = 31;
 #endif
 void *const MAP_FAILED = (void *)-1;
 #if SANITIZER_NETBSD
@@ -142,13 +142,13 @@ typedef __sanitizer::u16 mode_t;
 #define F_TEST 3  /* Test a region for other processes locks.  */
 
 #if SANITIZER_FREEBSD || SANITIZER_MAC || SANITIZER_NETBSD
-const int SA_SIGINFO = 0x40;
+const int SA_SIGINFO  = 0x40;
 const int SIG_SETMASK = 3;
 #elif defined(__mips__)
-const int SA_SIGINFO = 8;
-const int SIG_SETMASK = 3;
+const int SA_SIGINFO                    = 8;
+const int SIG_SETMASK                   = 3;
 #else
-const int SA_SIGINFO = 4;
+const int SA_SIGINFO  = 4;
 const int SIG_SETMASK = 2;
 #endif
 
@@ -209,7 +209,7 @@ LibIgnore *libignore() { return &interceptor_ctx()->libignore; }
 
 void InitializeLibIgnore() {
   const SuppressionContext &supp = *Suppressions();
-  const uptr n = supp.SuppressionCount();
+  const uptr n                   = supp.SuppressionCount();
   for (uptr i = 0; i < n; i++) {
     const Suppression *s = supp.SuppressionAt(i);
     if (0 == internal_strcmp(s->type, kSuppressionLib))
@@ -379,7 +379,7 @@ static void at_exit_wrapper() {
 
     // Pop AtExitCtx from the top of the stack of callback functions
     uptr element = interceptor_ctx()->AtExitStack.Size() - 1;
-    ctx = interceptor_ctx()->AtExitStack[element];
+    ctx          = interceptor_ctx()->AtExitStack[element];
     interceptor_ctx()->AtExitStack.PopBack();
   }
 
@@ -419,8 +419,8 @@ TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
 static int setup_at_exit_wrapper(ThreadState *thr, uptr pc, void (*f)(),
                                  void *arg, void *dso) {
   auto *ctx = New<AtExitCtx>();
-  ctx->f = f;
-  ctx->arg = arg;
+  ctx->f    = f;
+  ctx->arg  = arg;
   Release(thr, pc, (uptr)ctx);
   // Memory allocation in __cxa_atexit will race with free during exit,
   // because we do not see synchronization around atexit callback list.
@@ -451,7 +451,7 @@ static int setup_at_exit_wrapper(ThreadState *thr, uptr pc, void (*f)(),
 #if !SANITIZER_MAC && !SANITIZER_NETBSD
 static void on_exit_wrapper(int status, void *arg) {
   ThreadState *thr = cur_thread();
-  uptr pc = 0;
+  uptr pc          = 0;
   Acquire(thr, pc, (uptr)arg);
   AtExitCtx *ctx = (AtExitCtx *)arg;
   ((void (*)(int status, void *arg))ctx->f)(status, ctx->arg);
@@ -463,8 +463,8 @@ TSAN_INTERCEPTOR(int, on_exit, void (*f)(int, void *), void *arg) {
     return 0;
   SCOPED_TSAN_INTERCEPTOR(on_exit, f, arg);
   auto *ctx = New<AtExitCtx>();
-  ctx->f = (void (*)())f;
-  ctx->arg = arg;
+  ctx->f    = (void (*)())f;
+  ctx->arg  = arg;
   Release(thr, pc, (uptr)ctx);
   // Memory allocation in __cxa_atexit will race with free during exit,
   // because we do not see synchronization around atexit callback list.
@@ -497,11 +497,11 @@ static void SetJmp(ThreadState *thr, uptr sp) {
   // Cleanup old bufs.
   JmpBufGarbageCollect(thr, sp);
   // Remember the buf.
-  JmpBuf *buf = thr->jmp_bufs.PushBack();
-  buf->sp = sp;
-  buf->shadow_stack_pos = thr->shadow_stack_pos;
+  JmpBuf *buf               = thr->jmp_bufs.PushBack();
+  buf->sp                   = sp;
+  buf->shadow_stack_pos     = thr->shadow_stack_pos;
   ThreadSignalContext *sctx = SigCtx(thr);
-  buf->int_signal_send = sctx ? sctx->int_signal_send : 0;
+  buf->int_signal_send      = sctx ? sctx->int_signal_send : 0;
   buf->in_blocking_func =
       sctx ? atomic_load(&sctx->in_blocking_func, memory_order_relaxed) : false;
   buf->in_signal_handler =
@@ -817,7 +817,7 @@ TSAN_INTERCEPTOR(void *, valloc, uptr sz) {
 TSAN_INTERCEPTOR(void *, pvalloc, uptr sz) {
   if (in_symbolizer()) {
     uptr PageSize = GetPageSizeCached();
-    sz = sz ? RoundUpTo(sz, PageSize) : PageSize;
+    sz            = sz ? RoundUpTo(sz, PageSize) : PageSize;
     return InternalAlloc(sz, nullptr, PageSize);
   }
   SCOPED_INTERCEPTOR_RAW(pvalloc, sz);
@@ -848,10 +848,10 @@ TSAN_INTERCEPTOR(int, posix_memalign, void **memptr, uptr align, uptr sz) {
 // that any non-0 value in the first byte means that
 // initialization is completed. Contents of the remaining
 // bytes are up to us.
-constexpr u32 kGuardInit = 0;
-constexpr u32 kGuardDone = 1;
+constexpr u32 kGuardInit    = 0;
+constexpr u32 kGuardDone    = 1;
 constexpr u32 kGuardRunning = 1 << 16;
-constexpr u32 kGuardWaiter = 1 << 17;
+constexpr u32 kGuardWaiter  = 1 << 17;
 
 static int guard_acquire(ThreadState *thr, uptr pc, atomic_uint32_t *g) {
   OnPotentiallyBlockingRegionBegin();
@@ -919,7 +919,7 @@ STDCXX_INTERCEPTOR(void, __cxa_guard_abort, atomic_uint32_t *g) {
 namespace __tsan {
 void DestroyThreadState() {
   ThreadState *thr = cur_thread();
-  Processor *proc = thr->proc();
+  Processor *proc  = thr->proc();
   ThreadFinish(thr);
   ProcUnwire(proc, thr);
   ProcDestroy(proc);
@@ -960,9 +960,9 @@ struct ThreadParam {
 };
 
 extern "C" void *__tsan_thread_start_func(void *arg) {
-  ThreadParam *p = (ThreadParam *)arg;
+  ThreadParam *p               = (ThreadParam *)arg;
   void *(*callback)(void *arg) = p->callback;
-  void *param = p->param;
+  void *param                  = p->param;
   {
     cur_thread_init();
     ThreadState *thr = cur_thread();
@@ -1022,9 +1022,9 @@ TSAN_INTERCEPTOR(int, pthread_create, void *th, void *attr,
 
   ThreadParam p;
   p.callback = callback;
-  p.param = param;
-  p.tid = kMainTid;
-  int res = -1;
+  p.param    = param;
+  p.tid      = kMainTid;
+  int res    = -1;
   {
     // Otherwise we see false positives in pthread stack manipulation.
     ScopedIgnoreInterceptors ignore;
@@ -1139,7 +1139,7 @@ static void *init_cond(void *c, bool force = false) {
   if (!common_flags()->legacy_pthread_cond)
     return c;
   atomic_uintptr_t *p = (atomic_uintptr_t *)c;
-  uptr cond = atomic_load(p, memory_order_acquire);
+  uptr cond           = atomic_load(p, memory_order_acquire);
   if (!force && cond != 0)
     return (void *)cond;
   void *newcond = WRAP(malloc)(pthread_cond_t_sz);
@@ -1202,12 +1202,12 @@ int cond_wait(ThreadState *thr, uptr pc, ScopedInterceptor *si, const Fn &fn,
     // Enable signal delivery while the thread is blocked.
     BlockingCall bc(thr);
     CondMutexUnlockCtx<Fn> arg = {si, thr, pc, m, c, fn};
-    res = call_pthread_cancel_with_cleanup(
-        [](void *arg) -> int {
+    res                        = call_pthread_cancel_with_cleanup(
+                               [](void *arg) -> int {
           return ((const CondMutexUnlockCtx<Fn> *)arg)->Cancel();
-        },
-        [](void *arg) { ((const CondMutexUnlockCtx<Fn> *)arg)->Unlock(); },
-        &arg);
+                               },
+                               [](void *arg) { ((const CondMutexUnlockCtx<Fn> *)arg)->Unlock(); },
+                               &arg);
   }
   if (res == errno_EOWNERDEAD)
     MutexRepair(thr, pc, (uptr)m);
@@ -1956,8 +1956,8 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // and interceptors, because otherwise we can miss syncronization and report
   // false races.
   int ignore_reads_and_writes = thr->ignore_reads_and_writes;
-  int ignore_interceptors = thr->ignore_interceptors;
-  int ignore_sync = thr->ignore_sync;
+  int ignore_interceptors     = thr->ignore_interceptors;
+  int ignore_sync             = thr->ignore_sync;
   // For symbolizer we only process SIGSEGVs synchronously
   // (bug in symbolizer or in tsan). But we want to reset
   // in_symbolizer to fail gracefully. Symbolizer and user code
@@ -1969,12 +1969,12 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
     thr->ignore_reads_and_writes = 0;
     thr->fast_state.ClearIgnoreBit();
     thr->ignore_interceptors = 0;
-    thr->ignore_sync = 0;
-    thr->in_symbolizer = 0;
+    thr->ignore_sync         = 0;
+    thr->in_symbolizer       = 0;
   }
   // Ensure that the handler does not spoil errno.
   const int saved_errno = errno;
-  errno = 99;
+  errno                 = 99;
   // This code races with sigaction. Be careful to not read sa_sigaction twice.
   // Also need to remember pc for reporting before the call,
   // because the handler can reset it.
@@ -1988,8 +1988,8 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
     if (ignore_reads_and_writes)
       thr->fast_state.SetIgnoreBit();
     thr->ignore_interceptors = ignore_interceptors;
-    thr->ignore_sync = ignore_sync;
-    thr->in_symbolizer = in_symbolizer;
+    thr->ignore_sync         = ignore_sync;
+    thr->in_symbolizer       = in_symbolizer;
   }
   // We do not detect errno spoiling for SIGTERM,
   // because some SIGTERM handlers do spoil errno but reraise SIGTERM,
@@ -2047,7 +2047,7 @@ static bool is_sync_signal(ThreadSignalContext *sctx, int sig) {
 
 void sighandler(int sig, __sanitizer_siginfo *info, void *ctx) {
   cur_thread_init();
-  ThreadState *thr = cur_thread();
+  ThreadState *thr          = cur_thread();
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sig < 0 || sig >= kSigCount) {
     VPrintf(1, "ThreadSanitizer: ignoring signal %d\n", sig);
@@ -2093,9 +2093,9 @@ TSAN_INTERCEPTOR(int, raise, int sig) {
   SCOPED_TSAN_INTERCEPTOR(raise, sig);
   ThreadSignalContext *sctx = SigCtx(thr);
   CHECK_NE(sctx, 0);
-  int prev = sctx->int_signal_send;
+  int prev              = sctx->int_signal_send;
   sctx->int_signal_send = sig;
-  int res = REAL(raise)(sig);
+  int res               = REAL(raise)(sig);
   CHECK_EQ(sctx->int_signal_send, sig);
   sctx->int_signal_send = prev;
   return res;
@@ -2162,7 +2162,7 @@ void atfork_prepare() {
   if (in_symbolizer())
     return;
   ThreadState *thr = cur_thread();
-  const uptr pc = StackTrace::GetCurrentPc();
+  const uptr pc    = StackTrace::GetCurrentPc();
   ForkBefore(thr, pc);
 }
 
@@ -2170,7 +2170,7 @@ void atfork_parent() {
   if (in_symbolizer())
     return;
   ThreadState *thr = cur_thread();
-  const uptr pc = StackTrace::GetCurrentPc();
+  const uptr pc    = StackTrace::GetCurrentPc();
   ForkParentAfter(thr, pc);
 }
 
@@ -2178,7 +2178,7 @@ void atfork_child() {
   if (in_symbolizer())
     return;
   ThreadState *thr = cur_thread();
-  const uptr pc = StackTrace::GetCurrentPc();
+  const uptr pc    = StackTrace::GetCurrentPc();
   ForkChildAfter(thr, pc);
   FdOnFork(thr, pc);
 }
@@ -2237,11 +2237,11 @@ static int dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,
 TSAN_INTERCEPTOR(int, dl_iterate_phdr, dl_iterate_phdr_cb_t cb, void *data) {
   SCOPED_TSAN_INTERCEPTOR(dl_iterate_phdr, cb, data);
   dl_iterate_phdr_data cbdata;
-  cbdata.thr = thr;
-  cbdata.pc = pc;
-  cbdata.cb = cb;
+  cbdata.thr  = thr;
+  cbdata.pc   = pc;
+  cbdata.cb   = cb;
   cbdata.data = data;
-  int res = REAL(dl_iterate_phdr)(dl_iterate_phdr_cb, &cbdata);
+  int res     = REAL(dl_iterate_phdr)(dl_iterate_phdr_cb, &cbdata);
   return res;
 }
 #endif
@@ -2295,13 +2295,13 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc, __sanitizer_msghdr *msg) {
 #define COMMON_INTERCEPTOR_ENTER(ctx, func, ...) \
   SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);    \
   TsanInterceptorContext _ctx = {thr, pc};       \
-  ctx = (void *)&_ctx;                           \
+  ctx                         = (void *)&_ctx;   \
   (void)ctx;
 
 #define COMMON_INTERCEPTOR_ENTER_NOIGNORE(ctx, func, ...) \
   SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__);              \
   TsanInterceptorContext _ctx = {thr, pc};                \
-  ctx = (void *)&_ctx;                                    \
+  ctx                         = (void *)&_ctx;            \
   (void)ctx;
 
 #define COMMON_INTERCEPTOR_FILE_OPEN(ctx, file, path) \
@@ -2393,7 +2393,7 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc, __sanitizer_msghdr *msg) {
 #define COMMON_INTERCEPTOR_GET_TLS_RANGE(begin, end) \
   if (TsanThread *t = GetCurrentThread()) {          \
     *begin = t->tls_begin();                         \
-    *end = t->tls_end();                             \
+    *end   = t->tls_end();                           \
   } else {                                           \
     *begin = *end = 0;                               \
   }
@@ -2665,7 +2665,7 @@ namespace __tsan {
 
 static void finalize(void *arg) {
   ThreadState *thr = cur_thread();
-  int status = Finalize(thr);
+  int status       = Finalize(thr);
   // Make sure the output is not lost.
   FlushStreams();
   if (status)
@@ -2904,7 +2904,7 @@ void InitializeInterceptors() {
 // so attaching it to the function defined in user code does not help.
 // That's why we now have what we have.
 constexpr u32 kBarrierThreadBits = 10;
-constexpr u32 kBarrierThreads = 1 << kBarrierThreadBits;
+constexpr u32 kBarrierThreads    = 1 << kBarrierThreadBits;
 
 extern "C" SANITIZER_INTERFACE_ATTRIBUTE void __tsan_testonly_barrier_init(
     atomic_uint32_t *barrier, u32 num_threads) {

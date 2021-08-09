@@ -24,15 +24,15 @@ namespace __tsan {
 // These need to match __tsan_mutex_* flags defined in tsan_interface.h.
 // See documentation there as well.
 enum MutexFlags {
-  MutexFlagLinkerInit = 1 << 0,       // __tsan_mutex_linker_init
-  MutexFlagWriteReentrant = 1 << 1,   // __tsan_mutex_write_reentrant
-  MutexFlagReadReentrant = 1 << 2,    // __tsan_mutex_read_reentrant
-  MutexFlagReadLock = 1 << 3,         // __tsan_mutex_read_lock
-  MutexFlagTryLock = 1 << 4,          // __tsan_mutex_try_lock
-  MutexFlagTryLockFailed = 1 << 5,    // __tsan_mutex_try_lock_failed
-  MutexFlagRecursiveLock = 1 << 6,    // __tsan_mutex_recursive_lock
+  MutexFlagLinkerInit      = 1 << 0,  // __tsan_mutex_linker_init
+  MutexFlagWriteReentrant  = 1 << 1,  // __tsan_mutex_write_reentrant
+  MutexFlagReadReentrant   = 1 << 2,  // __tsan_mutex_read_reentrant
+  MutexFlagReadLock        = 1 << 3,  // __tsan_mutex_read_lock
+  MutexFlagTryLock         = 1 << 4,  // __tsan_mutex_try_lock
+  MutexFlagTryLockFailed   = 1 << 5,  // __tsan_mutex_try_lock_failed
+  MutexFlagRecursiveLock   = 1 << 6,  // __tsan_mutex_recursive_lock
   MutexFlagRecursiveUnlock = 1 << 7,  // __tsan_mutex_recursive_unlock
-  MutexFlagNotStatic = 1 << 8,        // __tsan_mutex_not_static
+  MutexFlagNotStatic       = 1 << 8,  // __tsan_mutex_not_static
 
   // The following flags are runtime private.
   // Mutex API misuse was detected, so don't report any more.
@@ -124,9 +124,9 @@ class MetaMap {
   void OnProcIdle(Processor *proc);
 
  private:
-  static const u32 kFlagMask = 3u << 30;
+  static const u32 kFlagMask  = 3u << 30;
   static const u32 kFlagBlock = 1u << 30;
-  static const u32 kFlagSync = 2u << 30;
+  static const u32 kFlagSync  = 2u << 30;
   typedef DenseSlabAlloc<MBlock, 1 << 18, 1 << 12, kFlagMask> BlockAlloc;
   typedef DenseSlabAlloc<SyncVar, 1 << 20, 1 << 10, kFlagMask> SyncAlloc;
   BlockAlloc block_alloc_;

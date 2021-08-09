@@ -21,7 +21,7 @@ Processor *ProcCreate() {
   void *mem = InternalAlloc(sizeof(Processor));
   internal_memset(mem, 0, sizeof(Processor));
   Processor *proc = new (mem) Processor;
-  proc->thr = nullptr;
+  proc->thr       = nullptr;
 #if !SANITIZER_GO
   AllocatorProcStart(proc);
 #endif
@@ -47,14 +47,14 @@ void ProcWire(Processor *proc, ThreadState *thr) {
   CHECK_EQ(thr->proc1, nullptr);
   CHECK_EQ(proc->thr, nullptr);
   thr->proc1 = proc;
-  proc->thr = thr;
+  proc->thr  = thr;
 }
 
 void ProcUnwire(Processor *proc, ThreadState *thr) {
   CHECK_EQ(thr->proc1, proc);
   CHECK_EQ(proc->thr, thr);
   thr->proc1 = nullptr;
-  proc->thr = nullptr;
+  proc->thr  = nullptr;
 }
 
 }  // namespace __tsan

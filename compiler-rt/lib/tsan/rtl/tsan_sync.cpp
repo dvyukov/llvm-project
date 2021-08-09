@@ -24,7 +24,7 @@ SyncVar::SyncVar() : mtx(MutexTypeSyncVar) { Reset(0); }
 void SyncVar::Init(ThreadState *thr, uptr pc, uptr addr, u64 uid,
                    bool save_stack) {
   this->addr = addr;
-  this->uid = uid;
+  this->uid  = uid;
   this->next = 0;
 
   creation_stack_id = kInvalidStackID;
@@ -35,11 +35,11 @@ void SyncVar::Init(ThreadState *thr, uptr pc, uptr addr, u64 uid,
 }
 
 void SyncVar::Reset(Processor *proc) {
-  uid = 0;
+  uid               = 0;
   creation_stack_id = kInvalidStackID;
-  owner_tid = kInvalidTid;
-  last_lock = 0;
-  recursion = 0;
+  owner_tid         = kInvalidTid;
+  last_lock         = 0;
+  recursion         = 0;
   atomic_store_relaxed(&flags, 0);
 
   if (proc == 0) {
@@ -58,12 +58,12 @@ MetaMap::MetaMap()
 }
 
 void MetaMap::AllocBlock(ThreadState *thr, uptr pc, uptr p, uptr sz) {
-  u32 idx = block_alloc_.Alloc(&thr->proc()->block_cache);
+  u32 idx   = block_alloc_.Alloc(&thr->proc()->block_cache);
   MBlock *b = block_alloc_.Map(idx);
-  b->siz = sz;
-  b->tag = 0;
-  b->tid = thr->tid;
-  b->stk = CurrentStackId(thr, pc);
+  b->siz    = sz;
+  b->tag    = 0;
+  b->tid    = thr->tid;
+  b->stk    = CurrentStackId(thr, pc);
   u32 *meta = MemToMeta(p);
   DCHECK_EQ(*meta, 0);
   *meta = idx | kFlagBlock;
@@ -80,8 +80,8 @@ uptr MetaMap::FreeBlock(Processor *proc, uptr p) {
 
 bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
   bool has_something = false;
-  u32 *meta = MemToMeta(p);
-  u32 *end = MemToMeta(p + sz);
+  u32 *meta          = MemToMeta(p);
+  u32 *end           = MemToMeta(p + sz);
   if (end == meta)
     end++;
   for (; meta < end; meta++) {
@@ -90,7 +90,7 @@ bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
       // Note: don't write to meta in this case -- the block can be huge.
       continue;
     }
-    *meta = 0;
+    *meta         = 0;
     has_something = true;
     while (idx != 0) {
       if (idx & kFlagBlock) {
@@ -99,7 +99,7 @@ bool MetaMap::FreeRange(Processor *proc, uptr p, uptr sz) {
       } else if (idx & kFlagSync) {
         DCHECK(idx & kFlagSync);
         SyncVar *s = sync_alloc_.Map(idx & ~kFlagMask);
-        u32 next = s->next;
+        u32 next   = s->next;
         s->Reset(proc);
         sync_alloc_.Free(&proc->sync_cache, idx & ~kFlagMask);
         idx = next;
@@ -125,7 +125,7 @@ void MetaMap::ResetRange(Processor *proc, uptr p, uptr sz) {
     return;
   }
   const uptr kMetaRatio = kMetaShadowCell / kMetaShadowSize;
-  const uptr kPageSize = GetPageSizeCached() * kMetaRatio;
+  const uptr kPageSize  = GetPageSizeCached() * kMetaRatio;
   if (sz <= 4 * kPageSize) {
     // If the range is small, just do the normal free procedure.
     FreeRange(proc, p, sz);
@@ -147,7 +147,7 @@ void MetaMap::ResetRange(Processor *proc, uptr p, uptr sz) {
   CHECK_GT(sz, 0);
   CHECK_EQ(p, RoundUp(p, kPageSize));
   CHECK_EQ(sz, RoundUp(sz, kPageSize));
-  const uptr p0 = p;
+  const uptr p0  = p;
   const uptr sz0 = sz;
   // Probe start of the range.
   for (uptr checked = 0; sz > 0; checked += kPageSize) {
@@ -171,7 +171,7 @@ void MetaMap::ResetRange(Processor *proc, uptr p, uptr sz) {
   // freed). Note: we can't simply madvise, because we need to leave a zeroed
   // range (otherwise __tsan_java_move can crash if it encounters a left-over
   // meta objects in java heap).
-  uptr metap = (uptr)MemToMeta(p0);
+  uptr metap  = (uptr)MemToMeta(p0);
   uptr metasz = sz0 / kMetaRatio;
   UnmapOrDie((void *)metap, metasz);
   if (!MmapFixedSuperNoReserve(metap, metasz))
@@ -180,7 +180,7 @@ void MetaMap::ResetRange(Processor *proc, uptr p, uptr sz) {
 
 MBlock *MetaMap::GetBlock(uptr p) {
   u32 *meta = MemToMeta(p);
-  u32 idx = *meta;
+  u32 idx   = *meta;
   for (;;) {
     if (idx == 0)
       return 0;
@@ -188,15 +188,15 @@ MBlock *MetaMap::GetBlock(uptr p) {
       return block_alloc_.Map(idx & ~kFlagMask);
     DCHECK(idx & kFlagSync);
     SyncVar *s = sync_alloc_.Map(idx & ~kFlagMask);
-    idx = s->next;
+    idx        = s->next;
   }
 }
 
 SyncVar *MetaMap::GetSync(ThreadState *thr, uptr pc, uptr addr, bool create,
                           bool save_stack) {
-  u32 *meta = MemToMeta(addr);
-  u32 idx0 = *meta;
-  u32 myidx = 0;
+  u32 *meta    = MemToMeta(addr);
+  u32 idx0     = *meta;
+  u32 myidx    = 0;
   SyncVar *mys = nullptr;
   for (;;) {
     for (u32 idx = idx0; idx && !(idx & kFlagBlock);) {
@@ -220,8 +220,8 @@ SyncVar *MetaMap::GetSync(ThreadState *thr, uptr pc, uptr addr, bool create,
 
     if (LIKELY(myidx == 0)) {
       const u64 uid = atomic_fetch_add(&uid_gen_, 1, memory_order_relaxed);
-      myidx = sync_alloc_.Alloc(&thr->proc()->sync_cache);
-      mys = sync_alloc_.Map(myidx);
+      myidx         = sync_alloc_.Alloc(&thr->proc()->sync_cache);
+      mys           = sync_alloc_.Map(myidx);
       mys->Init(thr, pc, addr, uid, save_stack);
     }
     mys->next = idx0;
@@ -238,20 +238,20 @@ void MetaMap::MoveMemory(uptr src, uptr dst, uptr sz) {
   // there are no concurrent accesses to the regions (e.g. stop-the-world).
   CHECK_NE(src, dst);
   CHECK_NE(sz, 0);
-  uptr diff = dst - src;
-  u32 *src_meta = MemToMeta(src);
-  u32 *dst_meta = MemToMeta(dst);
+  uptr diff         = dst - src;
+  u32 *src_meta     = MemToMeta(src);
+  u32 *dst_meta     = MemToMeta(dst);
   u32 *src_meta_end = MemToMeta(src + sz);
-  uptr inc = 1;
+  uptr inc          = 1;
   if (dst > src) {
-    src_meta = MemToMeta(src + sz) - 1;
-    dst_meta = MemToMeta(dst + sz) - 1;
+    src_meta     = MemToMeta(src + sz) - 1;
+    dst_meta     = MemToMeta(dst + sz) - 1;
     src_meta_end = MemToMeta(src) - 1;
-    inc = -1;
+    inc          = -1;
   }
   for (; src_meta != src_meta_end; src_meta += inc, dst_meta += inc) {
     CHECK_EQ(*dst_meta, 0);
-    u32 idx = *src_meta;
+    u32 idx   = *src_meta;
     *src_meta = 0;
     *dst_meta = idx;
     // Patch the addresses in sync objects.

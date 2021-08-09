@@ -89,9 +89,9 @@ static atomic_uint32_t *ref_ptr(ClockBlock *cb) {
 
 // Drop reference to the first level block idx.
 static void UnrefClockBlock(ClockCache *c, u32 idx, uptr blocks) {
-  ClockBlock *cb = ctx->clock_alloc.Map(idx);
+  ClockBlock *cb       = ctx->clock_alloc.Map(idx);
   atomic_uint32_t *ref = ref_ptr(cb);
-  u32 v = atomic_load(ref, memory_order_acquire);
+  u32 v                = atomic_load(ref, memory_order_acquire);
   for (;;) {
     CHECK_GT(v, 0);
     if (v == 1)
@@ -123,8 +123,8 @@ ThreadClock::ThreadClock(unsigned tid, unsigned reused)
 void ThreadClock::ResetCached(ClockCache *c) {
   if (cached_idx_) {
     UnrefClockBlock(c, cached_idx_, cached_blocks_);
-    cached_idx_ = 0;
-    cached_size_ = 0;
+    cached_idx_    = 0;
+    cached_size_   = 0;
     cached_blocks_ = 0;
   }
 }
@@ -141,11 +141,11 @@ void ThreadClock::acquire(ClockCache *c, SyncClock *src) {
   bool acquired = false;
   for (unsigned i = 0; i < kDirtyTids; i++) {
     SyncClock::Dirty dirty = src->dirty_[i];
-    unsigned tid = dirty.tid();
+    unsigned tid           = dirty.tid();
     if (tid != kInvalidTid) {
       if (clk_[tid] < dirty.epoch) {
         clk_[tid] = dirty.epoch;
-        acquired = true;
+        acquired  = true;
       }
     }
   }
@@ -153,7 +153,7 @@ void ThreadClock::acquire(ClockCache *c, SyncClock *src) {
   // Check if we've already acquired src after the last release operation on src
   if (tid_ >= nclk || src->elem(tid_).reused != reused_) {
     // O(N) acquire.
-    nclk_ = max(nclk_, nclk);
+    nclk_        = max(nclk_, nclk);
     u64 *dst_pos = &clk_[0];
     for (ClockElem &src_elem : *src) {
       u64 epoch = src_elem.epoch;
@@ -201,14 +201,14 @@ void ThreadClock::releaseStoreAcquire(ClockCache *c, SyncClock *sc) {
   for (ClockElem &ce : *sc) {
     u64 tmp = clk_[i];
     if (clk_[i] < ce.epoch) {
-      clk_[i] = ce.epoch;
+      clk_[i]  = ce.epoch;
       acquired = true;
     }
-    ce.epoch = tmp;
+    ce.epoch  = tmp;
     ce.reused = 0;
     i++;
   }
-  sc->release_store_tid_ = kInvalidTid;
+  sc->release_store_tid_    = kInvalidTid;
   sc->release_store_reused_ = 0;
 
   if (acquired) {
@@ -251,12 +251,12 @@ void ThreadClock::release(ClockCache *c, SyncClock *dst) {
   dst->FlushDirty();
   uptr i = 0;
   for (ClockElem &ce : *dst) {
-    ce.epoch = max(ce.epoch, clk_[i]);
+    ce.epoch  = max(ce.epoch, clk_[i]);
     ce.reused = 0;
     i++;
   }
   // Clear 'acquired' flag in the remaining elements.
-  dst->release_store_tid_ = kInvalidTid;
+  dst->release_store_tid_    = kInvalidTid;
   dst->release_store_reused_ = 0;
   // If we've acquired dst, remember this fact,
   // so that we don't need to acquire it on next acquire.
@@ -276,16 +276,16 @@ void ThreadClock::ReleaseStore(ClockCache *c, SyncClock *dst) {
     // existing clock, we could replace it with the currently cached;
     // or unshare, update and cache. But, for simplicity, we currnetly reuse
     // cached clock only when the target clock is empty.
-    dst->tab_ = ctx->clock_alloc.Map(cached_idx_);
+    dst->tab_     = ctx->clock_alloc.Map(cached_idx_);
     dst->tab_idx_ = cached_idx_;
-    dst->size_ = cached_size_;
-    dst->blocks_ = cached_blocks_;
+    dst->size_    = cached_size_;
+    dst->blocks_  = cached_blocks_;
     CHECK_EQ(dst->dirty_[0].tid(), kInvalidTid);
     // The cached clock is shared (immutable),
     // so this is where we store the current clock.
     dst->dirty_[0].set_tid(tid_);
-    dst->dirty_[0].epoch = clk_[tid_];
-    dst->release_store_tid_ = tid_;
+    dst->dirty_[0].epoch       = clk_[tid_];
+    dst->release_store_tid_    = tid_;
     dst->release_store_reused_ = reused_;
     // Rememeber that we don't need to acquire it in future.
     dst->elem(tid_).reused = reused_;
@@ -310,12 +310,12 @@ void ThreadClock::ReleaseStore(ClockCache *c, SyncClock *dst) {
   // This is fine since clk_ beyond size is all zeros.
   uptr i = 0;
   for (ClockElem &ce : *dst) {
-    ce.epoch = clk_[i];
+    ce.epoch  = clk_[i];
     ce.reused = 0;
     i++;
   }
   for (uptr i = 0; i < kDirtyTids; i++) dst->dirty_[i].set_tid(kInvalidTid);
-  dst->release_store_tid_ = tid_;
+  dst->release_store_tid_    = tid_;
   dst->release_store_reused_ = reused_;
   // Rememeber that we don't need to acquire it in future.
   dst->elem(tid_).reused = reused_;
@@ -329,8 +329,8 @@ void ThreadClock::ReleaseStore(ClockCache *c, SyncClock *dst) {
       atomic_store_relaxed(ref, 2);
     else
       atomic_fetch_add(ref_ptr(dst->tab_), 1, memory_order_relaxed);
-    cached_idx_ = dst->tab_idx_;
-    cached_size_ = dst->size_;
+    cached_idx_    = dst->tab_idx_;
+    cached_size_   = dst->size_;
     cached_blocks_ = dst->blocks_;
   }
 }
@@ -345,7 +345,7 @@ void ThreadClock::UpdateCurrentThread(ClockCache *c, SyncClock *dst) const {
   // Update the threads time, but preserve 'acquired' flag.
   for (unsigned i = 0; i < kDirtyTids; i++) {
     SyncClock::Dirty *dirty = &dst->dirty_[i];
-    const unsigned tid = dirty->tid();
+    const unsigned tid      = dirty->tid();
     if (tid == tid_ || tid == kInvalidTid) {
       dirty->set_tid(tid_);
       dirty->epoch = clk_[tid_];
@@ -417,11 +417,11 @@ void SyncClock::Reset(ClockCache *c) {
 }
 
 void SyncClock::ResetImpl() {
-  tab_ = 0;
-  tab_idx_ = 0;
-  size_ = 0;
-  blocks_ = 0;
-  release_store_tid_ = kInvalidTid;
+  tab_                  = 0;
+  tab_idx_              = 0;
+  size_                 = 0;
+  blocks_               = 0;
+  release_store_tid_    = kInvalidTid;
   release_store_reused_ = 0;
   for (uptr i = 0; i < kDirtyTids; i++) dirty_[i].set_tid(kInvalidTid);
 }
@@ -440,14 +440,14 @@ void SyncClock::Resize(ClockCache *c, uptr nclk) {
     CHECK_EQ(tab_, 0);
     CHECK_EQ(tab_idx_, 0);
     tab_idx_ = ctx->clock_alloc.Alloc(c);
-    tab_ = ctx->clock_alloc.Map(tab_idx_);
+    tab_     = ctx->clock_alloc.Map(tab_idx_);
     internal_memset(tab_, 0, sizeof(*tab_));
     atomic_store_relaxed(ref_ptr(tab_), 1);
     size_ = 1;
   } else if (size_ > blocks_ * ClockBlock::kClockCount) {
-    u32 idx = ctx->clock_alloc.Alloc(c);
+    u32 idx            = ctx->clock_alloc.Alloc(c);
     ClockBlock *new_cb = ctx->clock_alloc.Map(idx);
-    uptr top = size_ - blocks_ * ClockBlock::kClockCount;
+    uptr top           = size_ - blocks_ * ClockBlock::kClockCount;
     CHECK_LT(top, ClockBlock::kClockCount);
     const uptr move = top * sizeof(tab_->clock[0]);
     internal_memcpy(&new_cb->clock[0], tab_->clock, move);
@@ -459,7 +459,7 @@ void SyncClock::Resize(ClockCache *c, uptr nclk) {
   // are evacuated from it to a second level block.
   // Add second level tables as necessary.
   while (nclk > capacity()) {
-    u32 idx = ctx->clock_alloc.Alloc(c);
+    u32 idx        = ctx->clock_alloc.Alloc(c);
     ClockBlock *cb = ctx->clock_alloc.Map(idx);
     internal_memset(cb, 0, sizeof(*cb));
     append_block(idx);
@@ -483,7 +483,7 @@ bool SyncClock::IsShared() const {
   if (size_ == 0)
     return false;
   atomic_uint32_t *ref = ref_ptr(tab_);
-  u32 v = atomic_load(ref, memory_order_acquire);
+  u32 v                = atomic_load(ref, memory_order_acquire);
   CHECK_GT(v, 0);
   return v > 1;
 }
@@ -496,11 +496,11 @@ void SyncClock::Unshare(ClockCache *c) {
     return;
   // First, copy current state into old.
   SyncClock old;
-  old.tab_ = tab_;
-  old.tab_idx_ = tab_idx_;
-  old.size_ = size_;
-  old.blocks_ = blocks_;
-  old.release_store_tid_ = release_store_tid_;
+  old.tab_                  = tab_;
+  old.tab_idx_              = tab_idx_;
+  old.size_                 = size_;
+  old.blocks_               = blocks_;
+  old.release_store_tid_    = release_store_tid_;
   old.release_store_reused_ = release_store_reused_;
   for (unsigned i = 0; i < kDirtyTids; i++) old.dirty_[i] = dirty_[i];
   // Then, clear current object.
@@ -513,7 +513,7 @@ void SyncClock::Unshare(ClockCache *c) {
     ce = *old_iter;
     ++old_iter;
   }
-  release_store_tid_ = old.release_store_tid_;
+  release_store_tid_    = old.release_store_tid_;
   release_store_reused_ = old.release_store_reused_;
   for (unsigned i = 0; i < kDirtyTids; i++) dirty_[i] = old.dirty_[i];
   // Drop reference to old and delete if necessary.
@@ -541,7 +541,7 @@ ALWAYS_INLINE ClockElem &SyncClock::elem(unsigned tid) const {
   tid %= ClockBlock::kClockCount;
   if (block == blocks_)
     return tab_->clock[tid];
-  u32 idx = get_block(block);
+  u32 idx        = get_block(block);
   ClockBlock *cb = ctx->clock_alloc.Map(idx);
   return cb->clock[tid];
 }
@@ -598,9 +598,9 @@ void SyncClock::Iter::Next() {
   block_++;
   if (block_ < parent_->blocks_) {
     // Iterate over the next second level block.
-    u32 idx = parent_->get_block(block_);
+    u32 idx        = parent_->get_block(block_);
     ClockBlock *cb = ctx->clock_alloc.Map(idx);
-    pos_ = &cb->clock[0];
+    pos_           = &cb->clock[0];
     end_ = pos_ + min(parent_->size_ - block_ * ClockBlock::kClockCount,
                       ClockBlock::kClockCount);
     return;

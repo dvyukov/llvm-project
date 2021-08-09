@@ -91,15 +91,15 @@ uptr vmaSize;
 #  endif
 
 enum {
-  MemTotal = 0,
+  MemTotal  = 0,
   MemShadow = 1,
-  MemMeta = 2,
-  MemFile = 3,
-  MemMmap = 4,
-  MemTrace = 5,
-  MemHeap = 6,
-  MemOther = 7,
-  MemCount = 8,
+  MemMeta   = 2,
+  MemFile   = 3,
+  MemMmap   = 4,
+  MemTrace  = 5,
+  MemHeap   = 6,
+  MemOther  = 7,
+  MemCount  = 8,
 };
 
 void FillProfileCallback(uptr p, uptr rss, bool file, uptr *mem,
@@ -200,7 +200,7 @@ static void MapRodata() {
         !segment.IsWritable() && IsAppMem(segment.start)) {
       // Assume it's .rodata
       char *shadow_start = (char *)MemToShadow(segment.start);
-      char *shadow_end = (char *)MemToShadow(segment.end);
+      char *shadow_end   = (char *)MemToShadow(segment.end);
       for (char *p = shadow_start; p < shadow_end;
            p += marker.size() * sizeof(u64)) {
         internal_mmap(p, Min<uptr>(marker.size() * sizeof(u64), shadow_end - p),
@@ -327,7 +327,7 @@ void InitializePlatform() {
 // closes within glibc. The code is a pure hack.
 int ExtractResolvFDs(void *state, int *fds, int nfd) {
 #    if SANITIZER_LINUX && !SANITIZER_ANDROID
-  int cnt = 0;
+  int cnt                   = 0;
   struct __res_state *statp = (struct __res_state *)state;
   for (int i = 0; i < MAXNS && cnt < nfd; i++) {
     if (statp->_u._ext.nsaddrs[i] && statp->_u._ext.nssocks[i] != -1)
@@ -343,8 +343,8 @@ int ExtractResolvFDs(void *state, int *fds, int nfd) {
 // This is requried to properly handle "open" of these fds.
 // see 'man recvmsg' and 'man 3 cmsg'.
 int ExtractRecvmsgFDs(void *msgp, int *fds, int nfd) {
-  int res = 0;
-  msghdr *msg = (msghdr *)msgp;
+  int res              = 0;
+  msghdr *msg          = (msghdr *)msgp;
   struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
   for (; cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
     if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
@@ -500,8 +500,8 @@ ThreadState *cur_thread() {
         dead_thread_state = reinterpret_cast<ThreadState *>(
             MmapOrDie(sizeof(ThreadState), "ThreadState"));
         dead_thread_state->fast_state.SetIgnoreBit();
-        dead_thread_state->ignore_interceptors = 1;
-        dead_thread_state->is_dead = true;
+        dead_thread_state->ignore_interceptors      = 1;
+        dead_thread_state->is_dead                  = true;
         *const_cast<u32 *>(&dead_thread_state->tid) = -1;
         CHECK_EQ(0, internal_mprotect(dead_thread_state, sizeof(ThreadState),
                                       PROT_READ));

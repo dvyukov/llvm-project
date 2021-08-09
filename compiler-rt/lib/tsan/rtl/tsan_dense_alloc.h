@@ -51,8 +51,8 @@ class DenseSlabAlloc {
 
   explicit DenseSlabAlloc(LinkerInitialized, const char *name) {
     freelist_ = 0;
-    fillpos_ = 0;
-    name_ = name;
+    fillpos_  = 0;
+    name_     = name;
   }
 
   explicit DenseSlabAlloc(const char *name)
@@ -91,9 +91,9 @@ class DenseSlabAlloc {
   void FlushCache(Cache *c) {
     SpinMutexLock lock(&mtx_);
     while (c->pos) {
-      IndexT idx = c->cache[--c->pos];
+      IndexT idx          = c->cache[--c->pos];
       *(IndexT *)Map(idx) = freelist_;
-      freelist_ = idx;
+      freelist_           = idx;
     }
   }
 
@@ -127,22 +127,22 @@ class DenseSlabAlloc {
         *(IndexT *)(batch + i) = i + 1 + fillpos_ * kL2Size;
       }
       *(IndexT *)(batch + kL2Size - 1) = 0;
-      freelist_ = fillpos_ * kL2Size + start;
-      map_[fillpos_++] = batch;
+      freelist_                        = fillpos_ * kL2Size + start;
+      map_[fillpos_++]                 = batch;
     }
     for (uptr i = 0; i < Cache::kSize / 2 && freelist_ != 0; i++) {
-      IndexT idx = freelist_;
+      IndexT idx         = freelist_;
       c->cache[c->pos++] = idx;
-      freelist_ = *(IndexT *)Map(idx);
+      freelist_          = *(IndexT *)Map(idx);
     }
   }
 
   void Drain(Cache *c) {
     SpinMutexLock lock(&mtx_);
     for (uptr i = 0; i < Cache::kSize / 2; i++) {
-      IndexT idx = c->cache[--c->pos];
+      IndexT idx          = c->cache[--c->pos];
       *(IndexT *)Map(idx) = freelist_;
-      freelist_ = idx;
+      freelist_           = idx;
     }
   }
 };

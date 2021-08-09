@@ -26,7 +26,7 @@ void VectorClock::Reset() {
 #if !TSAN_VECTORIZE
   for (uptr i = 0; i < kThreadSlotCount; i++) clk_[i] = kEpochZero;
 #else
-  m128 z = _mm_setzero_si128();
+  m128 z     = _mm_setzero_si128();
   m128* vclk = reinterpret_cast<m128*>(clk_);
   for (uptr i = 0; i < kVectorClockSize; i++) _mm_store_si128(&vclk[i], z);
 #endif
@@ -39,7 +39,7 @@ void VectorClock::Acquire(const VectorClock* src) {
   for (uptr i = 0; i < kThreadSlotCount; i++)
     clk_[i] = max(clk_[i], src->clk_[i]);
 #else
-  m128* __restrict vdst = reinterpret_cast<m128*>(clk_);
+  m128* __restrict vdst       = reinterpret_cast<m128*>(clk_);
   m128 const* __restrict vsrc = reinterpret_cast<m128 const*>(src->clk_);
   for (uptr i = 0; i < kVectorClockSize; i++) {
     m128 s = _mm_load_si128(&vsrc[i]);
@@ -63,14 +63,14 @@ void VectorClock::Release(VectorClock** dstp) const {
 
 void VectorClock::ReleaseStore(VectorClock** dstp) const {
   VectorClock* dst = AllocClock(dstp);
-  *dst = *this;
+  *dst             = *this;
 }
 
 VectorClock& VectorClock::operator=(const VectorClock& other) {
 #if !TSAN_VECTORIZE
   for (uptr i = 0; i < kThreadSlotCount; i++) clk_[i] = other.clk_[i];
 #else
-  m128* __restrict vdst = reinterpret_cast<m128*>(clk_);
+  m128* __restrict vdst       = reinterpret_cast<m128*>(clk_);
   m128 const* __restrict vsrc = reinterpret_cast<m128 const*>(other.clk_);
   for (uptr i = 0; i < kVectorClockSize; i++) {
     m128 s = _mm_load_si128(&vsrc[i]);
@@ -84,9 +84,9 @@ void VectorClock::ReleaseStoreAcquire(VectorClock** dstp) {
   VectorClock* dst = AllocClock(dstp);
 #if !TSAN_VECTORIZE
   for (uptr i = 0; i < kThreadSlotCount; i++) {
-    Epoch tmp = dst->clk_[i];
+    Epoch tmp    = dst->clk_[i];
     dst->clk_[i] = clk_[i];
-    clk_[i] = max(clk_[i], tmp);
+    clk_[i]      = max(clk_[i], tmp);
   }
 #else
   m128* __restrict vdst = reinterpret_cast<m128*>(dst->clk_);
@@ -106,7 +106,7 @@ void VectorClock::ReleaseAcquire(VectorClock** dstp) {
 #if !TSAN_VECTORIZE
   for (uptr i = 0; i < kThreadSlotCount; i++) {
     dst->clk_[i] = max(dst->clk_[i], clk_[i]);
-    clk_[i] = dst->clk_[i];
+    clk_[i]      = dst->clk_[i];
   }
 #else
   m128* __restrict vdst = reinterpret_cast<m128*>(dst->clk_);

@@ -42,7 +42,7 @@ namespace __tsan {
 
 ALIGNED(64) static char suppression_placeholder[sizeof(SuppressionContext)];
 static SuppressionContext *suppression_ctx = nullptr;
-static const char *kSuppressionTypes[] = {
+static const char *kSuppressionTypes[]     = {
     kSuppressionRace,    kSuppressionRaceTop, kSuppressionMutex,
     kSuppressionThread,  kSuppressionSignal,  kSuppressionLib,
     kSuppressionDeadlock};
@@ -111,7 +111,7 @@ uptr IsSuppressed(ReportType typ, const ReportStack *stack, Suppression **sp) {
   if (0 == internal_strcmp(stype, kSuppressionNone))
     return 0;
   for (const SymbolizedStack *frame = stack->frames; frame;
-       frame = frame->next) {
+       frame                        = frame->next) {
     uptr pc = IsSuppressed(stype, frame->info, sp);
     if (pc != 0)
       return pc;

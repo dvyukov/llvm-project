@@ -39,7 +39,7 @@ enum ReportType {
 
 struct ReportStack {
   SymbolizedStack *frames = nullptr;
-  bool suppressable = false;
+  bool suppressable       = false;
 };
 
 struct ReportMopMutex {
@@ -70,14 +70,14 @@ enum ReportLocationType {
 
 struct ReportLocation {
   ReportLocationType type = ReportLocationGlobal;
-  DataInfo global = {};
-  uptr heap_chunk_start = 0;
-  uptr heap_chunk_size = 0;
-  uptr external_tag = 0;
-  Tid tid = kInvalidTid;
-  int fd = 0;
-  bool suppressable = false;
-  ReportStack *stack = nullptr;
+  DataInfo global         = {};
+  uptr heap_chunk_start   = 0;
+  uptr heap_chunk_size    = 0;
+  uptr external_tag       = 0;
+  Tid tid                 = kInvalidTid;
+  int fd                  = 0;
+  bool suppressable       = false;
+  ReportStack *stack      = nullptr;
 };
 
 struct ReportThread {

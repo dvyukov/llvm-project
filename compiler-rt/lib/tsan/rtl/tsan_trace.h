@@ -19,9 +19,9 @@
 namespace __tsan {
 
 const int kTracePartSizeBits = 13;
-const int kTracePartSize = 1 << kTracePartSizeBits;
-const int kTraceParts = 2 * 1024 * 1024 / kTracePartSize;
-const int kTraceSize = kTracePartSize * kTraceParts;
+const int kTracePartSize     = 1 << kTracePartSizeBits;
+const int kTraceParts        = 2 * 1024 * 1024 / kTracePartSize;
+const int kTraceSize         = kTracePartSize * kTraceParts;
 
 // Must fit into 3 bits.
 enum EventType {

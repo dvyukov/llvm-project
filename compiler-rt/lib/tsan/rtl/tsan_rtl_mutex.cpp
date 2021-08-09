@@ -80,8 +80,8 @@ void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexDestroy %zx\n", thr->tid, addr);
   bool unlock_locked = false;
-  u64 mid = 0;
-  u64 last_lock = 0;
+  u64 mid            = 0;
+  u64 last_lock      = 0;
   {
     SyncVar *s = ctx->metamap.GetSyncIfExists(addr);
     if (s == 0)
@@ -102,7 +102,7 @@ void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
       s->SetFlags(MutexFlagBroken);
       unlock_locked = true;
     }
-    mid = s->GetId();
+    mid       = s->GetId();
     last_lock = s->last_lock;
     if (!unlock_locked)
       s->Reset(thr->proc());  // must not reset it before the report is printed
@@ -161,9 +161,9 @@ void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
     rec = 1;
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, kAccessRead | kAccessAtomic);
-  u64 mid = 0;
-  bool pre_lock = false;
-  bool first = false;
+  u64 mid                 = 0;
+  bool pre_lock           = false;
+  bool first              = false;
   bool report_double_lock = false;
   {
     SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -211,9 +211,9 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexUnlock %zx flagz=0x%x\n", thr->tid, addr, flagz);
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, kAccessRead | kAccessAtomic);
-  u64 mid = 0;
+  u64 mid                = 0;
   bool report_bad_unlock = false;
-  int rec = 0;
+  int rec                = 0;
   {
     SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
     Lock l(&s->mtx);
@@ -269,9 +269,9 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   DPrintf("#%d: MutexPostReadLock %zx flagz=0x%x\n", thr->tid, addr, flagz);
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, kAccessRead | kAccessAtomic);
-  u64 mid = 0;
+  u64 mid              = 0;
   bool report_bad_lock = false;
-  bool pre_lock = false;
+  bool pre_lock        = false;
   {
     SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
     ReadLock l(&s->mtx);
@@ -309,7 +309,7 @@ void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadUnlock %zx\n", thr->tid, addr);
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, kAccessRead | kAccessAtomic);
-  u64 mid = 0;
+  u64 mid                = 0;
   bool report_bad_unlock = false;
   {
     SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -342,7 +342,7 @@ void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr) {
   DPrintf("#%d: MutexReadOrWriteUnlock %zx\n", thr->tid, addr);
   if (IsAppMem(addr))
     MemoryAccess(thr, pc, addr, 1, kAccessRead | kAccessAtomic);
-  u64 mid = 0;
+  u64 mid                = 0;
   bool report_bad_unlock = false;
   {
     SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, addr, true);
@@ -410,9 +410,9 @@ void Acquire(ThreadState *thr, uptr pc, uptr addr) {
 }
 
 static void UpdateClockCallback(ThreadContextBase *tctx_base, void *arg) {
-  ThreadState *thr = reinterpret_cast<ThreadState *>(arg);
+  ThreadState *thr    = reinterpret_cast<ThreadState *>(arg);
   ThreadContext *tctx = static_cast<ThreadContext *>(tctx_base);
-  u64 epoch = tctx->epoch1;
+  u64 epoch           = tctx->epoch1;
   if (tctx->status == ThreadStatusRunning) {
     epoch = tctx->thr->fast_state.epoch();
     tctx->thr->clock.NoteGlobalAcquire(epoch);
@@ -466,9 +466,9 @@ void ReleaseStore(ThreadState *thr, uptr pc, uptr addr) {
 
 #if !SANITIZER_GO
 static void UpdateSleepClockCallback(ThreadContextBase *tctx_base, void *arg) {
-  ThreadState *thr = reinterpret_cast<ThreadState *>(arg);
+  ThreadState *thr    = reinterpret_cast<ThreadState *>(arg);
   ThreadContext *tctx = static_cast<ThreadContext *>(tctx_base);
-  u64 epoch = tctx->epoch1;
+  u64 epoch           = tctx->epoch1;
   if (tctx->status == ThreadStatusRunning)
     epoch = tctx->thr->fast_state.epoch();
   thr->last_sleep_clock.set(&thr->proc()->clock_cache, tctx->tid, epoch);

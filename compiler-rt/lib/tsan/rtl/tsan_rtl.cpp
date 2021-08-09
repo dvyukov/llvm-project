@@ -180,7 +180,7 @@ static void *BackgroundThread(void *arg) {
   }
 
   u64 last_flush = NanoTime();
-  uptr last_rss = 0;
+  uptr last_rss  = 0;
   for (int i = 0;
        atomic_load(&ctx->stop_background_thread, memory_order_relaxed) == 0;
        i++) {
@@ -197,7 +197,7 @@ static void *BackgroundThread(void *arg) {
     }
     // GetRSS can be expensive on huge programs, so don't do it every 100ms.
     if (flags()->memory_limit_mb > 0) {
-      uptr rss = GetRSS();
+      uptr rss   = GetRSS();
       uptr limit = uptr(flags()->memory_limit_mb) << 20;
       VPrintf(1,
               "ThreadSanitizer: memory flush check"
@@ -265,19 +265,19 @@ void MapShadow(uptr addr, uptr size) {
   // so we can get away with unaligned mapping.
   // CHECK_EQ(addr, addr & ~((64 << 10) - 1));  // windows wants 64K alignment
   const uptr kPageSize = GetPageSizeCached();
-  uptr shadow_begin = RoundDownTo((uptr)MemToShadow(addr), kPageSize);
-  uptr shadow_end = RoundUpTo((uptr)MemToShadow(addr + size), kPageSize);
+  uptr shadow_begin    = RoundDownTo((uptr)MemToShadow(addr), kPageSize);
+  uptr shadow_end      = RoundUpTo((uptr)MemToShadow(addr + size), kPageSize);
   if (!MmapFixedSuperNoReserve(shadow_begin, shadow_end - shadow_begin,
                                "shadow"))
     Die();
 
   // Meta shadow is 2:1, so tread carefully.
-  static bool data_mapped = false;
+  static bool data_mapped     = false;
   static uptr mapped_meta_end = 0;
-  uptr meta_begin = (uptr)MemToMeta(addr);
-  uptr meta_end = (uptr)MemToMeta(addr + size);
-  meta_begin = RoundDownTo(meta_begin, 64 << 10);
-  meta_end = RoundUpTo(meta_end, 64 << 10);
+  uptr meta_begin             = (uptr)MemToMeta(addr);
+  uptr meta_end               = (uptr)MemToMeta(addr + size);
+  meta_begin                  = RoundDownTo(meta_begin, 64 << 10);
+  meta_end                    = RoundUpTo(meta_end, 64 << 10);
   if (!data_mapped) {
     // First call maps data+bss.
     data_mapped = true;
@@ -288,7 +288,7 @@ void MapShadow(uptr addr, uptr size) {
     // Mapping continous heap.
     // Windows wants 64K alignment.
     meta_begin = RoundDownTo(meta_begin, 64 << 10);
-    meta_end = RoundUpTo(meta_end, 64 << 10);
+    meta_end   = RoundUpTo(meta_end, 64 << 10);
     if (meta_end <= mapped_meta_end)
       return;
     if (meta_begin < mapped_meta_end)
@@ -329,7 +329,7 @@ static void CheckShadowMapping() {
         if (p < beg || p >= end)
           continue;
         RawShadow *const s = MemToShadow(p);
-        u32 *const m = MemToMeta(p);
+        u32 *const m       = MemToMeta(p);
         VPrintf(3, "  checking pointer %p: shadow=%p meta=%p\n", p, s, m);
         CHECK(IsAppMem(p));
         CHECK(IsShadowMem(s));
@@ -339,7 +339,7 @@ static void CheckShadowMapping() {
           // Ensure that shadow and meta mappings are linear within a single
           // user range. Lots of code that processes memory ranges assumes it.
           RawShadow *const prev_s = MemToShadow(prev);
-          u32 *const prev_m = MemToMeta(prev);
+          u32 *const prev_m       = MemToMeta(prev);
           CHECK_EQ((s - prev_s) * kShadowSize, (p - prev) * kShadowMultiplier);
           CHECK_EQ(m - prev_m, (p - prev) / kMetaShadowCell);
         }
@@ -386,9 +386,9 @@ void Initialize(ThreadState *thr) {
   // Install tool-specific callbacks in sanitizer_common.
   SetCheckUnwindCallback(CheckUnwind);
 
-  ctx = new (ctx_placeholder) Context;
+  ctx                  = new (ctx_placeholder) Context;
   const char *env_name = SANITIZER_GO ? "GORACE" : "TSAN_OPTIONS";
-  const char *options = GetEnv(env_name);
+  const char *options  = GetEnv(env_name);
   CacheBinaryName();
   CheckASLR();
   InitializeFlags(&ctx->flags, options, env_name);
@@ -564,12 +564,12 @@ void ForkChildAfter(ThreadState *thr, uptr pc) NO_THREAD_SAFETY_ANALYSIS {
 #if SANITIZER_GO
 NOINLINE
 void GrowShadowStack(ThreadState *thr) {
-  const int sz = thr->shadow_stack_end - thr->shadow_stack;
+  const int sz    = thr->shadow_stack_end - thr->shadow_stack;
   const int newsz = 2 * sz;
-  auto *newstack = (uptr *)Alloc(newsz * sizeof(uptr));
+  auto *newstack  = (uptr *)Alloc(newsz * sizeof(uptr));
   internal_memcpy(newstack, thr->shadow_stack, sz * sizeof(uptr));
   Free(thr->shadow_stack);
-  thr->shadow_stack = newstack;
+  thr->shadow_stack     = newstack;
   thr->shadow_stack_pos = newstack + sz;
   thr->shadow_stack_end = newstack + newsz;
 }
@@ -603,9 +603,9 @@ void TraceSwitch(ThreadState *thr) {
   thr->nomalloc++;
   Trace *thr_trace = ThreadTrace(thr->tid);
   Lock l(&thr_trace->mtx);
-  unsigned trace = (thr->fast_state.epoch() / kTracePartSize) % TraceParts();
+  unsigned trace   = (thr->fast_state.epoch() / kTracePartSize) % TraceParts();
   TraceHeader *hdr = &thr_trace->headers[trace];
-  hdr->epoch0 = thr->fast_state.epoch();
+  hdr->epoch0      = thr->fast_state.epoch();
   ObtainCurrentStack(thr, 0, &hdr->stack0);
   hdr->mset0 = thr->mset;
   thr->nomalloc--;
@@ -615,7 +615,7 @@ Trace *ThreadTrace(Tid tid) { return (Trace *)GetThreadTraceHeader(tid); }
 
 uptr TraceTopPC(ThreadState *thr) {
   Event *events = (Event *)GetThreadTrace(thr->tid);
-  uptr pc = events[thr->fast_state.GetTracePos()];
+  uptr pc       = events[thr->fast_state.GetTracePos()];
   return pc;
 }
 
@@ -650,8 +650,8 @@ void StoreIfNotYetStored(u64 *sp, u64 *s) {
 
 ALWAYS_INLINE
 void HandleRace(ThreadState *thr, u64 *shadow_mem, Shadow cur, Shadow old) {
-  thr->racy_state[0] = cur.raw();
-  thr->racy_state[1] = old.raw();
+  thr->racy_state[0]    = cur.raw();
+  thr->racy_state[1]    = old.raw();
   thr->racy_shadow_addr = shadow_mem;
 #if !SANITIZER_GO
   HACKY_CALL(__tsan_report_race);
@@ -673,7 +673,7 @@ void MemoryAccessImpl1(ThreadState *thr, uptr addr, int kAccessSizeLog,
   // __m128i _mm_move_epi64(__m128i*);
   // _mm_storel_epi64(u64*, __m128i);
   u64 store_word = cur.raw();
-  bool stored = false;
+  bool stored    = false;
 
   // scan all the shadow values and dispatch to 4 categories:
   // same, replace, candidate and race (see comments below).
@@ -697,7 +697,7 @@ void MemoryAccessImpl1(ThreadState *thr, uptr addr, int kAccessSizeLog,
 #else
   int idx = 0;
 #  include "tsan_update_shadow_word.inc"
-  idx = 1;
+  idx     = 1;
   if (stored) {
 #  include "tsan_update_shadow_word.inc"
   } else {
@@ -733,18 +733,18 @@ void UnalignedMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr size,
                            AccessType typ) {
   DCHECK(!(typ & kAccessAtomic));
   const bool kAccessIsWrite = !(typ & kAccessRead);
-  const bool kIsAtomic = false;
+  const bool kIsAtomic      = false;
   while (size) {
-    int size1 = 1;
+    int size1          = 1;
     int kAccessSizeLog = kSizeLog1;
     if (size >= 8 && (addr & ~7) == ((addr + 7) & ~7)) {
-      size1 = 8;
+      size1          = 8;
       kAccessSizeLog = kSizeLog8;
     } else if (size >= 4 && (addr & ~7) == ((addr + 3) & ~7)) {
-      size1 = 4;
+      size1          = 4;
       kAccessSizeLog = kSizeLog4;
     } else if (size >= 2 && (addr & ~7) == ((addr + 1) & ~7)) {
-      size1 = 2;
+      size1          = 2;
       kAccessSizeLog = kSizeLog2;
     }
     MemoryAccess(thr, pc, addr, kAccessSizeLog, kAccessIsWrite, kIsAtomic);
@@ -795,8 +795,8 @@ bool ContainsSameAccessFast(u64 *s, u64 a, u64 sync_epoch, bool is_write) {
   if (!is_write) {
     // set IsRead bit in addr_vect
     const m128 rw_mask1 = _mm_cvtsi64_si128(1 << 15);
-    const m128 rw_mask = SHUF(rw_mask1, rw_mask1, 0, 0, 0, 0);
-    addr_vect = _mm_or_si128(addr_vect, rw_mask);
+    const m128 rw_mask  = SHUF(rw_mask1, rw_mask1, 0, 0, 0, 0);
+    addr_vect           = _mm_or_si128(addr_vect, rw_mask);
   }
   // addr0 == addr_vect?
   const m128 addr_res = _mm_cmpeq_epi32(addr0, addr_vect);
@@ -944,9 +944,9 @@ static void MemoryRangeSet(ThreadState *thr, uptr pc, uptr addr, uptr size,
   } else {
     // The region is big, reset only beginning and end.
     const uptr kPageSize = GetPageSizeCached();
-    RawShadow *begin = MemToShadow(addr);
-    RawShadow *end = begin + size / kShadowCell * kShadowCnt;
-    RawShadow *p = begin;
+    RawShadow *begin     = MemToShadow(addr);
+    RawShadow *end       = begin + size / kShadowCell * kShadowCnt;
+    RawShadow *p         = begin;
     // Set at least first kPageSize/2 to page boundary.
     while ((p < begin + kPageSize / kShadowSize / 2) || ((uptr)p % kPageSize)) {
       *p++ = val;
@@ -954,7 +954,7 @@ static void MemoryRangeSet(ThreadState *thr, uptr pc, uptr addr, uptr size,
     }
     // Reset middle part.
     RawShadow *p1 = p;
-    p = RoundDown(end, kPageSize);
+    p             = RoundDown(end, kPageSize);
     if (!MmapFixedSuperNoReserve((uptr)p1, (uptr)p - (uptr)p1))
       Die();
     // Set the ending.

@@ -278,7 +278,7 @@ static ReportStack *ChooseSummaryStack(const ReportDesc *rep) {
 static bool FrameIsInternal(const SymbolizedStack *frame) {
   if (frame == 0)
     return false;
-  const char *file = frame->info.file;
+  const char *file   = frame->info.file;
   const char *module = frame->info.module;
   if (file != 0 &&
       (internal_strstr(file, "tsan_interceptors_posix.cpp") ||

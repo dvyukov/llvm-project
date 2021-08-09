@@ -53,7 +53,7 @@ void InsertShadowStackFrameForTag(ThreadState *thr, uptr tag) {
 
 uptr TagFromShadowStackFrame(uptr pc) {
   uptr tag_count = atomic_load(&used_tags, memory_order_relaxed);
-  void *pc_ptr = (void *)pc;
+  void *pc_ptr   = (void *)pc;
   if (pc_ptr < GetTagData(0) || pc_ptr > GetTagData(tag_count - 1))
     return 0;
   return (TagData *)pc_ptr - GetTagData(0);
@@ -81,7 +81,7 @@ void *__tsan_external_register_tag(const char *object_type) {
   uptr new_tag = atomic_fetch_add(&used_tags, 1, memory_order_relaxed);
   CHECK_LT(new_tag, kExternalTagMax);
   GetTagData(new_tag)->object_type = internal_strdup(object_type);
-  char header[127] = {0};
+  char header[127]                 = {0};
   internal_snprintf(header, sizeof(header), "race on %s", object_type);
   GetTagData(new_tag)->header = internal_strdup(header);
   return (void *)new_tag;
@@ -103,7 +103,7 @@ SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_external_assign_tag(void *addr, void *tag) {
   CHECK_LT(tag, atomic_load(&used_tags, memory_order_relaxed));
   Allocator *a = allocator();
-  MBlock *b = nullptr;
+  MBlock *b    = nullptr;
   if (a->PointerIsMine((void *)addr)) {
     void *block_begin = a->GetBlockBegin((void *)addr);
     if (block_begin)

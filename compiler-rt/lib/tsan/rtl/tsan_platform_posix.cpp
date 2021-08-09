@@ -57,7 +57,7 @@ void InitializeShadowMemory() {
           (ShadowEnd() - ShadowBeg()) >> 30);
 
   // Map meta shadow.
-  const uptr meta = MetaShadowBeg();
+  const uptr meta      = MetaShadowBeg();
   const uptr meta_size = MetaShadowEnd() - meta;
   if (!MmapFixedSuperNoReserve(meta, meta_size, "meta shadow")) {
     Printf("FATAL: ThreadSanitizer can not mmap the shadow memory\n");

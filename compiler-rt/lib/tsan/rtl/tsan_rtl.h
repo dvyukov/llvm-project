@@ -57,25 +57,25 @@ struct MapUnmapCallback;
 #  if defined(__mips64) || defined(__aarch64__) || defined(__powerpc__)
 
 struct AP32 {
-  static const uptr kSpaceBeg = 0;
-  static const u64 kSpaceSize = SANITIZER_MMAP_RANGE_SIZE;
+  static const uptr kSpaceBeg     = 0;
+  static const u64 kSpaceSize     = SANITIZER_MMAP_RANGE_SIZE;
   static const uptr kMetadataSize = 0;
   typedef __sanitizer::CompactSizeClassMap SizeClassMap;
   static const uptr kRegionSizeLog = 20;
-  using AddressSpaceView = LocalAddressSpaceView;
+  using AddressSpaceView           = LocalAddressSpaceView;
   typedef __tsan::MapUnmapCallback MapUnmapCallback;
   static const uptr kFlags = 0;
 };
 typedef SizeClassAllocator32<AP32> PrimaryAllocator;
 #  else
 struct AP64 {  // Allocator64 parameters. Deliberately using a short name.
-  static const uptr kSpaceBeg = Mapping::kHeapMemBeg;
-  static const uptr kSpaceSize = Mapping::kHeapMemEnd - Mapping::kHeapMemBeg;
+  static const uptr kSpaceBeg     = Mapping::kHeapMemBeg;
+  static const uptr kSpaceSize    = Mapping::kHeapMemEnd - Mapping::kHeapMemBeg;
   static const uptr kMetadataSize = 0;
   typedef DefaultSizeClassMap SizeClassMap;
   typedef __tsan::MapUnmapCallback MapUnmapCallback;
   static const uptr kFlags = 0;
-  using AddressSpaceView = LocalAddressSpaceView;
+  using AddressSpaceView   = LocalAddressSpaceView;
 };
 typedef SizeClassAllocator64<AP64> PrimaryAllocator;
 #  endif
@@ -155,11 +155,11 @@ class FastState {
 
  private:
   friend class Shadow;
-  static const int kTidShift = 64 - kTidBits - 1;
-  static const u64 kIgnoreBit = 1ull << 63;
-  static const u64 kFreedBit = 1ull << 63;
+  static const int kTidShift     = 64 - kTidBits - 1;
+  static const u64 kIgnoreBit    = 1ull << 63;
+  static const u64 kFreedBit     = 1ull << 63;
   static const u64 kHistoryShift = kClkBits;
-  static const u64 kHistoryMask = 7;
+  static const u64 kHistoryMask  = 7;
   u64 x_;
 };
 
@@ -280,10 +280,10 @@ class Shadow : public FastState {
   }
 
  private:
-  static const u64 kReadShift = 5 + kClkBits;
-  static const u64 kReadBit = 1ull << kReadShift;
+  static const u64 kReadShift   = 5 + kClkBits;
+  static const u64 kReadBit     = 1ull << kReadShift;
   static const u64 kAtomicShift = 6 + kClkBits;
-  static const u64 kAtomicBit = 1ull << kAtomicShift;
+  static const u64 kAtomicBit   = 1ull << kAtomicShift;
 
   u64 size_log() const { return (x_ >> (3 + kClkBits)) & 3; }
 
@@ -603,7 +603,7 @@ void ExtractTagFromStack(StackTraceTy *stack, uptr *tag = nullptr) {
   if (stack->size < 2)
     return;
   uptr possible_tag_pc = stack->trace[stack->size - 2];
-  uptr possible_tag = TagFromShadowStackFrame(possible_tag_pc);
+  uptr possible_tag    = TagFromShadowStackFrame(possible_tag_pc);
   if (possible_tag == kExternalTagNone)
     return;
   stack->trace_buffer[stack->size - 2] = stack->trace_buffer[stack->size - 1];
@@ -615,11 +615,11 @@ void ExtractTagFromStack(StackTraceTy *stack, uptr *tag = nullptr) {
 template <typename StackTraceTy>
 void ObtainCurrentStack(ThreadState *thr, uptr toppc, StackTraceTy *stack,
                         uptr *tag = nullptr) {
-  uptr size = thr->shadow_stack_pos - thr->shadow_stack;
+  uptr size  = thr->shadow_stack_pos - thr->shadow_stack;
   uptr start = 0;
   if (size + !!toppc > kStackTraceMax) {
     start = size + !!toppc - kStackTraceMax;
-    size = kStackTraceMax - !!toppc;
+    size  = kStackTraceMax - !!toppc;
   }
   stack->Init(&thr->shadow_stack[start], size, toppc);
   ExtractTagFromStack(stack, tag);
@@ -707,7 +707,7 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr size,
       size_log = kSizeLog8;
       break;
   }
-  bool is_write = !(typ & kAccessRead);
+  bool is_write  = !(typ & kAccessRead);
   bool is_atomic = typ & kAccessAtomic;
   if (typ & kAccessVptr)
     thr->is_vptr_access = true;
@@ -830,9 +830,9 @@ void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs, EventType typ,
 #endif
   }
   Event *trace = (Event *)GetThreadTrace(fs.tid());
-  Event *evp = &trace[pos];
-  Event ev = (u64)addr | ((u64)typ << kEventPCBits);
-  *evp = ev;
+  Event *evp   = &trace[pos];
+  Event ev     = (u64)addr | ((u64)typ << kEventPCBits);
+  *evp         = ev;
 }
 
 #if !SANITIZER_GO

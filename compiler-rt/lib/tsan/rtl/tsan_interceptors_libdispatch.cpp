@@ -82,22 +82,22 @@ static block_context_t *AllocContext(ThreadState *thr, uptr pc,
                                      dispatch_function_t orig_work) {
   block_context_t *new_context =
       (block_context_t *)user_alloc_internal(thr, pc, sizeof(block_context_t));
-  new_context->queue = queue;
-  new_context->orig_context = orig_context;
-  new_context->orig_work = orig_work;
+  new_context->queue                    = queue;
+  new_context->orig_context             = orig_context;
+  new_context->orig_work                = orig_work;
   new_context->free_context_in_callback = true;
-  new_context->submitted_synchronously = false;
-  new_context->is_barrier_block = false;
-  new_context->non_queue_sync_object = 0;
+  new_context->submitted_synchronously  = false;
+  new_context->is_barrier_block         = false;
+  new_context->non_queue_sync_object    = 0;
   return new_context;
 }
 
 #define GET_QUEUE_SYNC_VARS(context, q)                                  \
   bool is_queue_serial = q && IsQueueSerial(q);                          \
-  uptr sync_ptr = (uptr)q ?: context->non_queue_sync_object;             \
-  uptr serial_sync = (uptr)sync_ptr;                                     \
+  uptr sync_ptr        = (uptr)q ?: context->non_queue_sync_object;      \
+  uptr serial_sync     = (uptr)sync_ptr;                                 \
   uptr concurrent_sync = sync_ptr ? ((uptr)sync_ptr) + sizeof(uptr) : 0; \
-  bool serial_task = context->is_barrier_block || is_queue_serial
+  bool serial_task     = context->is_barrier_block || is_queue_serial
 
 static void dispatch_sync_pre_execute(ThreadState *thr, uptr pc,
                                       block_context_t *context) {
@@ -191,16 +191,16 @@ static void invoke_and_release_block(void *param) {
     Acquire(thr, pc, (uptr)&new_context);                                      \
   }
 
-#define DISPATCH_INTERCEPT_ASYNC_F(name, barrier)                           \
-  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context,           \
-                   dispatch_function_t work) {                              \
-    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);                        \
-    block_context_t *new_context = AllocContext(thr, pc, q, context, work); \
-    new_context->is_barrier_block = barrier;                                \
-    Release(thr, pc, (uptr)new_context);                                    \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                          \
-    REAL(name)(q, new_context, dispatch_callback_wrap);                     \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                            \
+#define DISPATCH_INTERCEPT_ASYNC_F(name, barrier)                            \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context,            \
+                   dispatch_function_t work) {                               \
+    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);                         \
+    block_context_t *new_context  = AllocContext(thr, pc, q, context, work); \
+    new_context->is_barrier_block = barrier;                                 \
+    Release(thr, pc, (uptr)new_context);                                     \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                           \
+    REAL(name)(q, new_context, dispatch_callback_wrap);                      \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                             \
   }
 
 #define DISPATCH_INTERCEPT_SYNC_F(name, barrier)                               \
@@ -296,7 +296,7 @@ TSAN_INTERCEPTOR(void, dispatch_once, dispatch_once_t *predicate,
                  DISPATCH_NOESCAPE dispatch_block_t block) {
   SCOPED_INTERCEPTOR_RAW(dispatch_once, predicate, block);
   atomic_uint32_t *a = reinterpret_cast<atomic_uint32_t *>(predicate);
-  u32 v = atomic_load(a, memory_order_acquire);
+  u32 v              = atomic_load(a, memory_order_acquire);
   if (v == 0 &&
       atomic_compare_exchange_strong(a, &v, 1, memory_order_relaxed)) {
     SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();
@@ -431,14 +431,14 @@ TSAN_INTERCEPTOR(void, dispatch_source_set_event_handler,
   SCOPED_TSAN_INTERCEPTOR(dispatch_source_set_event_handler, source, handler);
   if (handler == nullptr)
     return REAL(dispatch_source_set_event_handler)(source, nullptr);
-  dispatch_queue_t q = GetTargetQueueFromSource(source);
+  dispatch_queue_t q                  = GetTargetQueueFromSource(source);
   __block block_context_t new_context = {
       q, handler, &invoke_block, false, false, false, 0};
   dispatch_block_t new_handler = Block_copy(^(void) {
     new_context.orig_context = handler;  // To explicitly capture "handler".
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync             = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_source_set_event_handler)(source, new_handler);
   Block_release(new_handler);
@@ -460,14 +460,14 @@ TSAN_INTERCEPTOR(void, dispatch_source_set_cancel_handler,
   SCOPED_TSAN_INTERCEPTOR(dispatch_source_set_cancel_handler, source, handler);
   if (handler == nullptr)
     return REAL(dispatch_source_set_cancel_handler)(source, nullptr);
-  dispatch_queue_t q = GetTargetQueueFromSource(source);
+  dispatch_queue_t q                  = GetTargetQueueFromSource(source);
   __block block_context_t new_context = {
       q, handler, &invoke_block, false, false, false, 0};
   dispatch_block_t new_handler = Block_copy(^(void) {
     new_context.orig_context = handler;  // To explicitly capture "handler".
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync             = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_source_set_cancel_handler)(source, new_handler);
   Block_release(new_handler);
@@ -491,14 +491,14 @@ TSAN_INTERCEPTOR(void, dispatch_source_set_registration_handler,
                           handler);
   if (handler == nullptr)
     return REAL(dispatch_source_set_registration_handler)(source, nullptr);
-  dispatch_queue_t q = GetTargetQueueFromSource(source);
+  dispatch_queue_t q                  = GetTargetQueueFromSource(source);
   __block block_context_t new_context = {
       q, handler, &invoke_block, false, false, false, 0};
   dispatch_block_t new_handler = Block_copy(^(void) {
     new_context.orig_context = handler;  // To explicitly capture "handler".
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync             = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_source_set_registration_handler)(source, new_handler);
   Block_release(new_handler);
@@ -615,7 +615,7 @@ TSAN_INTERCEPTOR(void, dispatch_read, dispatch_fd_t fd, size_t length,
     };
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync   = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_read)(fd, length, q, new_h);
   Block_release(new_h);
@@ -632,7 +632,7 @@ TSAN_INTERCEPTOR(void, dispatch_write, dispatch_fd_t fd, dispatch_data_t data,
     };
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync   = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_write)(fd, data, q, new_h);
   Block_release(new_h);
@@ -681,14 +681,14 @@ TSAN_INTERCEPTOR(void, dispatch_io_barrier, dispatch_io_t channel,
   __block block_context_t new_context = {
       nullptr, nullptr, &invoke_block, false, false, false, 0};
   new_context.non_queue_sync_object = (uptr)channel;
-  new_context.is_barrier_block = true;
-  dispatch_block_t new_block = Block_copy(^(void) {
+  new_context.is_barrier_block      = true;
+  dispatch_block_t new_block        = Block_copy(^(void) {
     new_context.orig_context = ^(void) {
       barrier();
     };
     dispatch_callback_wrap(&new_context);
-  });
-  uptr submit_sync = (uptr)&new_context;
+         });
+  uptr submit_sync                  = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   REAL(dispatch_io_barrier)(channel, new_block);
   Block_release(new_block);
@@ -697,7 +697,7 @@ TSAN_INTERCEPTOR(void, dispatch_io_barrier, dispatch_io_t channel,
 TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create, dispatch_io_type_t type,
                  dispatch_fd_t fd, dispatch_queue_t q, cleanup_handler_t h) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_io_create, type, fd, q, h);
-  __block dispatch_io_t new_channel = nullptr;
+  __block dispatch_io_t new_channel   = nullptr;
   __block block_context_t new_context = {
       q, nullptr, &invoke_block, false, false, false, 0};
   cleanup_handler_t new_h = Block_copy(^(int error) {
@@ -710,7 +710,7 @@ TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create, dispatch_io_type_t type,
     };
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync        = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   new_channel = REAL(dispatch_io_create)(type, fd, q, new_h);
   Block_release(new_h);
@@ -722,7 +722,7 @@ TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create_with_path,
                  mode_t mode, dispatch_queue_t q, cleanup_handler_t h) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_io_create_with_path, type, path, oflag, mode,
                           q, h);
-  __block dispatch_io_t new_channel = nullptr;
+  __block dispatch_io_t new_channel   = nullptr;
   __block block_context_t new_context = {
       q, nullptr, &invoke_block, false, false, false, 0};
   cleanup_handler_t new_h = Block_copy(^(int error) {
@@ -735,7 +735,7 @@ TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create_with_path,
     };
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync        = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   new_channel =
       REAL(dispatch_io_create_with_path)(type, path, oflag, mode, q, new_h);
@@ -747,7 +747,7 @@ TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create_with_io,
                  dispatch_io_type_t type, dispatch_io_t io, dispatch_queue_t q,
                  cleanup_handler_t h) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_io_create_with_io, type, io, q, h);
-  __block dispatch_io_t new_channel = nullptr;
+  __block dispatch_io_t new_channel   = nullptr;
   __block block_context_t new_context = {
       q, nullptr, &invoke_block, false, false, false, 0};
   cleanup_handler_t new_h = Block_copy(^(int error) {
@@ -760,7 +760,7 @@ TSAN_INTERCEPTOR(dispatch_io_t, dispatch_io_create_with_io,
     };
     dispatch_callback_wrap(&new_context);
   });
-  uptr submit_sync = (uptr)&new_context;
+  uptr submit_sync        = (uptr)&new_context;
   Release(thr, pc, submit_sync);
   new_channel = REAL(dispatch_io_create_with_io)(type, io, q, new_h);
   Block_release(new_h);

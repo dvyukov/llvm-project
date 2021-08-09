@@ -95,7 +95,7 @@ T func_nand(volatile T *v, T op) {
   T cmp = *v;
   for (;;) {
     T newv = ~(cmp & op);
-    T cur = __sync_val_compare_and_swap(v, cmp, newv);
+    T cur  = __sync_val_compare_and_swap(v, cmp, newv);
     if (cmp == cur)
       return cmp;
     cmp = cur;
@@ -116,49 +116,49 @@ T func_cas(volatile T *v, T cmp, T xch) {
 a128 func_xchg(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = op;
+  *v       = op;
   return cmp;
 }
 
 a128 func_add(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = cmp + op;
+  *v       = cmp + op;
   return cmp;
 }
 
 a128 func_sub(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = cmp - op;
+  *v       = cmp - op;
   return cmp;
 }
 
 a128 func_and(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = cmp & op;
+  *v       = cmp & op;
   return cmp;
 }
 
 a128 func_or(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = cmp | op;
+  *v       = cmp | op;
   return cmp;
 }
 
 a128 func_xor(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = cmp ^ op;
+  *v       = cmp ^ op;
   return cmp;
 }
 
 a128 func_nand(volatile a128 *v, a128 op) {
   SpinMutexLock lock(&mutex128);
   a128 cmp = *v;
-  *v = ~(cmp & op);
+  *v       = ~(cmp & op);
   return cmp;
 }
 
@@ -246,7 +246,7 @@ static T AtomicLoad(ThreadState *thr, uptr pc, const volatile T *a, morder mo) {
   }
   // Don't create sync object if it does not exist yet. For example, an atomic
   // pointer is initialized to nullptr and then periodically acquire-loaded.
-  T v = NoTsanAtomicLoad(a, mo);
+  T v        = NoTsanAtomicLoad(a, mo);
   SyncVar *s = ctx->metamap.GetSyncIfExists((uptr)a);
   if (s) {
     ReadLock l(&s->mtx);
@@ -432,10 +432,10 @@ static bool AtomicCAS(ThreadState *thr, uptr pc, volatile T *a, T *c, T v,
   }
 
   bool release = IsReleaseOrder(mo);
-  SyncVar *s = ctx->metamap.GetSyncOrCreate(thr, pc, (uptr)a, false);
+  SyncVar *s   = ctx->metamap.GetSyncOrCreate(thr, pc, (uptr)a, false);
   RWLock l(&s->mtx, release);
-  T cc = *c;
-  T pr = func_cas(a, cc, v);
+  T cc         = *c;
+  T pr         = func_cas(a, cc, v);
   bool success = pr == cc;
   if (!success) {
     *c = pr;
