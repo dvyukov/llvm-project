@@ -24,7 +24,7 @@
 #define TSAN_INTERFACE_JAVA_H
 
 #ifndef INTERFACE_ATTRIBUTE
-# define INTERFACE_ATTRIBUTE __attribute__((visibility("default")))
+#  define INTERFACE_ATTRIBUTE __attribute__((visibility("default")))
 #endif
 
 #ifdef __cplusplus
@@ -38,7 +38,7 @@ void __tsan_java_init(jptr heap_begin, jptr heap_size) INTERFACE_ATTRIBUTE;
 // Must be called when the application exits.
 // Not necessary the last callback (concurrently running threads are OK).
 // Returns exit status or 0 if tsan does not want to override it.
-int  __tsan_java_fini() INTERFACE_ATTRIBUTE;
+int __tsan_java_fini() INTERFACE_ATTRIBUTE;
 
 // Callback for memory allocations.
 // May be omitted for allocations that are not subject to data races

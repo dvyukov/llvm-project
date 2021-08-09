@@ -9,16 +9,17 @@
 // This file is a part of ThreadSanitizer (TSan), a race detector.
 //
 //===----------------------------------------------------------------------===//
+#include "tsan_mman.h"
+
 #include "sanitizer_common/sanitizer_allocator_checks.h"
 #include "sanitizer_common/sanitizer_allocator_interface.h"
 #include "sanitizer_common/sanitizer_allocator_report.h"
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_errno.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
-#include "tsan_mman.h"
-#include "tsan_rtl.h"
-#include "tsan_report.h"
 #include "tsan_flags.h"
+#include "tsan_report.h"
+#include "tsan_rtl.h"
 
 // May be overriden by front-end.
 SANITIZER_WEAK_DEFAULT_IMPL
@@ -28,14 +29,12 @@ void __sanitizer_malloc_hook(void *ptr, uptr size) {
 }
 
 SANITIZER_WEAK_DEFAULT_IMPL
-void __sanitizer_free_hook(void *ptr) {
-  (void)ptr;
-}
+void __sanitizer_free_hook(void *ptr) { (void)ptr; }
 
 namespace __tsan {
 
 struct MapUnmapCallback {
-  void OnMap(uptr p, uptr size) const { }
+  void OnMap(uptr p, uptr size) const {}
   void OnUnmap(uptr p, uptr size) const {
     // We are about to unmap a chunk of user memory.
     // Mark the corresponding shadow memory as not needed.
@@ -63,7 +62,7 @@ struct MapUnmapCallback {
 
 static char allocator_placeholder[sizeof(Allocator)] ALIGNED(64);
 Allocator *allocator() {
-  return reinterpret_cast<Allocator*>(&allocator_placeholder);
+  return reinterpret_cast<Allocator *>(&allocator_placeholder);
 }
 
 struct GlobalProc {
@@ -75,7 +74,7 @@ struct GlobalProc {
 
 static char global_proc_placeholder[sizeof(GlobalProc)] ALIGNED(64);
 GlobalProc *global_proc() {
-  return reinterpret_cast<GlobalProc*>(&global_proc_placeholder);
+  return reinterpret_cast<GlobalProc *>(&global_proc_placeholder);
 }
 
 ScopedGlobalProcessor::ScopedGlobalProcessor() {
@@ -122,9 +121,7 @@ void InitializeAllocator() {
                                      : kMaxAllowedMallocSize;
 }
 
-void InitializeAllocatorLate() {
-  new(global_proc()) GlobalProc();
-}
+void InitializeAllocatorLate() { new (global_proc()) GlobalProc(); }
 
 void AllocatorProcStart(Processor *proc) {
   allocator()->InitCache(&proc->alloc_cache);
@@ -136,9 +133,7 @@ void AllocatorProcFinish(Processor *proc) {
   internal_allocator()->DestroyCache(&proc->internal_alloc_cache);
 }
 
-void AllocatorPrintStats() {
-  allocator()->PrintStats();
-}
+void AllocatorPrintStats() { allocator()->PrintStats(); }
 
 static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   if (atomic_load_relaxed(&thr->in_signal_handler) == 0 ||
@@ -153,7 +148,6 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   rep.AddStack(stack, true);
   OutputReport(thr, rep);
 }
-
 
 void *user_alloc_internal(ThreadState *thr, uptr pc, uptr sz, uptr align,
                           bool signal) {
@@ -227,7 +221,7 @@ void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write) {
 }
 
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write) {
-  CHECK_NE(p, (void*)0);
+  CHECK_NE(p, (void *)0);
   uptr sz = ctx->metamap.FreeBlock(thr->proc(), p);
   DPrintf("#%d: free(%p, %zu)\n", thr->tid, p, sz);
   if (write && thr->ignore_reads_and_writes == 0)
@@ -371,17 +365,11 @@ uptr __sanitizer_get_heap_size() {
   return stats[AllocatorStatMapped];
 }
 
-uptr __sanitizer_get_free_bytes() {
-  return 1;
-}
+uptr __sanitizer_get_free_bytes() { return 1; }
 
-uptr __sanitizer_get_unmapped_bytes() {
-  return 1;
-}
+uptr __sanitizer_get_unmapped_bytes() { return 1; }
 
-uptr __sanitizer_get_estimated_allocated_size(uptr size) {
-  return size;
-}
+uptr __sanitizer_get_estimated_allocated_size(uptr size) { return size; }
 
 int __sanitizer_get_ownership(const void *p) {
   return allocator()->GetBlockBegin(p) != 0;

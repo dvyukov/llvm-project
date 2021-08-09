@@ -10,20 +10,20 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
 #include "sanitizer_common/sanitizer_stackdepot.h"
-#include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
+#include "tsan_fd.h"
+#include "tsan_flags.h"
+#include "tsan_mman.h"
 #include "tsan_platform.h"
+#include "tsan_report.h"
 #include "tsan_rtl.h"
 #include "tsan_suppressions.h"
 #include "tsan_symbolize.h"
-#include "tsan_report.h"
 #include "tsan_sync.h"
-#include "tsan_mman.h"
-#include "tsan_flags.h"
-#include "tsan_fd.h"
 
 namespace __tsan {
 
@@ -43,9 +43,7 @@ bool OnReport(const ReportDesc *rep, bool suppressed) {
 #endif
 
 SANITIZER_WEAK_DEFAULT_IMPL
-void __tsan_on_report(const ReportDesc *rep) {
-  (void)rep;
-}
+void __tsan_on_report(const ReportDesc *rep) { (void)rep; }
 
 static void StackStripMain(SymbolizedStack *frames) {
   SymbolizedStack *last_frame = nullptr;
@@ -64,7 +62,7 @@ static void StackStripMain(SymbolizedStack *frames) {
   if (last2 && 0 == internal_strcmp(last2, "main")) {
     last_frame->ClearAll();
     last_frame2->next = nullptr;
-  // Strip our internal thread start routine.
+    // Strip our internal thread start routine.
   } else if (last && 0 == internal_strcmp(last, "__tsan_thread_start_func")) {
     last_frame->ClearAll();
     last_frame2->next = nullptr;
@@ -74,7 +72,7 @@ static void StackStripMain(SymbolizedStack *frames) {
                       0 == internal_strcmp(last, "__libc_start_main"))) {
     last_frame->ClearAll();
     last_frame2->next = nullptr;
-  // If both are 0, then we probably just failed to symbolize.
+    // If both are 0, then we probably just failed to symbolize.
   } else if (last || last2) {
     // Ensure that we recovered stack completely. Trimmed stack
     // can actually happen if we do not instrument some code,
@@ -239,7 +237,7 @@ static ThreadContext *FindThreadByTidLocked(Tid tid) {
 
 static bool IsInStackOrTls(ThreadContextBase *tctx_base, void *arg) {
   uptr addr = (uptr)arg;
-  ThreadContext *tctx = static_cast<ThreadContext*>(tctx_base);
+  ThreadContext *tctx = static_cast<ThreadContext *>(tctx_base);
   if (tctx->status != ThreadStatusRunning)
     return false;
   ThreadState *thr = tctx->thr;
@@ -335,7 +333,7 @@ void ScopedReportBase::AddLocation(uptr addr, uptr size) {
   MBlock *b = 0;
   uptr block_begin = 0;
   Allocator *a = allocator();
-  if (a->PointerIsMine((void*)addr)) {
+  if (a->PointerIsMine((void *)addr)) {
     block_begin = (uptr)a->GetBlockBegin((void *)addr);
     if (block_begin)
       b = ctx->metamap.GetBlock(block_begin);
@@ -392,18 +390,18 @@ void RestoreStack(Tid tid, const u64 epoch, VarSizeStackTrace *stk,
   // This function restores stack trace and mutex set for the thread/epoch.
   // It does so by getting stack trace and mutex set at the beginning of
   // trace part, and then replaying the trace till the given epoch.
-  Trace* trace = ThreadTrace(tid);
+  Trace *trace = ThreadTrace(tid);
   ReadLock l(&trace->mtx);
   const int partidx = (epoch / kTracePartSize) % TraceParts();
-  TraceHeader* hdr = &trace->headers[partidx];
+  TraceHeader *hdr = &trace->headers[partidx];
   if (epoch < hdr->epoch0 || epoch >= hdr->epoch0 + kTracePartSize)
     return;
   CHECK_EQ(RoundDown(epoch, kTracePartSize), hdr->epoch0);
   const u64 epoch0 = RoundDown(epoch, TraceSize());
   const u64 eend = epoch % TraceSize();
   const u64 ebegin = RoundDown(eend, kTracePartSize);
-  DPrintf("#%d: RestoreStack epoch=%zu ebegin=%zu eend=%zu partidx=%d\n",
-          tid, (uptr)epoch, (uptr)ebegin, (uptr)eend, partidx);
+  DPrintf("#%d: RestoreStack epoch=%zu ebegin=%zu eend=%zu partidx=%d\n", tid,
+          (uptr)epoch, (uptr)ebegin, (uptr)eend, partidx);
   Vector<uptr> stack;
   stack.Resize(hdr->stack0.size + 64);
   for (uptr i = 0; i < hdr->stack0.size; i++) {
@@ -413,7 +411,7 @@ void RestoreStack(Tid tid, const u64 epoch, VarSizeStackTrace *stk,
   if (mset)
     *mset = hdr->mset0;
   uptr pos = hdr->stack0.size;
-  Event *events = (Event*)GetThreadTrace(tid);
+  Event *events = (Event *)GetThreadTrace(tid);
   for (uptr i = ebegin; i <= eend; i++) {
     Event ev = events[i];
     EventType typ = (EventType)(ev >> kEventPCBits);
@@ -440,8 +438,7 @@ void RestoreStack(Tid tid, const u64 epoch, VarSizeStackTrace *stk,
         mset->Del(pc, false);
       }
     }
-    for (uptr j = 0; j <= pos; j++)
-      DPrintf2("      #%zu: %zx\n", j, stack[j]);
+    for (uptr j = 0; j <= pos; j++) DPrintf2("      #%zu: %zx\n", j, stack[j]);
   }
   if (pos == 0 && stack[0] == 0)
     return;
@@ -672,7 +669,7 @@ void ReportRace(ThreadState *thr) {
   // MutexSet is too large to live on stack.
   Vector<u64> mset_buffer;
   mset_buffer.Resize(sizeof(MutexSet) / sizeof(u64) + 1);
-  MutexSet *mset2 = new(&mset_buffer[0]) MutexSet();
+  MutexSet *mset2 = new (&mset_buffer[0]) MutexSet();
 
   Shadow s2(thr->racy_state[1]);
   RestoreStack(s2.tid(), s2.epoch(), &traces[1], mset2, &tags[1]);

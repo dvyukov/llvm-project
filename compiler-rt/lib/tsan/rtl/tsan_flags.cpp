@@ -10,24 +10,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "sanitizer_common/sanitizer_flags.h"
-#include "sanitizer_common/sanitizer_flag_parser.h"
-#include "sanitizer_common/sanitizer_libc.h"
 #include "tsan_flags.h"
-#include "tsan_rtl.h"
+
+#include "sanitizer_common/sanitizer_flag_parser.h"
+#include "sanitizer_common/sanitizer_flags.h"
+#include "sanitizer_common/sanitizer_libc.h"
 #include "tsan_mman.h"
+#include "tsan_rtl.h"
 #include "ubsan/ubsan_flags.h"
 
 namespace __tsan {
 
 // Can be overriden in frontend.
 #ifdef TSAN_EXTERNAL_HOOKS
-extern "C" const char* __tsan_default_options();
+extern "C" const char *__tsan_default_options();
 #else
 SANITIZER_WEAK_DEFAULT_IMPL
-const char *__tsan_default_options() {
-  return "";
-}
+const char *__tsan_default_options() { return ""; }
 #endif
 
 void Flags::SetDefaults() {
@@ -45,8 +44,8 @@ void RegisterTsanFlags(FlagParser *parser, Flags *f) {
 #undef TSAN_FLAG
   // DDFlags
   RegisterFlag(parser, "second_deadlock_stack",
-      "Report where each mutex is locked in deadlock reports",
-      &f->second_deadlock_stack);
+               "Report where each mutex is locked in deadlock reports",
+               &f->second_deadlock_stack);
 }
 
 void InitializeFlags(Flags *f, const char *env, const char *env_option_name) {
@@ -105,19 +104,23 @@ void InitializeFlags(Flags *f, const char *env, const char *env_option_name) {
 
   InitializeCommonFlags();
 
-  if (Verbosity()) ReportUnrecognizedFlags();
+  if (Verbosity())
+    ReportUnrecognizedFlags();
 
-  if (common_flags()->help) parser.PrintFlagDescriptions();
+  if (common_flags()->help)
+    parser.PrintFlagDescriptions();
 
   if (f->history_size < 0 || f->history_size > 7) {
-    Printf("ThreadSanitizer: incorrect value for history_size"
-           " (must be [0..7])\n");
+    Printf(
+        "ThreadSanitizer: incorrect value for history_size"
+        " (must be [0..7])\n");
     Die();
   }
 
   if (f->io_sync < 0 || f->io_sync > 2) {
-    Printf("ThreadSanitizer: incorrect value for io_sync"
-           " (must be [0..2])\n");
+    Printf(
+        "ThreadSanitizer: incorrect value for io_sync"
+        " (must be [0..2])\n");
     Die();
   }
 }

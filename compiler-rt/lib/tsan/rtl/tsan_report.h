@@ -101,11 +101,11 @@ class ReportDesc {
  public:
   ReportType typ;
   uptr tag;
-  Vector<ReportStack*> stacks;
-  Vector<ReportMop*> mops;
-  Vector<ReportLocation*> locs;
-  Vector<ReportMutex*> mutexes;
-  Vector<ReportThread*> threads;
+  Vector<ReportStack *> stacks;
+  Vector<ReportMop *> mops;
+  Vector<ReportLocation *> locs;
+  Vector<ReportMutex *> mutexes;
+  Vector<ReportThread *> threads;
   Vector<Tid> unique_tids;
   ReportStack *sleep;
   int count;
@@ -114,8 +114,8 @@ class ReportDesc {
   ~ReportDesc();
 
  private:
-  ReportDesc(const ReportDesc&);
-  void operator = (const ReportDesc&);
+  ReportDesc(const ReportDesc &);
+  void operator=(const ReportDesc &);
 };
 
 // Format and output the report to the console/log. No additional logic.

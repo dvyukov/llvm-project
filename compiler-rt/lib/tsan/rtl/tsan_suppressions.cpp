@@ -10,33 +10,32 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsan_suppressions.h"
+
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
 #include "sanitizer_common/sanitizer_suppressions.h"
-#include "tsan_suppressions.h"
-#include "tsan_rtl.h"
 #include "tsan_flags.h"
 #include "tsan_mman.h"
 #include "tsan_platform.h"
+#include "tsan_rtl.h"
 
 #if !SANITIZER_GO
 // Suppressions for true/false positives in standard libraries.
 static const char *const std_suppressions =
-// Libstdc++ 4.4 has data races in std::string.
-// See http://crbug.com/181502 for an example.
-"race:^_M_rep$\n"
-"race:^_M_is_leaked$\n"
-// False positive when using std <thread>.
-// Happens because we miss atomic synchronization in libstdc++.
-// See http://llvm.org/bugs/show_bug.cgi?id=17066 for details.
-"race:std::_Sp_counted_ptr_inplace<std::thread::_Impl\n";
+    // Libstdc++ 4.4 has data races in std::string.
+    // See http://crbug.com/181502 for an example.
+    "race:^_M_rep$\n"
+    "race:^_M_is_leaked$\n"
+    // False positive when using std <thread>.
+    // Happens because we miss atomic synchronization in libstdc++.
+    // See http://llvm.org/bugs/show_bug.cgi?id=17066 for details.
+    "race:std::_Sp_counted_ptr_inplace<std::thread::_Impl\n";
 
 // Can be overriden in frontend.
 SANITIZER_WEAK_DEFAULT_IMPL
-const char *__tsan_default_suppressions() {
-  return 0;
-}
+const char *__tsan_default_suppressions() { return 0; }
 #endif
 
 namespace __tsan {
@@ -44,8 +43,8 @@ namespace __tsan {
 ALIGNED(64) static char suppression_placeholder[sizeof(SuppressionContext)];
 static SuppressionContext *suppression_ctx = nullptr;
 static const char *kSuppressionTypes[] = {
-    kSuppressionRace,   kSuppressionRaceTop, kSuppressionMutex,
-    kSuppressionThread, kSuppressionSignal, kSuppressionLib,
+    kSuppressionRace,    kSuppressionRaceTop, kSuppressionMutex,
+    kSuppressionThread,  kSuppressionSignal,  kSuppressionLib,
     kSuppressionDeadlock};
 
 void InitializeSuppressions() {
@@ -86,13 +85,13 @@ static const char *conv(ReportType typ) {
       return kSuppressionSignal;
     case ReportTypeDeadlock:
       return kSuppressionDeadlock;
-    // No default case so compiler warns us if we miss one
+      // No default case so compiler warns us if we miss one
   }
   UNREACHABLE("missing case");
 }
 
 static uptr IsSuppressed(const char *stype, const AddressInfo &info,
-    Suppression **sp) {
+                         Suppression **sp) {
   if (suppression_ctx->Match(info.function, stype, sp) ||
       suppression_ctx->Match(info.file, stype, sp) ||
       suppression_ctx->Match(info.module, stype, sp)) {
@@ -112,7 +111,7 @@ uptr IsSuppressed(ReportType typ, const ReportStack *stack, Suppression **sp) {
   if (0 == internal_strcmp(stype, kSuppressionNone))
     return 0;
   for (const SymbolizedStack *frame = stack->frames; frame;
-      frame = frame->next) {
+       frame = frame->next) {
     uptr pc = IsSuppressed(stype, frame->info, sp);
     if (pc != 0)
       return pc;
@@ -134,10 +133,10 @@ uptr IsSuppressed(ReportType typ, const ReportLocation *loc, Suppression **sp) {
   const DataInfo &global = loc->global;
   if (suppression_ctx->Match(global.name, stype, &s) ||
       suppression_ctx->Match(global.module, stype, &s)) {
-      VPrintf(2, "ThreadSanitizer: matched suppression '%s'\n", s->templ);
-      atomic_fetch_add(&s->hit_count, 1, memory_order_relaxed);
-      *sp = s;
-      return global.start;
+    VPrintf(2, "ThreadSanitizer: matched suppression '%s'\n", s->templ);
+    atomic_fetch_add(&s->hit_count, 1, memory_order_relaxed);
+    *sp = s;
+    return global.start;
   }
   return 0;
 }

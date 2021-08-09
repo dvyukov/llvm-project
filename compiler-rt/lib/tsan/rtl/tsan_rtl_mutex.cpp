@@ -13,12 +13,12 @@
 #include <sanitizer_common/sanitizer_deadlock_detector_interface.h>
 #include <sanitizer_common/sanitizer_stackdepot.h>
 
-#include "tsan_rtl.h"
 #include "tsan_flags.h"
-#include "tsan_sync.h"
-#include "tsan_report.h"
-#include "tsan_symbolize.h"
 #include "tsan_platform.h"
+#include "tsan_report.h"
+#include "tsan_rtl.h"
+#include "tsan_symbolize.h"
+#include "tsan_sync.h"
 
 namespace __tsan {
 
@@ -28,9 +28,7 @@ struct Callback final : public DDCallback {
   ThreadState *thr;
   uptr pc;
 
-  Callback(ThreadState *thr, uptr pc)
-      : thr(thr)
-      , pc(pc) {
+  Callback(ThreadState *thr, uptr pc) : thr(thr), pc(pc) {
     DDCallback::pt = thr->proc()->dd_pt;
     DDCallback::lt = thr->dd_lt;
   }
@@ -46,7 +44,7 @@ void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s) {
 }
 
 static void ReportMutexMisuse(ThreadState *thr, uptr pc, ReportType typ,
-    uptr addr, u64 mid) {
+                              uptr addr, u64 mid) {
   // In Go, these misuses are either impossible, or detected by std lib,
   // or false positives (e.g. unlock in a different thread).
   if (SANITIZER_GO)
@@ -155,8 +153,8 @@ void MutexPreLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
 }
 
 void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz, int rec) {
-  DPrintf("#%d: MutexPostLock %zx flag=0x%x rec=%d\n",
-      thr->tid, addr, flagz, rec);
+  DPrintf("#%d: MutexPostLock %zx flag=0x%x rec=%d\n", thr->tid, addr, flagz,
+          rec);
   if (flagz & MutexFlagRecursiveLock)
     CHECK_GT(rec, 0);
   else
@@ -301,7 +299,7 @@ void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz) {
   }
   if (report_bad_lock)
     ReportMutexMisuse(thr, pc, ReportTypeMutexBadReadLock, addr, mid);
-  if (pre_lock  && common_flags()->detect_deadlocks) {
+  if (pre_lock && common_flags()->detect_deadlocks) {
     Callback cb(thr, pc);
     ReportDeadlock(thr, pc, ctx->dd->GetReport(&cb));
   }
@@ -412,8 +410,8 @@ void Acquire(ThreadState *thr, uptr pc, uptr addr) {
 }
 
 static void UpdateClockCallback(ThreadContextBase *tctx_base, void *arg) {
-  ThreadState *thr = reinterpret_cast<ThreadState*>(arg);
-  ThreadContext *tctx = static_cast<ThreadContext*>(tctx_base);
+  ThreadState *thr = reinterpret_cast<ThreadState *>(arg);
+  ThreadContext *tctx = static_cast<ThreadContext *>(tctx_base);
   u64 epoch = tctx->epoch1;
   if (tctx->status == ThreadStatusRunning) {
     epoch = tctx->thr->fast_state.epoch();
@@ -468,8 +466,8 @@ void ReleaseStore(ThreadState *thr, uptr pc, uptr addr) {
 
 #if !SANITIZER_GO
 static void UpdateSleepClockCallback(ThreadContextBase *tctx_base, void *arg) {
-  ThreadState *thr = reinterpret_cast<ThreadState*>(arg);
-  ThreadContext *tctx = static_cast<ThreadContext*>(tctx_base);
+  ThreadState *thr = reinterpret_cast<ThreadState *>(arg);
+  ThreadContext *tctx = static_cast<ThreadContext *>(tctx_base);
   u64 epoch = tctx->epoch1;
   if (tctx->status == ThreadStatusRunning)
     epoch = tctx->thr->fast_state.epoch();

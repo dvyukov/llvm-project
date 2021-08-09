@@ -11,20 +11,19 @@
 // Support for intercepting libdispatch (GCD).
 //===----------------------------------------------------------------------===//
 
-#include "sanitizer_common/sanitizer_common.h"
+#include "BlocksRuntime/Block.h"
 #include "interception/interception.h"
+#include "sanitizer_common/sanitizer_common.h"
+#include "tsan_dispatch_defs.h"
 #include "tsan_interceptors.h"
 #include "tsan_rtl.h"
 
-#include "BlocksRuntime/Block.h"
-#include "tsan_dispatch_defs.h"
-
 #if SANITIZER_MAC
-# include <Availability.h>
+#  include <Availability.h>
 #endif
 
 namespace __tsan {
-  typedef u16 uint16_t;
+typedef u16 uint16_t;
 
 typedef struct {
   dispatch_queue_t queue;
@@ -108,25 +107,32 @@ static void dispatch_sync_pre_execute(ThreadState *thr, uptr pc,
   dispatch_queue_t q = context->queue;
   do {
     GET_QUEUE_SYNC_VARS(context, q);
-    if (serial_sync) Acquire(thr, pc, serial_sync);
-    if (serial_task && concurrent_sync) Acquire(thr, pc, concurrent_sync);
+    if (serial_sync)
+      Acquire(thr, pc, serial_sync);
+    if (serial_task && concurrent_sync)
+      Acquire(thr, pc, concurrent_sync);
 
-    if (q) q = GetTargetQueueFromQueue(q);
+    if (q)
+      q = GetTargetQueueFromQueue(q);
   } while (q);
 }
 
 static void dispatch_sync_post_execute(ThreadState *thr, uptr pc,
                                        block_context_t *context) {
   uptr submit_sync = (uptr)context;
-  if (context->submitted_synchronously) Release(thr, pc, submit_sync);
+  if (context->submitted_synchronously)
+    Release(thr, pc, submit_sync);
 
   dispatch_queue_t q = context->queue;
   do {
     GET_QUEUE_SYNC_VARS(context, q);
-    if (serial_task && serial_sync) Release(thr, pc, serial_sync);
-    if (!serial_task && concurrent_sync) Release(thr, pc, concurrent_sync);
+    if (serial_task && serial_sync)
+      Release(thr, pc, serial_sync);
+    if (!serial_task && concurrent_sync)
+      Release(thr, pc, concurrent_sync);
 
-    if (q) q = GetTargetQueueFromQueue(q);
+    if (q)
+      q = GetTargetQueueFromQueue(q);
   } while (q);
 }
 
@@ -142,7 +148,8 @@ static void dispatch_callback_wrap(void *param) {
 
   dispatch_sync_post_execute(thr, pc, context);
 
-  if (context->free_context_in_callback) user_free(thr, pc, context);
+  if (context->free_context_in_callback)
+    user_free(thr, pc, context);
 }
 
 static void invoke_block(void *param) {
@@ -171,43 +178,41 @@ static void invoke_and_release_block(void *param) {
     SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                             \
   }
 
-#define DISPATCH_INTERCEPT_SYNC_B(name, barrier)                             \
-  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q,                           \
-                   DISPATCH_NOESCAPE dispatch_block_t block) {               \
-    SCOPED_TSAN_INTERCEPTOR(name, q, block);                                 \
-    block_context_t new_context = {                                          \
-        q, block, &invoke_block, false, true, barrier, 0};                   \
-    Release(thr, pc, (uptr)&new_context);                                    \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                           \
-    REAL(name##_f)(q, &new_context, dispatch_callback_wrap);                 \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                             \
-    Acquire(thr, pc, (uptr)&new_context);                                    \
+#define DISPATCH_INTERCEPT_SYNC_B(name, barrier)                               \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q,                             \
+                   DISPATCH_NOESCAPE dispatch_block_t block) {                 \
+    SCOPED_TSAN_INTERCEPTOR(name, q, block);                                   \
+    block_context_t new_context = {q,       block, &invoke_block, false, true, \
+                                   barrier, 0};                                \
+    Release(thr, pc, (uptr)&new_context);                                      \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                             \
+    REAL(name##_f)(q, &new_context, dispatch_callback_wrap);                   \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                               \
+    Acquire(thr, pc, (uptr)&new_context);                                      \
   }
 
-#define DISPATCH_INTERCEPT_ASYNC_F(name, barrier)                 \
-  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context, \
-                   dispatch_function_t work) {                    \
-    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);              \
-    block_context_t *new_context =                                \
-        AllocContext(thr, pc, q, context, work);                  \
-    new_context->is_barrier_block = barrier;                      \
-    Release(thr, pc, (uptr)new_context);                          \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                \
-    REAL(name)(q, new_context, dispatch_callback_wrap);           \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                  \
+#define DISPATCH_INTERCEPT_ASYNC_F(name, barrier)                           \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context,           \
+                   dispatch_function_t work) {                              \
+    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);                        \
+    block_context_t *new_context = AllocContext(thr, pc, q, context, work); \
+    new_context->is_barrier_block = barrier;                                \
+    Release(thr, pc, (uptr)new_context);                                    \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                          \
+    REAL(name)(q, new_context, dispatch_callback_wrap);                     \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                            \
   }
 
-#define DISPATCH_INTERCEPT_SYNC_F(name, barrier)                              \
-  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context,             \
-                   dispatch_function_t work) {                                \
-    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);                          \
-    block_context_t new_context = {                                           \
-        q, context, work, false, true, barrier, 0};                           \
-    Release(thr, pc, (uptr)&new_context);                                     \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                            \
-    REAL(name)(q, &new_context, dispatch_callback_wrap);                      \
-    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                              \
-    Acquire(thr, pc, (uptr)&new_context);                                     \
+#define DISPATCH_INTERCEPT_SYNC_F(name, barrier)                               \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context,              \
+                   dispatch_function_t work) {                                 \
+    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);                           \
+    block_context_t new_context = {q, context, work, false, true, barrier, 0}; \
+    Release(thr, pc, (uptr)&new_context);                                      \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                             \
+    REAL(name)(q, &new_context, dispatch_callback_wrap);                       \
+    SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();                               \
+    Acquire(thr, pc, (uptr)&new_context);                                      \
   }
 
 #define DISPATCH_INTERCEPT(name, barrier)             \
@@ -233,8 +238,9 @@ DISPATCH_INTERCEPT(dispatch_barrier, true)
 // actual header file (#include <dispatch/dispatch.h>).
 SANITIZER_WEAK_IMPORT void dispatch_async_and_wait(
     dispatch_queue_t queue, DISPATCH_NOESCAPE dispatch_block_t block);
-SANITIZER_WEAK_IMPORT void dispatch_async_and_wait_f(
-    dispatch_queue_t queue, void *context, dispatch_function_t work);
+SANITIZER_WEAK_IMPORT void dispatch_async_and_wait_f(dispatch_queue_t queue,
+                                                     void *context,
+                                                     dispatch_function_t work);
 SANITIZER_WEAK_IMPORT void dispatch_barrier_async_and_wait(
     dispatch_queue_t queue, DISPATCH_NOESCAPE dispatch_block_t block);
 SANITIZER_WEAK_IMPORT void dispatch_barrier_async_and_wait_f(
@@ -245,7 +251,6 @@ DISPATCH_INTERCEPT_SYNC_B(dispatch_async_and_wait, false)
 DISPATCH_INTERCEPT_SYNC_F(dispatch_barrier_async_and_wait_f, true)
 DISPATCH_INTERCEPT_SYNC_B(dispatch_barrier_async_and_wait, true)
 #endif
-
 
 DECLARE_REAL(void, dispatch_after_f, dispatch_time_t when,
              dispatch_queue_t queue, void *context, dispatch_function_t work)
@@ -268,7 +273,8 @@ TSAN_INTERCEPTOR(void, dispatch_after_f, dispatch_time_t when,
                  dispatch_queue_t queue, void *context,
                  dispatch_function_t work) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_after_f, when, queue, context, work);
-  WRAP(dispatch_after)(when, queue, ^(void) {
+  WRAP(dispatch_after)
+  (when, queue, ^(void) {
     work(context);
   });
 }
@@ -312,7 +318,8 @@ TSAN_INTERCEPTOR(void, dispatch_once_f, dispatch_once_t *predicate,
                  void *context, dispatch_function_t function) {
   SCOPED_INTERCEPTOR_RAW(dispatch_once_f, predicate, context, function);
   SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();
-  WRAP(dispatch_once)(predicate, ^(void) {
+  WRAP(dispatch_once)
+  (predicate, ^(void) {
     function(context);
   });
   SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_END();
@@ -329,7 +336,8 @@ TSAN_INTERCEPTOR(long_t, dispatch_semaphore_wait, dispatch_semaphore_t dsema,
                  dispatch_time_t timeout) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_semaphore_wait, dsema, timeout);
   long_t result = REAL(dispatch_semaphore_wait)(dsema, timeout);
-  if (result == 0) Acquire(thr, pc, (uptr)dsema);
+  if (result == 0)
+    Acquire(thr, pc, (uptr)dsema);
   return result;
 }
 
@@ -337,7 +345,8 @@ TSAN_INTERCEPTOR(long_t, dispatch_group_wait, dispatch_group_t group,
                  dispatch_time_t timeout) {
   SCOPED_TSAN_INTERCEPTOR(dispatch_group_wait, group, timeout);
   long_t result = REAL(dispatch_group_wait)(group, timeout);
-  if (result == 0) Acquire(thr, pc, (uptr)group);
+  if (result == 0)
+    Acquire(thr, pc, (uptr)group);
   return result;
 }
 
@@ -357,7 +366,8 @@ TSAN_INTERCEPTOR(void, dispatch_group_async, dispatch_group_t group,
   dispatch_retain(group);
   dispatch_group_enter(group);
   __block dispatch_block_t block_copy = (dispatch_block_t)Block_copy(block);
-  WRAP(dispatch_async)(queue, ^(void) {
+  WRAP(dispatch_async)
+  (queue, ^(void) {
     block_copy();
     Block_release(block_copy);
     WRAP(dispatch_group_leave)(group);
@@ -371,7 +381,8 @@ TSAN_INTERCEPTOR(void, dispatch_group_async_f, dispatch_group_t group,
   SCOPED_TSAN_INTERCEPTOR(dispatch_group_async_f, group, queue, context, work);
   dispatch_retain(group);
   dispatch_group_enter(group);
-  WRAP(dispatch_async)(queue, ^(void) {
+  WRAP(dispatch_async)
+  (queue, ^(void) {
     work(context);
     WRAP(dispatch_group_leave)(group);
     dispatch_release(group);
@@ -409,7 +420,10 @@ TSAN_INTERCEPTOR(void, dispatch_group_notify, dispatch_group_t group,
 
 TSAN_INTERCEPTOR(void, dispatch_group_notify_f, dispatch_group_t group,
                  dispatch_queue_t q, void *context, dispatch_function_t work) {
-  WRAP(dispatch_group_notify)(group, q, ^(void) { work(context); });
+  WRAP(dispatch_group_notify)
+  (group, q, ^(void) {
+    work(context);
+  });
 }
 
 TSAN_INTERCEPTOR(void, dispatch_source_set_event_handler,
@@ -419,7 +433,7 @@ TSAN_INTERCEPTOR(void, dispatch_source_set_event_handler,
     return REAL(dispatch_source_set_event_handler)(source, nullptr);
   dispatch_queue_t q = GetTargetQueueFromSource(source);
   __block block_context_t new_context = {
-      q, handler, &invoke_block, false, false, false, 0 };
+      q, handler, &invoke_block, false, false, false, 0};
   dispatch_block_t new_handler = Block_copy(^(void) {
     new_context.orig_context = handler;  // To explicitly capture "handler".
     dispatch_callback_wrap(&new_context);
@@ -527,7 +541,7 @@ TSAN_INTERCEPTOR(void, dispatch_apply, size_t iterations,
 }
 
 static void invoke_block_iteration(void *param, size_t iteration) {
-  auto block = (void (^)(size_t)) param;
+  auto block = (void (^)(size_t))param;
   block(iteration);
 }
 
@@ -567,9 +581,13 @@ TSAN_INTERCEPTOR(dispatch_data_t, dispatch_data_create, const void *buffer,
     return REAL(dispatch_data_create)(buffer, size, q, destructor);
 
   if (destructor == DISPATCH_DATA_DESTRUCTOR_FREE)
-    destructor = ^(void) { WRAP(free)((void *)(uintptr_t)buffer); };
+    destructor = ^(void) {
+      WRAP(free)((void *)(uintptr_t)buffer);
+    };
   else if (destructor == DISPATCH_DATA_DESTRUCTOR_MUNMAP)
-    destructor = ^(void) { WRAP(munmap)((void *)(uintptr_t)buffer, size); };
+    destructor = ^(void) {
+      WRAP(munmap)((void *)(uintptr_t)buffer, size);
+    };
 
   SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();
   dispatch_block_t heap_block = Block_copy(destructor);

@@ -11,18 +11,19 @@
 // Interceptors for mach_vm_* user space memory routines on Darwin.
 //===----------------------------------------------------------------------===//
 
+#include <mach/mach.h>
+
 #include "interception/interception.h"
 #include "tsan_interceptors.h"
 #include "tsan_platform.h"
-
-#include <mach/mach.h>
 
 namespace __tsan {
 
 static bool intersects_with_shadow(mach_vm_address_t address,
                                    mach_vm_size_t size, int flags) {
   // VM_FLAGS_FIXED is 0x0, so we have to test for VM_FLAGS_ANYWHERE.
-  if (flags & VM_FLAGS_ANYWHERE) return false;
+  if (flags & VM_FLAGS_ANYWHERE)
+    return false;
   return !IsAppMem(address) || !IsAppMem(address + size - 1);
 }
 

@@ -13,20 +13,18 @@
 
 namespace __tsan {
 
-#define F(x, y, z)      ((z) ^ ((x) & ((y) ^ (z))))
-#define G(x, y, z)      ((y) ^ ((z) & ((x) ^ (y))))
-#define H(x, y, z)      ((x) ^ (y) ^ (z))
-#define I(x, y, z)      ((y) ^ ((x) | ~(z)))
+#define F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
+#define G(x, y, z) ((y) ^ ((z) & ((x) ^ (y))))
+#define H(x, y, z) ((x) ^ (y) ^ (z))
+#define I(x, y, z) ((y) ^ ((x) | ~(z)))
 
-#define STEP(f, a, b, c, d, x, t, s) \
-  (a) += f((b), (c), (d)) + (x) + (t); \
-  (a) = (((a) << (s)) | (((a) & 0xffffffff) >> (32 - (s)))); \
+#define STEP(f, a, b, c, d, x, t, s)                       \
+  (a) += f((b), (c), (d)) + (x) + (t);                     \
+  (a) = (((a) << (s)) | (((a)&0xffffffff) >> (32 - (s)))); \
   (a) += (b);
 
-#define SET(n) \
-  (*(const MD5_u32plus *)&ptr[(n) * 4])
-#define GET(n) \
-  SET(n)
+#define SET(n) (*(const MD5_u32plus *)&ptr[(n)*4])
+#define GET(n) SET(n)
 
 typedef unsigned int MD5_u32plus;
 typedef unsigned long ulong_t;
@@ -244,7 +242,7 @@ MD5Hash md5_hash(const void *data, uptr size) {
   MD5_CTX ctx;
   MD5_Init(&ctx);
   MD5_Update(&ctx, data, size);
-  MD5_Final((unsigned char*)&res.hash[0], &ctx);
+  MD5_Final((unsigned char *)&res.hash[0], &ctx);
   return res;
 }
 }  // namespace __tsan

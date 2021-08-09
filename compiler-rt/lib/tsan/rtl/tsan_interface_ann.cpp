@@ -9,17 +9,18 @@
 // This file is a part of ThreadSanitizer (TSan), a race detector.
 //
 //===----------------------------------------------------------------------===//
-#include "sanitizer_common/sanitizer_libc.h"
+#include "tsan_interface_ann.h"
+
 #include "sanitizer_common/sanitizer_internal_defs.h"
+#include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_vector.h"
-#include "tsan_interface_ann.h"
+#include "tsan_flags.h"
+#include "tsan_mman.h"
+#include "tsan_platform.h"
 #include "tsan_report.h"
 #include "tsan_rtl.h"
-#include "tsan_mman.h"
-#include "tsan_flags.h"
-#include "tsan_platform.h"
 
 #define CALLERPC ((uptr)__builtin_return_address(0))
 
@@ -29,8 +30,7 @@ namespace __tsan {
 
 class ScopedAnnotation {
  public:
-  ScopedAnnotation(ThreadState *thr, const char *aname, uptr pc)
-      : thr_(thr) {
+  ScopedAnnotation(ThreadState *thr, const char *aname, uptr pc) : thr_(thr) {
     FuncEntry(thr_, pc);
     DPrintf("#%d: annotation %s()\n", thr_->tid, aname);
   }
@@ -39,6 +39,7 @@ class ScopedAnnotation {
     FuncExit(thr_);
     CheckedMutex::CheckNoLocks();
   }
+
  private:
   ThreadState *const thr_;
 };
@@ -78,13 +79,13 @@ struct DynamicAnnContext {
 static DynamicAnnContext *dyn_ann_ctx;
 static char dyn_ann_ctx_placeholder[sizeof(DynamicAnnContext)] ALIGNED(64);
 
-static void AddExpectRace(ExpectRace *list,
-    char *f, int l, uptr addr, uptr size, char *desc) {
+static void AddExpectRace(ExpectRace *list, char *f, int l, uptr addr,
+                          uptr size, char *desc) {
   ExpectRace *race = list->next;
   for (; race != list; race = race->next) {
     if (race->addr == addr && race->size == size) {
       atomic_store_relaxed(&race->addcount,
-          atomic_load_relaxed(&race->addcount) + 1);
+                           atomic_load_relaxed(&race->addcount) + 1);
       return;
     }
   }
@@ -98,8 +99,7 @@ static void AddExpectRace(ExpectRace *list,
   atomic_store_relaxed(&race->addcount, 1);
   if (desc) {
     int i = 0;
-    for (; i < kMaxDescLen - 1 && desc[i]; i++)
-      race->desc[i] = desc[i];
+    for (; i < kMaxDescLen - 1 && desc[i]; i++) race->desc[i] = desc[i];
     race->desc[i] = 0;
   }
   race->prev = list;
@@ -122,8 +122,8 @@ static bool CheckContains(ExpectRace *list, uptr addr, uptr size) {
   ExpectRace *race = FindRace(list, addr, size);
   if (race == 0)
     return false;
-  DPrintf("Hit expected/benign race: %s addr=%zx:%d %s:%d\n",
-      race->desc, race->addr, (int)race->size, race->file, race->line);
+  DPrintf("Hit expected/benign race: %s addr=%zx:%d %s:%d\n", race->desc,
+          race->addr, (int)race->size, race->file, race->line);
   atomic_fetch_add(&race->hitcount, 1, memory_order_relaxed);
   return true;
 }
@@ -134,7 +134,7 @@ static void InitList(ExpectRace *list) {
 }
 
 void InitializeDynamicAnnotations() {
-  dyn_ann_ctx = new(dyn_ann_ctx_placeholder) DynamicAnnContext;
+  dyn_ann_ctx = new (dyn_ann_ctx_placeholder) DynamicAnnContext;
   InitList(&dyn_ann_ctx->benign);
 }
 
@@ -157,18 +157,14 @@ void INTERFACE_ATTRIBUTE AnnotateHappensAfter(char *f, int l, uptr addr) {
   Acquire(thr, pc, addr);
 }
 
-void INTERFACE_ATTRIBUTE AnnotateCondVarSignal(char *f, int l, uptr cv) {
-}
+void INTERFACE_ATTRIBUTE AnnotateCondVarSignal(char *f, int l, uptr cv) {}
 
-void INTERFACE_ATTRIBUTE AnnotateCondVarSignalAll(char *f, int l, uptr cv) {
-}
+void INTERFACE_ATTRIBUTE AnnotateCondVarSignalAll(char *f, int l, uptr cv) {}
 
-void INTERFACE_ATTRIBUTE AnnotateMutexIsNotPHB(char *f, int l, uptr mu) {
-}
+void INTERFACE_ATTRIBUTE AnnotateMutexIsNotPHB(char *f, int l, uptr mu) {}
 
 void INTERFACE_ATTRIBUTE AnnotateCondVarWait(char *f, int l, uptr cv,
-                                             uptr lock) {
-}
+                                             uptr lock) {}
 
 void INTERFACE_ATTRIBUTE AnnotateRWLockCreate(char *f, int l, uptr m) {
   SCOPED_ANNOTATION(AnnotateRWLockCreate);
@@ -203,65 +199,48 @@ void INTERFACE_ATTRIBUTE AnnotateRWLockReleased(char *f, int l, uptr m,
     MutexReadUnlock(thr, pc, m);
 }
 
-void INTERFACE_ATTRIBUTE AnnotateTraceMemory(char *f, int l, uptr mem) {
-}
+void INTERFACE_ATTRIBUTE AnnotateTraceMemory(char *f, int l, uptr mem) {}
 
-void INTERFACE_ATTRIBUTE AnnotateFlushState(char *f, int l) {
-}
+void INTERFACE_ATTRIBUTE AnnotateFlushState(char *f, int l) {}
 
 void INTERFACE_ATTRIBUTE AnnotateNewMemory(char *f, int l, uptr mem,
-                                           uptr size) {
+                                           uptr size) {}
+
+void INTERFACE_ATTRIBUTE AnnotateNoOp(char *f, int l, uptr mem) {}
+
+void INTERFACE_ATTRIBUTE AnnotateFlushExpectedRaces(char *f, int l) {}
+
+void INTERFACE_ATTRIBUTE AnnotateEnableRaceDetection(char *f, int l,
+                                                     int enable) {}
+
+void INTERFACE_ATTRIBUTE AnnotateMutexIsUsedAsCondVar(char *f, int l, uptr mu) {
 }
 
-void INTERFACE_ATTRIBUTE AnnotateNoOp(char *f, int l, uptr mem) {
-}
+void INTERFACE_ATTRIBUTE AnnotatePCQGet(char *f, int l, uptr pcq) {}
 
-void INTERFACE_ATTRIBUTE AnnotateFlushExpectedRaces(char *f, int l) {
-}
+void INTERFACE_ATTRIBUTE AnnotatePCQPut(char *f, int l, uptr pcq) {}
 
-void INTERFACE_ATTRIBUTE AnnotateEnableRaceDetection(
-    char *f, int l, int enable) {
-}
+void INTERFACE_ATTRIBUTE AnnotatePCQDestroy(char *f, int l, uptr pcq) {}
 
-void INTERFACE_ATTRIBUTE AnnotateMutexIsUsedAsCondVar(
-    char *f, int l, uptr mu) {
-}
+void INTERFACE_ATTRIBUTE AnnotatePCQCreate(char *f, int l, uptr pcq) {}
 
-void INTERFACE_ATTRIBUTE AnnotatePCQGet(
-    char *f, int l, uptr pcq) {
-}
-
-void INTERFACE_ATTRIBUTE AnnotatePCQPut(
-    char *f, int l, uptr pcq) {
-}
-
-void INTERFACE_ATTRIBUTE AnnotatePCQDestroy(
-    char *f, int l, uptr pcq) {
-}
-
-void INTERFACE_ATTRIBUTE AnnotatePCQCreate(
-    char *f, int l, uptr pcq) {
-}
-
-void INTERFACE_ATTRIBUTE AnnotateExpectRace(
-    char *f, int l, uptr mem, char *desc) {
-}
+void INTERFACE_ATTRIBUTE AnnotateExpectRace(char *f, int l, uptr mem,
+                                            char *desc) {}
 
 static void BenignRaceImpl(char *f, int l, uptr mem, uptr size, char *desc) {
   Lock lock(&dyn_ann_ctx->mtx);
-  AddExpectRace(&dyn_ann_ctx->benign,
-                f, l, mem, size, desc);
+  AddExpectRace(&dyn_ann_ctx->benign, f, l, mem, size, desc);
   DPrintf("Add benign race: %s addr=%zx %s:%d\n", desc, mem, f, l);
 }
 
-void INTERFACE_ATTRIBUTE AnnotateBenignRaceSized(
-    char *f, int l, uptr mem, uptr size, char *desc) {
+void INTERFACE_ATTRIBUTE AnnotateBenignRaceSized(char *f, int l, uptr mem,
+                                                 uptr size, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRaceSized);
   BenignRaceImpl(f, l, mem, size, desc);
 }
 
-void INTERFACE_ATTRIBUTE AnnotateBenignRace(
-    char *f, int l, uptr mem, char *desc) {
+void INTERFACE_ATTRIBUTE AnnotateBenignRace(char *f, int l, uptr mem,
+                                            char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRace);
   BenignRaceImpl(f, l, mem, 1, desc);
 }
@@ -296,16 +275,13 @@ void INTERFACE_ATTRIBUTE AnnotateIgnoreSyncEnd(char *f, int l) {
   ThreadIgnoreSyncEnd(thr);
 }
 
-void INTERFACE_ATTRIBUTE AnnotatePublishMemoryRange(
-    char *f, int l, uptr addr, uptr size) {
-}
+void INTERFACE_ATTRIBUTE AnnotatePublishMemoryRange(char *f, int l, uptr addr,
+                                                    uptr size) {}
 
-void INTERFACE_ATTRIBUTE AnnotateUnpublishMemoryRange(
-    char *f, int l, uptr addr, uptr size) {
-}
+void INTERFACE_ATTRIBUTE AnnotateUnpublishMemoryRange(char *f, int l, uptr addr,
+                                                      uptr size) {}
 
-void INTERFACE_ATTRIBUTE AnnotateThreadName(
-    char *f, int l, char *name) {
+void INTERFACE_ATTRIBUTE AnnotateThreadName(char *f, int l, char *name) {
   SCOPED_ANNOTATION(AnnotateThreadName);
   ThreadSetName(thr, name);
 }
@@ -313,14 +289,12 @@ void INTERFACE_ATTRIBUTE AnnotateThreadName(
 // We deliberately omit the implementation of WTFAnnotateHappensBefore() and
 // WTFAnnotateHappensAfter(). Those are being used by Webkit to annotate
 // atomic operations, which should be handled by ThreadSanitizer correctly.
-void INTERFACE_ATTRIBUTE WTFAnnotateHappensBefore(char *f, int l, uptr addr) {
-}
+void INTERFACE_ATTRIBUTE WTFAnnotateHappensBefore(char *f, int l, uptr addr) {}
 
-void INTERFACE_ATTRIBUTE WTFAnnotateHappensAfter(char *f, int l, uptr addr) {
-}
+void INTERFACE_ATTRIBUTE WTFAnnotateHappensAfter(char *f, int l, uptr addr) {}
 
-void INTERFACE_ATTRIBUTE WTFAnnotateBenignRaceSized(
-    char *f, int l, uptr mem, uptr sz, char *desc) {
+void INTERFACE_ATTRIBUTE WTFAnnotateBenignRaceSized(char *f, int l, uptr mem,
+                                                    uptr sz, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRaceSized);
   BenignRaceImpl(f, l, mem, sz, desc);
 }
@@ -333,17 +307,17 @@ double __attribute__((weak)) INTERFACE_ATTRIBUTE ValgrindSlowdown(void) {
   return 10.0;
 }
 
-const char INTERFACE_ATTRIBUTE* ThreadSanitizerQuery(const char *query) {
+const char INTERFACE_ATTRIBUTE *ThreadSanitizerQuery(const char *query) {
   if (internal_strcmp(query, "pure_happens_before") == 0)
     return "1";
   else
     return "0";
 }
 
-void INTERFACE_ATTRIBUTE
-AnnotateMemoryIsInitialized(char *f, int l, uptr mem, uptr sz) {}
-void INTERFACE_ATTRIBUTE
-AnnotateMemoryIsUninitialized(char *f, int l, uptr mem, uptr sz) {}
+void INTERFACE_ATTRIBUTE AnnotateMemoryIsInitialized(char *f, int l, uptr mem,
+                                                     uptr sz) {}
+void INTERFACE_ATTRIBUTE AnnotateMemoryIsUninitialized(char *f, int l, uptr mem,
+                                                       uptr sz) {}
 
 // Note: the parameter is called flagz, because flags is already taken
 // by the global function that returns flags.

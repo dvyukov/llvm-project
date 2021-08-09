@@ -48,7 +48,7 @@ class MutexSet {
 #endif
 
   void RemovePos(uptr i);
-  MutexSet(const MutexSet&);
+  MutexSet(const MutexSet &);
 };
 
 // Go does not have mutexes, so do not spend memory and time.

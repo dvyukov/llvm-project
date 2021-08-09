@@ -24,8 +24,7 @@ VectorClock::VectorClock() { Reset(); }
 
 void VectorClock::Reset() {
 #if !TSAN_VECTORIZE
-  for (uptr i = 0; i < kThreadSlotCount; i++)
-    clk_[i] = kEpochZero;
+  for (uptr i = 0; i < kThreadSlotCount; i++) clk_[i] = kEpochZero;
 #else
   m128 z = _mm_setzero_si128();
   m128* vclk = reinterpret_cast<m128*>(clk_);
@@ -69,8 +68,7 @@ void VectorClock::ReleaseStore(VectorClock** dstp) const {
 
 VectorClock& VectorClock::operator=(const VectorClock& other) {
 #if !TSAN_VECTORIZE
-  for (uptr i = 0; i < kThreadSlotCount; i++)
-    clk_[i] = other.clk_[i];
+  for (uptr i = 0; i < kThreadSlotCount; i++) clk_[i] = other.clk_[i];
 #else
   m128* __restrict vdst = reinterpret_cast<m128*>(clk_);
   m128 const* __restrict vsrc = reinterpret_cast<m128 const*>(other.clk_);

@@ -11,12 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsan_interface_java.h"
-#include "tsan_rtl.h"
-#include "sanitizer_common/sanitizer_internal_defs.h"
+
 #include "sanitizer_common/sanitizer_common.h"
+#include "sanitizer_common/sanitizer_internal_defs.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
-#include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_procmaps.h"
+#include "sanitizer_common/sanitizer_stacktrace.h"
+#include "tsan_rtl.h"
 
 using namespace __tsan;
 
@@ -29,9 +30,7 @@ struct JavaContext {
   const uptr heap_size;
 
   JavaContext(jptr heap_begin, jptr heap_size)
-      : heap_begin(heap_begin)
-      , heap_size(heap_size) {
-  }
+      : heap_begin(heap_begin), heap_size(heap_size) {}
 };
 
 static u64 jctx_buf[sizeof(JavaContext) / sizeof(u64) + 1];
@@ -70,10 +69,10 @@ void __tsan_java_init(jptr heap_begin, jptr heap_size) {
   DCHECK_EQ(heap_begin % kHeapAlignment, 0);
   DCHECK_EQ(heap_size % kHeapAlignment, 0);
   DCHECK_LT(heap_begin, heap_begin + heap_size);
-  jctx = new(jctx_buf) JavaContext(heap_begin, heap_size);
+  jctx = new (jctx_buf) JavaContext(heap_begin, heap_size);
 }
 
-int  __tsan_java_fini() {
+int __tsan_java_fini() {
   JAVA_FUNC_ENTER(__tsan_java_fini);
   DPrintf("#%d: java_fini()\n", thr->tid);
   DCHECK_NE(jctx, 0);

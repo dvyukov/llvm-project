@@ -14,10 +14,10 @@
 
 #include "sanitizer_common/sanitizer_internal_defs.h"
 
-typedef struct dispatch_object_s {} *dispatch_object_t;
+typedef struct dispatch_object_s {
+} * dispatch_object_t;
 
-#define DISPATCH_DECL(name) \
-  typedef struct name##_s : public dispatch_object_s {} *name##_t
+#define DISPATCH_DECL(name) typedef struct name##_s : public dispatch_object_s{} * name##_t
 
 DISPATCH_DECL(dispatch_queue);
 DISPATCH_DECL(dispatch_source);
@@ -28,8 +28,7 @@ DISPATCH_DECL(dispatch_io);
 
 typedef void (*dispatch_function_t)(void *arg);
 typedef void (^dispatch_block_t)(void);
-typedef void (^dispatch_io_handler_t)(bool done, dispatch_data_t data,
-                                      int error);
+typedef void (^dispatch_io_handler_t)(bool done, dispatch_data_t data, int error);
 
 typedef long dispatch_once_t;
 typedef __sanitizer::u64 dispatch_time_t;
@@ -44,24 +43,23 @@ void dispatch_release(dispatch_object_t object);
 
 extern const dispatch_block_t _dispatch_data_destructor_free;
 extern const dispatch_block_t _dispatch_data_destructor_munmap;
-} // extern "C"
+}  // extern "C"
 
 #define DISPATCH_DATA_DESTRUCTOR_DEFAULT nullptr
-#define DISPATCH_DATA_DESTRUCTOR_FREE    _dispatch_data_destructor_free
-#define DISPATCH_DATA_DESTRUCTOR_MUNMAP  _dispatch_data_destructor_munmap
+#define DISPATCH_DATA_DESTRUCTOR_FREE _dispatch_data_destructor_free
+#define DISPATCH_DATA_DESTRUCTOR_MUNMAP _dispatch_data_destructor_munmap
 
 #if __has_attribute(noescape)
-# define DISPATCH_NOESCAPE __attribute__((__noescape__))
+#  define DISPATCH_NOESCAPE __attribute__((__noescape__))
 #else
-# define DISPATCH_NOESCAPE
+#  define DISPATCH_NOESCAPE
 #endif
 
 #if SANITIZER_MAC
-# define SANITIZER_WEAK_IMPORT extern "C" __attribute((weak_import))
+#  define SANITIZER_WEAK_IMPORT extern "C" __attribute((weak_import))
 #else
-# define SANITIZER_WEAK_IMPORT extern "C" __attribute((weak))
+#  define SANITIZER_WEAK_IMPORT extern "C" __attribute((weak))
 #endif
-
 
 // Data types used in dispatch APIs
 typedef unsigned long size_t;

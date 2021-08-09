@@ -15,9 +15,7 @@ namespace __tsan {
 
 const uptr IgnoreSet::kMaxSize;
 
-IgnoreSet::IgnoreSet()
-    : size_() {
-}
+IgnoreSet::IgnoreSet() : size_() {}
 
 void IgnoreSet::Add(StackID stack_id) {
   if (size_ == kMaxSize)

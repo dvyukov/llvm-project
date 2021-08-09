@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "tsan_mutexset.h"
+
 #include "tsan_rtl.h"
 
 namespace __tsan {
@@ -76,9 +77,7 @@ void MutexSet::RemovePos(uptr i) {
   size_--;
 }
 
-uptr MutexSet::Size() const {
-  return size_;
-}
+uptr MutexSet::Size() const { return size_; }
 
 MutexSet::Desc MutexSet::Get(uptr i) const {
   CHECK_LT(i, size_);

@@ -11,16 +11,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "sanitizer_common/sanitizer_placement_new.h"
-#include "tsan_rtl.h"
-#include "tsan_mman.h"
 #include "tsan_flags.h"
+#include "tsan_mman.h"
+#include "tsan_rtl.h"
 
 namespace __tsan {
 
 Processor *ProcCreate() {
   void *mem = InternalAlloc(sizeof(Processor));
   internal_memset(mem, 0, sizeof(Processor));
-  Processor *proc = new(mem) Processor;
+  Processor *proc = new (mem) Processor;
   proc->thr = nullptr;
 #if !SANITIZER_GO
   AllocatorProcStart(proc);
@@ -38,7 +38,7 @@ void ProcDestroy(Processor *proc) {
   ctx->clock_alloc.FlushCache(&proc->clock_cache);
   ctx->metamap.OnProcIdle(proc);
   if (common_flags()->detect_deadlocks)
-     ctx->dd->DestroyPhysicalThread(proc->dd_pt);
+    ctx->dd->DestroyPhysicalThread(proc->dd_pt);
   proc->~Processor();
   InternalFree(proc);
 }

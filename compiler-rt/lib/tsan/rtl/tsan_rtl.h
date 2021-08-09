@@ -37,24 +37,24 @@
 #include "tsan_clock.h"
 #include "tsan_defs.h"
 #include "tsan_flags.h"
+#include "tsan_ignoreset.h"
 #include "tsan_mman.h"
+#include "tsan_mutexset.h"
+#include "tsan_platform.h"
+#include "tsan_report.h"
+#include "tsan_stack_trace.h"
 #include "tsan_sync.h"
 #include "tsan_trace.h"
-#include "tsan_report.h"
-#include "tsan_platform.h"
-#include "tsan_mutexset.h"
-#include "tsan_ignoreset.h"
-#include "tsan_stack_trace.h"
 
 #if SANITIZER_WORDSIZE != 64
-# error "ThreadSanitizer is supported only on 64-bit platforms"
+#  error "ThreadSanitizer is supported only on 64-bit platforms"
 #endif
 
 namespace __tsan {
 
 #if !SANITIZER_GO
 struct MapUnmapCallback;
-#if defined(__mips64) || defined(__aarch64__) || defined(__powerpc__)
+#  if defined(__mips64) || defined(__aarch64__) || defined(__powerpc__)
 
 struct AP32 {
   static const uptr kSpaceBeg = 0;
@@ -67,7 +67,7 @@ struct AP32 {
   static const uptr kFlags = 0;
 };
 typedef SizeClassAllocator32<AP32> PrimaryAllocator;
-#else
+#  else
 struct AP64 {  // Allocator64 parameters. Deliberately using a short name.
   static const uptr kSpaceBeg = Mapping::kHeapMemBeg;
   static const uptr kSpaceSize = Mapping::kHeapMemEnd - Mapping::kHeapMemBeg;
@@ -78,7 +78,7 @@ struct AP64 {  // Allocator64 parameters. Deliberately using a short name.
   using AddressSpaceView = LocalAddressSpaceView;
 };
 typedef SizeClassAllocator64<AP64> PrimaryAllocator;
-#endif
+#  endif
 typedef CombinedAllocator<PrimaryAllocator> Allocator;
 typedef Allocator::AllocatorCache AllocatorCache;
 Allocator *allocator();
@@ -102,13 +102,9 @@ class FastState {
     DCHECK_EQ(GetIgnoreBit(), false);
   }
 
-  explicit FastState(u64 x)
-      : x_(x) {
-  }
+  explicit FastState(u64 x) : x_(x) {}
 
-  u64 raw() const {
-    return x_;
-  }
+  u64 raw() const { return x_; }
 
   u64 tid() const {
     u64 res = (x_ & ~kIgnoreBit) >> kTidShift;
@@ -147,9 +143,7 @@ class FastState {
     return (int)((x_ >> kHistoryShift) & kHistoryMask);
   }
 
-  void ClearHistorySize() {
-    SetHistorySize(0);
-  }
+  void ClearHistorySize() { SetHistorySize(0); }
 
   ALWAYS_INLINE
   u64 GetTracePos() const {
@@ -179,14 +173,9 @@ class FastState {
 //   epoch           : kClkBits
 class Shadow : public FastState {
  public:
-  explicit Shadow(u64 x)
-      : FastState(x) {
-  }
+  explicit Shadow(u64 x) : FastState(x) {}
 
-  explicit Shadow(const FastState &s)
-      : FastState(s.x_) {
-    ClearHistorySize();
-  }
+  explicit Shadow(const FastState &s) : FastState(s.x_) { ClearHistorySize(); }
 
   void SetAddr0AndSizeLog(u64 addr0, unsigned kAccessSizeLog) {
     DCHECK_EQ((x_ >> kClkBits) & 31, 0);
@@ -211,13 +200,9 @@ class Shadow : public FastState {
     DCHECK_EQ(IsAtomic(), kIsAtomic);
   }
 
-  bool IsAtomic() const {
-    return x_ & kAtomicBit;
-  }
+  bool IsAtomic() const { return x_ & kAtomicBit; }
 
-  bool IsZero() const {
-    return x_ == 0;
-  }
+  bool IsZero() const { return x_ == 0; }
 
   static inline bool TidsAreEqual(const Shadow s1, const Shadow s2) {
     u64 shifted_xor = (s1.x_ ^ s2.x_) >> kTidShift;
@@ -225,14 +210,14 @@ class Shadow : public FastState {
     return shifted_xor == 0;
   }
 
-  static ALWAYS_INLINE
-  bool Addr0AndSizeAreEqual(const Shadow s1, const Shadow s2) {
+  static ALWAYS_INLINE bool Addr0AndSizeAreEqual(const Shadow s1,
+                                                 const Shadow s2) {
     u64 masked_xor = ((s1.x_ ^ s2.x_) >> kClkBits) & 31;
     return masked_xor == 0;
   }
 
   static ALWAYS_INLINE bool TwoRangesIntersect(Shadow s1, Shadow s2,
-      unsigned kS2AccessSize) {
+                                               unsigned kS2AccessSize) {
     bool res = false;
     u64 diff = s1.addr0() - s2.addr0();
     if ((s64)diff < 0) {  // s1.addr0 < s2.addr0
@@ -263,13 +248,9 @@ class Shadow : public FastState {
   // This allows us to detect accesses to freed memory w/o additional
   // overheads in memory access processing and at the same time restore
   // tid/epoch of free.
-  void MarkAsFreed() {
-     x_ |= kFreedBit;
-  }
+  void MarkAsFreed() { x_ |= kFreedBit; }
 
-  bool IsFreed() const {
-    return x_ & kFreedBit;
-  }
+  bool IsFreed() const { return x_ & kFreedBit; }
 
   bool GetFreedAndReset() {
     bool res = x_ & kFreedBit;
@@ -278,38 +259,37 @@ class Shadow : public FastState {
   }
 
   bool ALWAYS_INLINE IsBothReadsOrAtomic(bool kIsWrite, bool kIsAtomic) const {
-    bool v = x_ & ((u64(kIsWrite ^ 1) << kReadShift)
-        | (u64(kIsAtomic) << kAtomicShift));
+    bool v = x_ & ((u64(kIsWrite ^ 1) << kReadShift) |
+                   (u64(kIsAtomic) << kAtomicShift));
     DCHECK_EQ(v, (!IsWrite() && !kIsWrite) || (IsAtomic() && kIsAtomic));
     return v;
   }
 
   bool ALWAYS_INLINE IsRWNotWeaker(bool kIsWrite, bool kIsAtomic) const {
-    bool v = ((x_ >> kReadShift) & 3)
-        <= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
+    bool v = ((x_ >> kReadShift) & 3) <= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
     DCHECK_EQ(v, (IsAtomic() < kIsAtomic) ||
-        (IsAtomic() == kIsAtomic && !IsWrite() <= !kIsWrite));
+                     (IsAtomic() == kIsAtomic && !IsWrite() <= !kIsWrite));
     return v;
   }
 
   bool ALWAYS_INLINE IsRWWeakerOrEqual(bool kIsWrite, bool kIsAtomic) const {
-    bool v = ((x_ >> kReadShift) & 3)
-        >= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
+    bool v = ((x_ >> kReadShift) & 3) >= u64((kIsWrite ^ 1) | (kIsAtomic << 1));
     DCHECK_EQ(v, (IsAtomic() > kIsAtomic) ||
-        (IsAtomic() == kIsAtomic && !IsWrite() >= !kIsWrite));
+                     (IsAtomic() == kIsAtomic && !IsWrite() >= !kIsWrite));
     return v;
   }
 
  private:
-  static const u64 kReadShift   = 5 + kClkBits;
-  static const u64 kReadBit     = 1ull << kReadShift;
+  static const u64 kReadShift = 5 + kClkBits;
+  static const u64 kReadBit = 1ull << kReadShift;
   static const u64 kAtomicShift = 6 + kClkBits;
-  static const u64 kAtomicBit   = 1ull << kAtomicShift;
+  static const u64 kAtomicBit = 1ull << kAtomicShift;
 
   u64 size_log() const { return (x_ >> (3 + kClkBits)) & 3; }
 
   static bool TwoRangesIntersectSlow(const Shadow s1, const Shadow s2) {
-    if (s1.addr0() == s2.addr0()) return true;
+    if (s1.addr0() == s2.addr0())
+      return true;
     if (s1.addr0() < s2.addr0() && s1.addr0() + s1.size() > s2.addr0())
       return true;
     if (s2.addr0() < s1.addr0() && s2.addr0() + s2.size() > s1.addr0())
@@ -337,7 +317,7 @@ struct JmpBuf {
 // ThreadState's (which are tied to Gs).
 // A ThreadState must be wired with a Processor to handle events.
 struct Processor {
-  ThreadState *thr; // currently wired thread, or nullptr
+  ThreadState *thr;  // currently wired thread, or nullptr
 #if !SANITIZER_GO
   AllocatorCache alloc_cache;
   InternalAllocatorCache internal_alloc_cache;
@@ -375,7 +355,7 @@ struct ThreadState {
   u64 fast_synch_epoch;
   // Technically `current` should be a separate THREADLOCAL variable;
   // but it is placed here in order to share cache line with previous fields.
-  ThreadState* current;
+  ThreadState *current;
   // This is a slow path flag. On fast path, fast_state.GetIgnoreBit() is read.
   // We do not distinguish beteween ignoring reads and writes
   // for better performance.
@@ -445,14 +425,14 @@ struct ThreadState {
 };
 
 #if !SANITIZER_GO
-#if SANITIZER_MAC || SANITIZER_ANDROID
+#  if SANITIZER_MAC || SANITIZER_ANDROID
 ThreadState *cur_thread();
 void set_cur_thread(ThreadState *thr);
 void cur_thread_finalize();
-inline void cur_thread_init() { }
-#else
-__attribute__((tls_model("initial-exec")))
-extern THREADLOCAL char cur_thread_placeholder[];
+inline void cur_thread_init() {}
+#  else
+__attribute__((tls_model(
+    "initial-exec"))) extern THREADLOCAL char cur_thread_placeholder[];
 inline ThreadState *cur_thread() {
   return reinterpret_cast<ThreadState *>(cur_thread_placeholder)->current;
 }
@@ -464,9 +444,9 @@ inline void cur_thread_init() {
 inline void set_cur_thread(ThreadState *thr) {
   reinterpret_cast<ThreadState *>(cur_thread_placeholder)->current = thr;
 }
-inline void cur_thread_finalize() { }
-#endif  // SANITIZER_MAC || SANITIZER_ANDROID
-#endif  // SANITIZER_GO
+inline void cur_thread_finalize() {}
+#  endif  // SANITIZER_MAC || SANITIZER_ANDROID
+#endif    // SANITIZER_GO
 
 class ThreadContext final : public ThreadContextBase {
  public:
@@ -548,9 +528,7 @@ struct Context {
 
 extern Context *ctx;  // The one and the only global runtime context.
 
-ALWAYS_INLINE Flags *flags() {
-  return &ctx->flags;
-}
+ALWAYS_INLINE Flags *flags() { return &ctx->flags; }
 
 struct ScopedIgnoreInterceptors {
   ScopedIgnoreInterceptors() {
@@ -620,18 +598,21 @@ void RestoreStack(Tid tid, const u64 epoch, VarSizeStackTrace *stk,
 //   <start> | <main> | <foo> | tag | <bar>
 // This will extract the tag and keep:
 //   <start> | <main> | <foo> | <bar>
-template<typename StackTraceTy>
+template <typename StackTraceTy>
 void ExtractTagFromStack(StackTraceTy *stack, uptr *tag = nullptr) {
-  if (stack->size < 2) return;
+  if (stack->size < 2)
+    return;
   uptr possible_tag_pc = stack->trace[stack->size - 2];
   uptr possible_tag = TagFromShadowStackFrame(possible_tag_pc);
-  if (possible_tag == kExternalTagNone) return;
+  if (possible_tag == kExternalTagNone)
+    return;
   stack->trace_buffer[stack->size - 2] = stack->trace_buffer[stack->size - 1];
   stack->size -= 1;
-  if (tag) *tag = possible_tag;
+  if (tag)
+    *tag = possible_tag;
 }
 
-template<typename StackTraceTy>
+template <typename StackTraceTy>
 void ObtainCurrentStack(ThreadState *thr, uptr toppc, StackTraceTy *stack,
                         uptr *tag = nullptr) {
   uptr size = thr->shadow_stack_pos - thr->shadow_stack;
@@ -645,7 +626,7 @@ void ObtainCurrentStack(ThreadState *thr, uptr toppc, StackTraceTy *stack,
 }
 
 #define GET_STACK_TRACE_FATAL(thr, pc) \
-  VarSizeStackTrace stack; \
+  VarSizeStackTrace stack;             \
   ObtainCurrentStack(thr, pc, &stack); \
   stack.ReverseOrder();
 
@@ -668,15 +649,15 @@ bool IsFiredSuppression(Context *ctx, ReportType type, StackTrace trace);
 bool IsExpectedReport(uptr addr, uptr size);
 
 #if defined(TSAN_DEBUG_OUTPUT) && TSAN_DEBUG_OUTPUT >= 1
-# define DPrintf Printf
+#  define DPrintf Printf
 #else
-# define DPrintf(...)
+#  define DPrintf(...)
 #endif
 
 #if defined(TSAN_DEBUG_OUTPUT) && TSAN_DEBUG_OUTPUT >= 2
-# define DPrintf2 Printf
+#  define DPrintf2 Printf
 #else
-# define DPrintf2(...)
+#  define DPrintf2(...)
 #endif
 
 StackID CurrentStackId(ThreadState *thr, uptr pc);
@@ -692,13 +673,13 @@ int Finalize(ThreadState *thr);
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write);
 
-void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
-    int kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic);
-void MemoryAccessImpl(ThreadState *thr, uptr addr,
-    int kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic,
-    u64 *shadow_mem, Shadow cur);
-void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr,
-    uptr size, bool is_write);
+void MemoryAccess(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog,
+                  bool kAccessIsWrite, bool kIsAtomic);
+void MemoryAccessImpl(ThreadState *thr, uptr addr, int kAccessSizeLog,
+                      bool kAccessIsWrite, bool kIsAtomic, u64 *shadow_mem,
+                      Shadow cur);
+void MemoryAccessRange(ThreadState *thr, uptr pc, uptr addr, uptr size,
+                       bool is_write);
 void UnalignedMemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr size,
                            AccessType typ);
 
@@ -777,8 +758,8 @@ void MutexCreate(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexDestroy(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexPreLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexPostLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0,
-    int rec = 1);
-int  MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
+                   int rec = 1);
+int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexPreReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexPostReadLock(ThreadState *thr, uptr pc, uptr addr, u32 flagz = 0);
 void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr);
@@ -813,16 +794,17 @@ void AcquireReleaseImpl(ThreadState *thr, uptr pc, SyncClock *c);
 #if !SANITIZER_DEBUG && defined(__x86_64__) && !SANITIZER_MAC
 // The caller may not create the stack frame for itself at all,
 // so we create a reserve stack frame for it (1024b must be enough).
-#define HACKY_CALL(f) \
-  __asm__ __volatile__("sub $1024, %%rsp;" \
-                       CFI_INL_ADJUST_CFA_OFFSET(1024) \
-                       ".hidden " #f "_thunk;" \
-                       "call " #f "_thunk;" \
-                       "add $1024, %%rsp;" \
-                       CFI_INL_ADJUST_CFA_OFFSET(-1024) \
-                       ::: "memory", "cc");
+#  define HACKY_CALL(f)                                                  \
+    __asm__ __volatile__(                                                \
+        "sub $1024, %%rsp;" CFI_INL_ADJUST_CFA_OFFSET(                   \
+            1024) ".hidden " #f                                          \
+                  "_thunk;"                                              \
+                  "call " #f                                             \
+                  "_thunk;"                                              \
+                  "add $1024, %%rsp;" CFI_INL_ADJUST_CFA_OFFSET(-1024):: \
+                      : "memory", "cc");
 #else
-#define HACKY_CALL(f) f()
+#  define HACKY_CALL(f) f()
 #endif
 
 void TraceSwitch(ThreadState *thr);
@@ -832,8 +814,8 @@ uptr TraceParts();
 Trace *ThreadTrace(Tid tid);
 
 extern "C" void __tsan_trace_switch();
-void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs,
-                                        EventType typ, u64 addr) {
+void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs, EventType typ,
+                                 u64 addr) {
   if (!kCollectHistory)
     return;
   DCHECK_GE((int)typ, 0);
@@ -847,7 +829,7 @@ void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs,
     TraceSwitch(thr);
 #endif
   }
-  Event *trace = (Event*)GetThreadTrace(fs.tid());
+  Event *trace = (Event *)GetThreadTrace(fs.tid());
   Event *evp = &trace[pos];
   Event ev = (u64)addr | ((u64)typ << kEventPCBits);
   *evp = ev;
@@ -866,7 +848,7 @@ void FiberSwitch(ThreadState *thr, uptr pc, ThreadState *fiber, unsigned flags);
 // These need to match __tsan_switch_to_fiber_* flags defined in
 // tsan_interface.h. See documentation there as well.
 enum FiberSwitchFlags {
-  FiberSwitchFlagNoSync = 1 << 0, // __tsan_switch_to_fiber_no_sync
+  FiberSwitchFlagNoSync = 1 << 0,  // __tsan_switch_to_fiber_no_sync
 };
 
 ALWAYS_INLINE void ProcessPendingSignals(ThreadState *thr) {

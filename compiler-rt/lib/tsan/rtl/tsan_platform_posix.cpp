@@ -14,12 +14,12 @@
 #include "sanitizer_common/sanitizer_platform.h"
 #if SANITIZER_POSIX
 
-#include "sanitizer_common/sanitizer_common.h"
-#include "sanitizer_common/sanitizer_errno.h"
-#include "sanitizer_common/sanitizer_libc.h"
-#include "sanitizer_common/sanitizer_procmaps.h"
-#include "tsan_platform.h"
-#include "tsan_rtl.h"
+#  include "sanitizer_common/sanitizer_common.h"
+#  include "sanitizer_common/sanitizer_errno.h"
+#  include "sanitizer_common/sanitizer_libc.h"
+#  include "sanitizer_common/sanitizer_procmaps.h"
+#  include "tsan_platform.h"
+#  include "tsan_rtl.h"
 
 namespace __tsan {
 
@@ -39,7 +39,7 @@ static void DontDumpShadow(uptr addr, uptr size) {
     }
 }
 
-#if !SANITIZER_GO
+#  if !SANITIZER_GO
 void InitializeShadowMemory() {
   // Map memory shadow.
   if (!MmapFixedSuperNoReserve(ShadowBeg(), ShadowEnd() - ShadowBeg(),
@@ -53,9 +53,8 @@ void InitializeShadowMemory() {
   // a program uses a small part of large mmap. On some programs
   // we see 20% memory usage reduction without huge pages for this range.
   DontDumpShadow(ShadowBeg(), ShadowEnd() - ShadowBeg());
-  DPrintf("memory shadow: %zx-%zx (%zuGB)\n",
-      ShadowBeg(), ShadowEnd(),
-      (ShadowEnd() - ShadowBeg()) >> 30);
+  DPrintf("memory shadow: %zx-%zx (%zuGB)\n", ShadowBeg(), ShadowEnd(),
+          (ShadowEnd() - ShadowBeg()) >> 30);
 
   // Map meta shadow.
   const uptr meta = MetaShadowBeg();
@@ -66,8 +65,8 @@ void InitializeShadowMemory() {
     Die();
   }
   DontDumpShadow(meta, meta_size);
-  DPrintf("meta shadow: %zx-%zx (%zuGB)\n",
-      meta, meta + meta_size, meta_size >> 30);
+  DPrintf("meta shadow: %zx-%zx (%zuGB)\n", meta, meta + meta_size,
+          meta_size >> 30);
 
   InitializeShadowMemoryPlatform();
 }
@@ -92,8 +91,10 @@ void CheckAndProtect() {
   MemoryMappingLayout proc_maps(true);
   MemoryMappedSegment segment;
   while (proc_maps.Next(&segment)) {
-    if (IsAppMem(segment.start)) continue;
-    if (segment.start >= HeapMemEnd() && segment.start < HeapEnd()) continue;
+    if (IsAppMem(segment.start))
+      continue;
+    if (segment.start >= HeapMemEnd() && segment.start < HeapEnd())
+      continue;
     if (segment.protection == 0)  // Zero page or mprotected.
       continue;
     if (segment.start >= VdsoBeg())  // vdso
@@ -103,27 +104,27 @@ void CheckAndProtect() {
     Die();
   }
 
-#if defined(__aarch64__) && defined(__APPLE__) && !HAS_48_BIT_ADDRESS_SPACE
+#    if defined(__aarch64__) && defined(__APPLE__) && !HAS_48_BIT_ADDRESS_SPACE
   ProtectRange(HeapMemEnd(), ShadowBeg());
   ProtectRange(ShadowEnd(), MetaShadowBeg());
   ProtectRange(MetaShadowEnd(), TraceMemBeg());
-#else
+#    else
   ProtectRange(LoAppMemEnd(), ShadowBeg());
   ProtectRange(ShadowEnd(), MetaShadowBeg());
-#ifdef TSAN_MID_APP_RANGE
+#      ifdef TSAN_MID_APP_RANGE
   ProtectRange(MetaShadowEnd(), MidAppMemBeg());
   ProtectRange(MidAppMemEnd(), TraceMemBeg());
-#else
+#      else
   ProtectRange(MetaShadowEnd(), TraceMemBeg());
-#endif
+#      endif
   // Memory for traces is mapped lazily in MapThreadTrace.
   // Protect the whole range for now, so that user does not map something here.
   ProtectRange(TraceMemBeg(), TraceMemEnd());
   ProtectRange(TraceMemEnd(), HeapMemBeg());
   ProtectRange(HeapEnd(), HiAppMemBeg());
-#endif
+#    endif
 
-#if defined(__s390x__)
+#    if defined(__s390x__)
   // Protect the rest of the address space.
   const uptr user_addr_max_l4 = 0x0020000000000000ull;
   const uptr user_addr_max_l5 = 0xfffffffffffff000ull;
@@ -131,9 +132,9 @@ void CheckAndProtect() {
   ProtectRange(HiAppMemEnd(), user_addr_max_l4);
   // Older s390x kernels may not support 5-level page tables.
   TryProtectRange(user_addr_max_l4, user_addr_max_l5);
-#endif
+#    endif
 }
-#endif
+#  endif
 
 }  // namespace __tsan
 

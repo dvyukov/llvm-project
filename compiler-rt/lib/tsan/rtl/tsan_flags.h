@@ -13,8 +13,8 @@
 #ifndef TSAN_FLAGS_H
 #define TSAN_FLAGS_H
 
-#include "sanitizer_common/sanitizer_flags.h"
 #include "sanitizer_common/sanitizer_deadlock_detector_interface.h"
+#include "sanitizer_common/sanitizer_flags.h"
 
 namespace __tsan {
 

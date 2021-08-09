@@ -11,8 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsan_fd.h"
-#include "tsan_rtl.h"
+
 #include <sanitizer_common/sanitizer_atomic.h>
+
+#include "tsan_rtl.h"
 
 namespace __tsan {
 
@@ -47,8 +49,8 @@ static bool bogusfd(int fd) {
 }
 
 static FdSync *allocsync(ThreadState *thr, uptr pc) {
-  FdSync *s = (FdSync*)user_alloc_internal(thr, pc, sizeof(FdSync),
-      kDefaultAlignment, false);
+  FdSync *s = (FdSync *)user_alloc_internal(thr, pc, sizeof(FdSync),
+                                            kDefaultAlignment, false);
   atomic_store(&s->rc, 1, memory_order_relaxed);
   return s;
 }
@@ -92,7 +94,7 @@ static FdDesc *fddesc(ThreadState *thr, uptr pc, int fd) {
 
 // pd must be already ref'ed.
 static void init(ThreadState *thr, uptr pc, int fd, FdSync *s,
-    bool write = true) {
+                 bool write = true) {
   FdDesc *d = fddesc(thr, pc, fd);
   // As a matter of fact, we don't intercept all close calls.
   // See e.g. libc __res_iclose().
@@ -130,7 +132,7 @@ void FdOnFork(ThreadState *thr, uptr pc) {
   // close all them, and that will cause races between previous read/write
   // and the close.
   for (int l1 = 0; l1 < kTableSizeL1; l1++) {
-    FdDesc *tab = (FdDesc*)atomic_load(&fdctx.tab[l1], memory_order_relaxed);
+    FdDesc *tab = (FdDesc *)atomic_load(&fdctx.tab[l1], memory_order_relaxed);
     if (tab == 0)
       break;
     for (int l2 = 0; l2 < kTableSizeL2; l2++) {
@@ -142,7 +144,7 @@ void FdOnFork(ThreadState *thr, uptr pc) {
 
 bool FdLocation(uptr addr, int *fd, Tid *tid, StackID *stack) {
   for (int l1 = 0; l1 < kTableSizeL1; l1++) {
-    FdDesc *tab = (FdDesc*)atomic_load(&fdctx.tab[l1], memory_order_relaxed);
+    FdDesc *tab = (FdDesc *)atomic_load(&fdctx.tab[l1], memory_order_relaxed);
     if (tab == 0)
       break;
     if (addr >= (uptr)tab && addr < (uptr)(tab + kTableSizeL2)) {

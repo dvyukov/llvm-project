@@ -10,17 +10,16 @@
 //
 //===----------------------------------------------------------------------===//
 #include "tsan_stack_trace.h"
-#include "tsan_rtl.h"
+
 #include "tsan_mman.h"
+#include "tsan_rtl.h"
 
 namespace __tsan {
 
 VarSizeStackTrace::VarSizeStackTrace()
     : StackTrace(nullptr, 0), trace_buffer(nullptr) {}
 
-VarSizeStackTrace::~VarSizeStackTrace() {
-  ResizeBuffer(0);
-}
+VarSizeStackTrace::~VarSizeStackTrace() { ResizeBuffer(0); }
 
 void VarSizeStackTrace::ResizeBuffer(uptr new_size) {
   Free(trace_buffer);
@@ -46,8 +45,10 @@ void VarSizeStackTrace::ReverseOrder() {
 }  // namespace __tsan
 
 #if !SANITIZER_GO
-void __sanitizer::BufferedStackTrace::UnwindImpl(
-    uptr pc, uptr bp, void *context, bool request_fast, u32 max_depth) {
+void __sanitizer::BufferedStackTrace::UnwindImpl(uptr pc, uptr bp,
+                                                 void *context,
+                                                 bool request_fast,
+                                                 u32 max_depth) {
   uptr top = 0;
   uptr bottom = 0;
   GetThreadStackTopAndBottom(false, &top, &bottom);

@@ -35,15 +35,15 @@ class SyncClock {
   void Resize(ClockCache *c, uptr nclk);
   void Reset(ClockCache *c);
 
-  void DebugDump(int(*printf)(const char *s, ...));
+  void DebugDump(int (*printf)(const char *s, ...));
 
   // Clock element iterator.
   // Note: it iterates only over the table without regard to dirty entries.
   class Iter {
    public:
-    explicit Iter(SyncClock* parent);
-    Iter& operator++();
-    bool operator!=(const Iter& other);
+    explicit Iter(SyncClock *parent);
+    Iter &operator++();
+    bool operator!=(const Iter &other);
     ClockElem &operator*();
 
    private:
@@ -152,7 +152,7 @@ class ThreadClock {
   void NoteGlobalAcquire(u64 v);
 
   void DebugReset();
-  void DebugDump(int(*printf)(const char *s, ...));
+  void DebugDump(int (*printf)(const char *s, ...));
 
  private:
   static const uptr kDirtyTids = SyncClock::kDirtyTids;
@@ -237,13 +237,9 @@ ALWAYS_INLINE void ThreadClock::set(u64 v) {
   clk_[tid_] = v;
 }
 
-ALWAYS_INLINE void ThreadClock::tick() {
-  clk_[tid_]++;
-}
+ALWAYS_INLINE void ThreadClock::tick() { clk_[tid_]++; }
 
-ALWAYS_INLINE uptr ThreadClock::size() const {
-  return nclk_;
-}
+ALWAYS_INLINE uptr ThreadClock::size() const { return nclk_; }
 
 ALWAYS_INLINE void ThreadClock::NoteGlobalAcquire(u64 v) {
   // Here we rely on the fact that AcquireGlobal is protected by
@@ -253,41 +249,30 @@ ALWAYS_INLINE void ThreadClock::NoteGlobalAcquire(u64 v) {
   atomic_store_relaxed(&global_acquire_, v);
 }
 
-ALWAYS_INLINE SyncClock::Iter SyncClock::begin() {
-  return Iter(this);
-}
+ALWAYS_INLINE SyncClock::Iter SyncClock::begin() { return Iter(this); }
 
-ALWAYS_INLINE SyncClock::Iter SyncClock::end() {
-  return Iter(nullptr);
-}
+ALWAYS_INLINE SyncClock::Iter SyncClock::end() { return Iter(nullptr); }
 
-ALWAYS_INLINE uptr SyncClock::size() const {
-  return size_;
-}
+ALWAYS_INLINE uptr SyncClock::size() const { return size_; }
 
-ALWAYS_INLINE SyncClock::Iter::Iter(SyncClock* parent)
-    : parent_(parent)
-    , pos_(nullptr)
-    , end_(nullptr)
-    , block_(-1) {
+ALWAYS_INLINE SyncClock::Iter::Iter(SyncClock *parent)
+    : parent_(parent), pos_(nullptr), end_(nullptr), block_(-1) {
   if (parent)
     Next();
 }
 
-ALWAYS_INLINE SyncClock::Iter& SyncClock::Iter::operator++() {
+ALWAYS_INLINE SyncClock::Iter &SyncClock::Iter::operator++() {
   pos_++;
   if (UNLIKELY(pos_ >= end_))
     Next();
   return *this;
 }
 
-ALWAYS_INLINE bool SyncClock::Iter::operator!=(const SyncClock::Iter& other) {
+ALWAYS_INLINE bool SyncClock::Iter::operator!=(const SyncClock::Iter &other) {
   return parent_ != other.parent_;
 }
 
-ALWAYS_INLINE ClockElem &SyncClock::Iter::operator*() {
-  return *pos_;
-}
+ALWAYS_INLINE ClockElem &SyncClock::Iter::operator*() { return *pos_; }
 }  // namespace __tsan
 
 #endif  // TSAN_CLOCK_H
