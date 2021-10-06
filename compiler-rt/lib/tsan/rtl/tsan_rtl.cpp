@@ -359,7 +359,6 @@ Context::Context()
       racy_stacks(),
       racy_addresses(),
       fired_suppressions_mtx(MutexTypeFired),
-      clock_alloc(LINKER_INITIALIZED, "clock allocator"),
       slot_mtx(MutexTypeSlots) {
   fired_suppressions.reserve(8);
   for (uptr i = 0; i < ARRAY_SIZE(slots); i++) {
