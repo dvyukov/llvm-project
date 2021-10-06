@@ -34,7 +34,6 @@ append_list_if(COMPILER_RT_HAS_LIBM m TSAN_DYNAMIC_LINK_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBPTHREAD pthread TSAN_DYNAMIC_LINK_LIBS)
 
 set(TSAN_SOURCES
-  rtl/tsan_clock.cpp
   rtl/tsan_debugging.cpp
   rtl/tsan_external.cpp
   rtl/tsan_fd.cpp
@@ -94,7 +93,6 @@ if(COMPILER_RT_INTERCEPT_LIBDISPATCH)
 endif()
 
 set(TSAN_HEADERS
-  rtl/tsan_clock.h
   rtl/tsan_defs.h
   rtl/tsan_dense_alloc.h
   rtl/tsan_fd.h
