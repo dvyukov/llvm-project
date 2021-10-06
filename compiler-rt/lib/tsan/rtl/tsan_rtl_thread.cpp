@@ -101,7 +101,7 @@ void ThreadFinalize(ThreadState *thr) {
 
 int ThreadCount(ThreadState *thr) {
   uptr result;
-  ctx->thread_registry.GetNumberOfThreads(0, 0, &result);
+  ctx->thread_registry.GetNumberOfThreads(nullptr, &result);
   return (int)result;
 }
 
