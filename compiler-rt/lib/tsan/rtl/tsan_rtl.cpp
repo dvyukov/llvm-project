@@ -1023,12 +1023,6 @@ void TraceSwitchPartImpl(ThreadState* thr) {
           atomic_load_relaxed(&thr->trace_pos));
 }
 
-#if !SANITIZER_GO
-extern "C" void __tsan_trace_switch() {}
-
-extern "C" void __tsan_report_race() {}
-#endif
-
 ALWAYS_INLINE Shadow LoadShadow(RawShadow* p) {
   return Shadow(static_cast<RawShadow>(
       atomic_load((atomic_uint32_t*)p, memory_order_relaxed)));
