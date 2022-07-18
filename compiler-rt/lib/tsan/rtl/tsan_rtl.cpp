@@ -167,9 +167,9 @@ static void DoResetImpl(uptr epoch) {
         // so this is only best-effort. The thread can only modify position
         // within this part, because switching parts is protected by
         // slot/trace mutexes that we hold here.
-        atomic_store_relaxed(
-            &tctx->thr->trace_pos,
-            reinterpret_cast<uptr>(&part->events[TracePart::kSize]));
+        //atomic_store_relaxed(
+        //    &tctx->thr->trace_pos,
+        //    reinterpret_cast<uptr>(&part->events[TracePart::kSize]));
         break;
       }
       parts->Remove(part);
@@ -221,7 +221,7 @@ void DoReset(ThreadState* thr, uptr epoch) SANITIZER_NO_THREAD_SAFETY_ANALYSIS {
       return;
     }
   }
-  DPrintf("#%d: DoReset epoch=%lu\n", thr ? thr->tid : -1, epoch);
+  Printf("#%d: DoReset epoch=%lu\n", thr ? thr->tid : -1, epoch);
   DoResetImpl(epoch);
   for (auto& slot : ctx->slots) slot.mtx.Unlock();
 }
@@ -294,6 +294,7 @@ void SlotAttachAndLock(ThreadState* thr) {
   }
   thr->clock.Set(slot->sid, epoch);
   slot->journal.PushBack({thr->tid, epoch});
+  //!!! do we need to TraceTime here?
 }
 
 static void SlotDetachImpl(ThreadState* thr, bool exiting) {

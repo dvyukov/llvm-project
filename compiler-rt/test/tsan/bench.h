@@ -1,5 +1,6 @@
 #include "test.h"
 #include <time.h>
+#include <stdint.h>
 
 int bench_nthread;
 int bench_niter;
@@ -7,6 +8,12 @@ int bench_mode;
 
 void bench();  // defined by user
 void start_thread_group(int nth, void(*f)(int tid));
+
+uint64_t nanotime() {
+  timespec tp;
+  clock_gettime(CLOCK_MONOTONIC, &tp);
+  return tp.tv_sec * 1000000000ULL + tp.tv_nsec;
+}
 
 int main(int argc, char **argv) {
   bench_nthread = 2;
@@ -18,15 +25,10 @@ int main(int argc, char **argv) {
   if (argc > 3)
     bench_mode = atoi(argv[3]);
 
-  timespec tp0;
-  clock_gettime(CLOCK_MONOTONIC, &tp0);
+  uint64_t start = nanotime();
   bench();
-  timespec tp1;
-  clock_gettime(CLOCK_MONOTONIC, &tp1);
-  unsigned long long t =
-      (tp1.tv_sec * 1000000000ULL + tp1.tv_nsec) -
-      (tp0.tv_sec * 1000000000ULL + tp0.tv_nsec);
-  fprintf(stderr, "%llu ns/iter\n", t / bench_niter);
+  uint64_t t = nanotime() - start;
+  fprintf(stderr, "%lu ns/iter\n", t / bench_niter);
   fprintf(stderr, "DONE\n");
 }
 

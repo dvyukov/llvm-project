@@ -496,6 +496,8 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
         }
         bool match = ev_sid == sid && ev_epoch == epoch;
         if (evp->is_access) {
+          if (!match)
+            return;
           if (evp->is_func == 0 && evp->type == EventType::kAccessExt &&
               evp->_ == 0)  // NopEvent
             return;
@@ -507,7 +509,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
           prev_pc = ev_pc;
           DPrintf2("  Access: pc=0x%zx addr=0x%zx/%zu type=%u/%u\n", ev_pc,
                    ev_addr, ev_size, ev->is_read, ev->is_atomic);
-          if (match && type == EventType::kAccessExt &&
+          if (type == EventType::kAccessExt &&
               IsWithinAccess(addr, size, ev_addr, ev_size) &&
               is_read == ev->is_read && is_atomic == ev->is_atomic && !is_free)
             RestoreStackMatch(pstk, pmset, &stack, mset, ev_pc, &found);
@@ -530,13 +532,15 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
         }
         switch (evp->type) {
           case EventType::kAccessExt: {
+            if (!match)
+              return;
             auto *ev = reinterpret_cast<EventAccessExt *>(evp);
             uptr ev_addr = RestoreAddr(ev->addr);
             uptr ev_size = 1 << ev->size_log;
             prev_pc = ev->pc;
             DPrintf2("  AccessExt: pc=0x%llx addr=0x%zx/%zu type=%u/%u\n",
                      ev->pc, ev_addr, ev_size, ev->is_read, ev->is_atomic);
-            if (match && type == EventType::kAccessExt &&
+            if (type == EventType::kAccessExt &&
                 IsWithinAccess(addr, size, ev_addr, ev_size) &&
                 is_read == ev->is_read && is_atomic == ev->is_atomic &&
                 !is_free)
@@ -544,6 +548,8 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
             break;
           }
           case EventType::kAccessRange: {
+            if (!match)
+              return;
             auto *ev = reinterpret_cast<EventAccessRange *>(evp);
             uptr ev_addr = RestoreAddr(ev->addr);
             uptr ev_size =
@@ -552,7 +558,7 @@ bool RestoreStack(EventType type, Sid sid, Epoch epoch, uptr addr, uptr size,
             prev_pc = ev_pc;
             DPrintf2("  Range: pc=0x%zx addr=0x%zx/%zu type=%u/%u\n", ev_pc,
                      ev_addr, ev_size, ev->is_read, ev->is_free);
-            if (match && type == EventType::kAccessExt &&
+            if (type == EventType::kAccessExt &&
                 IsWithinAccess(addr, size, ev_addr, ev_size) &&
                 is_read == ev->is_read && !is_atomic && is_free == ev->is_free)
               RestoreStackMatch(pstk, pmset, &stack, mset, ev_pc, &found);
@@ -699,6 +705,7 @@ bool OutputReport(ThreadState *thr, const ScopedReport &srep) {
 }
 
 bool IsFiredSuppression(Context *ctx, ReportType type, StackTrace trace) {
+/*
   ReadLock lock(&ctx->fired_suppressions_mtx);
   for (uptr k = 0; k < ctx->fired_suppressions.size(); k++) {
     if (ctx->fired_suppressions[k].type != type)
@@ -712,10 +719,12 @@ bool IsFiredSuppression(Context *ctx, ReportType type, StackTrace trace) {
       }
     }
   }
+  */
   return false;
 }
 
 static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
+/*
   ReadLock lock(&ctx->fired_suppressions_mtx);
   for (uptr k = 0; k < ctx->fired_suppressions.size(); k++) {
     if (ctx->fired_suppressions[k].type != type)
@@ -727,6 +736,7 @@ static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
       return true;
     }
   }
+  */
   return false;
 }
 
@@ -739,7 +749,6 @@ void ReportRace(ThreadState *thr, RawShadow *shadow_mem, Shadow cur, Shadow old,
   ScopedIgnoreInterceptors ignore;
 
   uptr addr = ShadowToMem(shadow_mem);
-  DPrintf("#%d: ReportRace %p\n", thr->tid, (void *)addr);
   if (!ShouldReport(thr, ReportTypeRace))
     return;
   uptr addr_off0, size0;
@@ -753,14 +762,22 @@ void ReportRace(ThreadState *thr, RawShadow *shadow_mem, Shadow cur, Shadow old,
 
   const uptr kMop = 2;
   Shadow s[kMop] = {cur, old};
+  
+  //Printf("#%d: ReportRace %p sid=%u epoch=%u\n", thr->tid, (void *)addr, (u32)s[1].sid(), (u32)s[1].epoch());
+  static Sid bad_sid;
+  static Epoch bad_epoch;
+  if (s[1].sid() == bad_sid && s[1].epoch() == bad_epoch)
+    return;
+
+  
   uptr addr0 = addr + addr_off0;
   uptr addr1 = addr + addr_off1;
   uptr end0 = addr0 + size0;
   uptr end1 = addr1 + size1;
   uptr addr_min = min(addr0, addr1);
   uptr addr_max = max(end0, end1);
-  if (IsExpectedReport(addr_min, addr_max - addr_min))
-    return;
+  //if (IsExpectedReport(addr_min, addr_max - addr_min))
+  //  return;
   if (HandleRacyAddress(thr, addr_min, addr_max))
     return;
 
@@ -791,9 +808,15 @@ void ReportRace(ThreadState *thr, RawShadow *shadow_mem, Shadow cur, Shadow old,
   Lock slot_lock(&ctx->slots[static_cast<uptr>(s[1].sid())].mtx);
   ThreadRegistryLock l0(&ctx->thread_registry);
   Lock slots_lock(&ctx->slot_mtx);
+
+  //if (LoadShadow(shadow_mem) == Shadow::kRodata)
+  //  return;
   if (!RestoreStack(EventType::kAccessExt, s[1].sid(), s[1].epoch(), addr1,
-                    size1, typ1, &tids[1], &traces[1], mset[1], &tags[1]))
+                    size1, typ1, &tids[1], &traces[1], mset[1], &tags[1])) {
+    bad_sid =  s[1].sid();
+    bad_epoch = s[1].epoch();
     return;
+  }
 
   if (IsFiredSuppression(ctx, rep_typ, traces[1]))
     return;
