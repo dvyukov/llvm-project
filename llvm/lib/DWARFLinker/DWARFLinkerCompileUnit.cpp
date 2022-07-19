@@ -90,9 +90,11 @@ void CompileUnit::fixupForwardReferences() {
     PatchLocation Attr;
     DeclContext *Ctxt;
     std::tie(RefDie, RefUnit, Ctxt, Attr) = Ref;
-    if (Ctxt && Ctxt->getCanonicalDIEOffset())
+    if (Ctxt && Ctxt->hasCanonicalDIE()) {
+      assert(Ctxt->getCanonicalDIEOffset() &&
+             "Canonical die offset is not set");
       Attr.set(Ctxt->getCanonicalDIEOffset());
-    else
+    } else
       Attr.set(RefDie->getOffset() + RefUnit->getStartOffset());
   }
 }
@@ -110,6 +112,10 @@ void CompileUnit::addFunctionRange(uint64_t FuncLowPc, uint64_t FuncHighPc,
     Ranges.insert(FuncLowPc, FuncHighPc, PcOffset);
   this->LowPc = std::min(LowPc, FuncLowPc + PcOffset);
   this->HighPc = std::max(HighPc, FuncHighPc + PcOffset);
+}
+
+bool CompileUnit::overlapsWithFunctionRanges(uint64_t LowPC, uint64_t HighPC) {
+  return Ranges.overlaps(LowPC, HighPC);
 }
 
 void CompileUnit::noteRangeAttribute(const DIE &Die, PatchLocation Attr) {

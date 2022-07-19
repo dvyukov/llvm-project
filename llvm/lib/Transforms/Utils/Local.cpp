@@ -485,7 +485,7 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
 
     if (auto *FPI = dyn_cast<ConstrainedFPIntrinsic>(I)) {
       Optional<fp::ExceptionBehavior> ExBehavior = FPI->getExceptionBehavior();
-      return ExBehavior.getValue() != fp::ebStrict;
+      return *ExBehavior != fp::ebStrict;
     }
   }
 
@@ -1086,18 +1086,6 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
         }
       }
       ++BBI;
-    }
-  }
-
-  // We cannot fold the block if it's a branch to an already present callbr
-  // successor because that creates duplicate successors.
-  for (BasicBlock *PredBB : predecessors(BB)) {
-    if (auto *CBI = dyn_cast<CallBrInst>(PredBB->getTerminator())) {
-      if (Succ == CBI->getDefaultDest())
-        return false;
-      for (unsigned i = 0, e = CBI->getNumIndirectDests(); i != e; ++i)
-        if (Succ == CBI->getIndirectDest(i))
-          return false;
     }
   }
 

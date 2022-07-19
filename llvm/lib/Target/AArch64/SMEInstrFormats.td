@@ -28,6 +28,14 @@ def am_sme_indexed_b4 :ComplexPattern<iPTR, 2, "SelectAddrModeIndexedSVE<0,15>",
 // SME Outer Products
 //===----------------------------------------------------------------------===//
 
+class sme_outer_product_pseudo<ZPRRegOp zpr_ty>
+    : Pseudo<(outs), (ins i64imm:$tile, PPR3bAny:$pn, PPR3bAny:$pm,
+                          zpr_ty:$zn, zpr_ty:$zm), []>,
+      Sched<[]> {
+  // Translated to the actual instructions in AArch64ISelLowering.cpp
+  let usesCustomInserter = 1;
+}
+
 class sme_fp_outer_product_inst<bit S, bit sz, MatrixTileOperand za_ty,
                                 ZPRRegOp zpr_ty, string mnemonic>
     : I<(outs za_ty:$ZAda),
@@ -52,17 +60,31 @@ class sme_fp_outer_product_inst<bit S, bit sz, MatrixTileOperand za_ty,
   let Constraints = "$ZAda = $_ZAda";
 }
 
-class sme_outer_product_fp32<bit S, string mnemonic>
-    : sme_fp_outer_product_inst<S, 0b0, TileOp32, ZPR32, mnemonic> {
-  bits<2> ZAda;
-  let Inst{1-0} = ZAda;
-  let Inst{2}   = 0b0;
+multiclass sme_outer_product_fp32<bit S, string mnemonic, SDPatternOperator op> {
+  def NAME : sme_fp_outer_product_inst<S, 0b0, TileOp32, ZPR32, mnemonic> {
+    bits<2> ZAda;
+    let Inst{1-0} = ZAda;
+    let Inst{2}   = 0b0;
+  }
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR32>;
+
+  def : Pat<(op imm0_3:$tile, (nxv4i1 PPR3bAny:$pn), (nxv4i1 PPR3bAny:$pm),
+                (nxv4f32 ZPR32:$zn), (nxv4f32 ZPR32:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_3:$tile, $pn, $pm, $zn, $zm)>;
 }
 
-class sme_outer_product_fp64<bit S, string mnemonic>
-    : sme_fp_outer_product_inst<S, 0b1, TileOp64, ZPR64, mnemonic> {
-  bits<3> ZAda;
-  let Inst{2-0} = ZAda;
+multiclass sme_outer_product_fp64<bit S, string mnemonic, SDPatternOperator op> {
+  def NAME : sme_fp_outer_product_inst<S, 0b1, TileOp64, ZPR64, mnemonic> {
+    bits<3> ZAda;
+    let Inst{2-0} = ZAda;
+  }
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR64>;
+
+  def : Pat<(op imm0_7:$tile, (nxv2i1 PPR3bAny:$pn), (nxv2i1 PPR3bAny:$pm),
+                (nxv2f64 ZPR64:$zn), (nxv2f64 ZPR64:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_7:$tile, $pn, $pm, $zn, $zm)>;
 }
 
 class sme_int_outer_product_inst<bit u0, bit u1, bit S, bit sz,
@@ -92,19 +114,35 @@ class sme_int_outer_product_inst<bit u0, bit u1, bit S, bit sz,
   let Constraints = "$ZAda = $_ZAda";
 }
 
-class sme_int_outer_product_i32<bits<3> opc, string mnemonic>
-    : sme_int_outer_product_inst<opc{2}, opc{1}, opc{0}, 0b0, TileOp32, ZPR8,
-                                 mnemonic> {
-  bits<2> ZAda;
-  let Inst{1-0} = ZAda;
-  let Inst{2}   = 0b0;
+multiclass sme_int_outer_product_i32<bits<3> opc, string mnemonic,
+                                     SDPatternOperator op> {
+  def NAME : sme_int_outer_product_inst<opc{2}, opc{1}, opc{0}, 0b0, TileOp32,
+                                        ZPR8, mnemonic> {
+    bits<2> ZAda;
+    let Inst{1-0} = ZAda;
+    let Inst{2}   = 0b0;
+  }
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR8>;
+
+  def : Pat<(op imm0_3:$tile, (nxv16i1 PPR3bAny:$pn), (nxv16i1 PPR3bAny:$pm),
+                (nxv16i8 ZPR8:$zn), (nxv16i8 ZPR8:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_3:$tile, $pn, $pm, $zn, $zm)>;
 }
 
-class sme_int_outer_product_i64<bits<3> opc, string mnemonic>
-    : sme_int_outer_product_inst<opc{2}, opc{1}, opc{0}, 0b1, TileOp64, ZPR16,
-                                 mnemonic> {
-  bits<3> ZAda;
-  let Inst{2-0} = ZAda;
+multiclass sme_int_outer_product_i64<bits<3> opc, string mnemonic,
+                                     SDPatternOperator op> {
+  def NAME : sme_int_outer_product_inst<opc{2}, opc{1}, opc{0}, 0b1, TileOp64,
+                                        ZPR16, mnemonic> {
+    bits<3> ZAda;
+    let Inst{2-0} = ZAda;
+  }
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR16>;
+
+  def : Pat<(op imm0_7:$tile, (nxv8i1 PPR3bAny:$pn), (nxv8i1 PPR3bAny:$pm),
+                (nxv8i16 ZPR16:$zn), (nxv8i16 ZPR16:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_7:$tile, $pn, $pm, $zn, $zm)>;
 }
 
 class sme_outer_product_widening_inst<bit op, bit S, string mnemonic>
@@ -131,12 +169,24 @@ class sme_outer_product_widening_inst<bit op, bit S, string mnemonic>
   let Constraints = "$ZAda = $_ZAda";
 }
 
-multiclass sme_bf16_outer_product<bit S, string mnemonic> {
-  def : sme_outer_product_widening_inst<0b0, S, mnemonic>;
+multiclass sme_bf16_outer_product<bit S, string mnemonic, SDPatternOperator op> {
+  def NAME : sme_outer_product_widening_inst<0b0, S, mnemonic>;
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR16>;
+
+  def : Pat<(op imm0_3:$tile, (nxv8i1 PPR3bAny:$pn), (nxv8i1 PPR3bAny:$pm),
+                (nxv8bf16 ZPR16:$zn), (nxv8bf16 ZPR16:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_3:$tile, $pn, $pm, $zn, $zm)>;
 }
 
-multiclass sme_f16_outer_product<bit S, string mnemonic> {
-  def : sme_outer_product_widening_inst<0b1, S, mnemonic>;
+multiclass sme_f16_outer_product<bit S, string mnemonic, SDPatternOperator op> {
+  def NAME : sme_outer_product_widening_inst<0b1, S, mnemonic>;
+
+  def NAME # _PSEUDO : sme_outer_product_pseudo<ZPR16>;
+
+  def : Pat<(op imm0_3:$tile, (nxv8i1 PPR3bAny:$pn), (nxv8i1 PPR3bAny:$pm),
+                (nxv8f16 ZPR16:$zn), (nxv8f16 ZPR16:$zm)),
+            (!cast<Instruction>(NAME # _PSEUDO) imm0_3:$tile, $pn, $pm, $zn, $zm)>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -175,6 +225,40 @@ class sme_add_vector_to_tile_u64<bit V, string mnemonic>
     : sme_add_vector_to_tile_inst<0b1, V, TileOp64, ZPR64, mnemonic> {
   bits<3> ZAda;
   let Inst{2-0} = ZAda;
+}
+
+class sme_add_vector_to_tile_pseudo<ZPRRegOp zpr_ty>
+    : Pseudo<(outs),
+             (ins i64imm:$tile, PPR3bAny:$Pn, PPR3bAny:$Pm, zpr_ty:$Zn), []>,
+      Sched<[]> {
+  // Translated to the actual instructions in AArch64ISelLowering.cpp
+  let usesCustomInserter = 1;
+}
+
+def ADDHA_MPPZ_PSEUDO_S : sme_add_vector_to_tile_pseudo<ZPR32>;
+def ADDVA_MPPZ_PSEUDO_S : sme_add_vector_to_tile_pseudo<ZPR32>;
+
+def : Pat<(int_aarch64_sme_addha
+            imm0_3:$tile, (nxv4i1 PPR3bAny:$pn), (nxv4i1 PPR3bAny:$pm),
+            (nxv4i32 ZPR32:$zn)),
+          (ADDHA_MPPZ_PSEUDO_S imm0_3:$tile, $pn, $pm, $zn)>;
+def : Pat<(int_aarch64_sme_addva
+            imm0_3:$tile, (nxv4i1 PPR3bAny:$pn), (nxv4i1 PPR3bAny:$pm),
+            (nxv4i32 ZPR32:$zn)),
+          (ADDVA_MPPZ_PSEUDO_S imm0_3:$tile, $pn, $pm, $zn)>;
+
+let Predicates = [HasSMEI64] in {
+def ADDHA_MPPZ_PSEUDO_D : sme_add_vector_to_tile_pseudo<ZPR64>;
+def ADDVA_MPPZ_PSEUDO_D : sme_add_vector_to_tile_pseudo<ZPR64>;
+
+def : Pat<(int_aarch64_sme_addha
+            imm0_7:$tile, (nxv2i1 PPR3bAny:$pn), (nxv2i1 PPR3bAny:$pm),
+            (nxv2i64 ZPR64:$zn)),
+          (ADDHA_MPPZ_PSEUDO_D imm0_7:$tile, $pn, $pm, $zn)>;
+def : Pat<(int_aarch64_sme_addva
+            imm0_7:$tile, (nxv2i1 PPR3bAny:$pn), (nxv2i1 PPR3bAny:$pm),
+            (nxv2i64 ZPR64:$zn)),
+          (ADDVA_MPPZ_PSEUDO_D imm0_7:$tile, $pn, $pm, $zn)>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -251,25 +335,13 @@ multiclass sme_mem_ld_ss_patterns<Instruction Inst, SDPatternOperator Load,
                                   Operand tile_ty, Operand offset_ty,
                                   ComplexPattern addr,
                                   ComplexPattern tileslice> {
-  // base
-  def : Pat<(Load PPR3bAny:$pg, GPR64sp:$base, tile_ty:$tile,
-                  MatrixIndexGPR32Op12_15:$idx),
-            (Inst tile_ty:$tile, $idx, 0, $pg, $base, XZR)>;
-  // reg + reg
-  let AddedComplexity = 1 in {
-    def : Pat<(Load PPR3bAny:$pg, (addr GPR64sp:$base, GPR64:$offset),
-                    tile_ty:$tile, MatrixIndexGPR32Op12_15:$idx),
-              (Inst tile_ty:$tile, $idx, 0, $pg, $base, $offset)>;
-  }
-
   // base, tileslice
-  let AddedComplexity = 1 in {
-    def : Pat<(Load PPR3bAny:$pg, GPR64sp:$base, tile_ty:$tile,
-                    (i32 (tileslice MatrixIndexGPR32Op12_15:$idx, offset_ty:$imm))),
-              (Inst tile_ty:$tile, $idx, $imm, $pg, $base, XZR)>;
-  }
+  def : Pat<(Load PPR3bAny:$pg, GPR64sp:$base, tile_ty:$tile,
+                  (i32 (tileslice MatrixIndexGPR32Op12_15:$idx, offset_ty:$imm))),
+            (Inst tile_ty:$tile, $idx, $imm, $pg, $base, XZR)>;
+
   // reg + reg, tileslice
-  let AddedComplexity = 2 in {
+  let AddedComplexity = 1 in {
     def : Pat<(Load PPR3bAny:$pg, (addr GPR64sp:$base, GPR64:$offset),
                     tile_ty:$tile, (i32 (tileslice MatrixIndexGPR32Op12_15:$idx,
                                               offset_ty:$imm))),
@@ -410,24 +482,13 @@ multiclass sme_mem_st_ss_patterns<Instruction Inst, SDPatternOperator Store,
                                   ComplexPattern imm2tile,
                                   ComplexPattern addr,
                                   ComplexPattern tileslice> {
-  // base
-  def : Pat<(Store PPR3bAny:$pg, GPR64sp:$base, (imm2tile untyped:$tile),
-                   MatrixIndexGPR32Op12_15:$idx),
-            (Inst $tile, $idx, 0, $pg, $base, XZR)>;
-  // reg + reg
-  let AddedComplexity = 1 in {
-    def : Pat<(Store PPR3bAny:$pg, (addr GPR64sp:$base, GPR64:$offset),
-                     (imm2tile untyped:$tile), MatrixIndexGPR32Op12_15:$idx),
-              (Inst $tile, $idx, 0, $pg, $base, $offset)>;
-  }
   // base, tileslice
-  let AddedComplexity = 1 in {
-    def : Pat<(Store PPR3bAny:$pg, GPR64sp:$base, (imm2tile untyped:$tile),
-                     (i32 (tileslice MatrixIndexGPR32Op12_15:$idx, offset_ty:$imm))),
-              (Inst $tile, $idx, $imm, $pg, $base, XZR)>;
-  }
+  def : Pat<(Store PPR3bAny:$pg, GPR64sp:$base, (imm2tile untyped:$tile),
+                   (i32 (tileslice MatrixIndexGPR32Op12_15:$idx, offset_ty:$imm))),
+            (Inst $tile, $idx, $imm, $pg, $base, XZR)>;
+
   // reg + reg, tileslice
-  let AddedComplexity = 2 in {
+  let AddedComplexity = 1 in {
     def : Pat<(Store PPR3bAny:$pg, (addr GPR64sp:$base, GPR64:$offset),
                      (imm2tile untyped:$tile),
                      (i32 (tileslice MatrixIndexGPR32Op12_15:$idx, offset_ty:$imm))),
@@ -622,6 +683,30 @@ multiclass sme_vector_to_tile_aliases<Instruction inst,
                   (inst tile_ty:$ZAd, MatrixIndexGPR32Op12_15:$Rv, imm_ty:$imm, PPR3bAny:$Pg, zpr_ty:$Zn), 1>;
 }
 
+multiclass sme_vector_to_tile_patterns<Instruction inst, ValueType zpr_vt,
+                                       ValueType ppr_vt, Operand imm_ty,
+                                       Operand offset_ty,
+                                       SDPatternOperator op,
+                                       ComplexPattern tileslice> {
+  def : Pat<(op imm_ty:$tile, MatrixIndexGPR32Op12_15:$idx,
+                (ppr_vt PPR3bAny:$pg), (zpr_vt ZPRAny:$zn)),
+            (inst imm_ty:$tile, $idx, 0, $pg, $zn)>;
+  let AddedComplexity = 1 in {
+    def : Pat<(op imm_ty:$tile, (i32 (tileslice MatrixIndexGPR32Op12_15:$idx,
+                                                offset_ty:$imm)),
+                  (ppr_vt PPR3bAny:$pg), (zpr_vt ZPRAny:$zn)),
+              (inst imm_ty:$tile, $idx, $imm, $pg, $zn)>;
+  }
+}
+
+class sme_mova_insert_pseudo
+    : Pseudo<(outs), (ins i64imm:$tile, MatrixIndexGPR32Op12_15:$idx,
+                          i64imm:$imm, PPR3bAny:$pg, ZPRAny:$zn), []>,
+      Sched<[]> {
+  // Translated to the actual instructions in AArch64ISelLowering.cpp
+  let usesCustomInserter = 1;
+}
+
 multiclass sme_vector_v_to_tile<string mnemonic, bit is_col> {
   def _B : sme_vector_to_tile_inst<0b0, 0b00, !if(is_col, TileVectorOpV8,
                                                           TileVectorOpH8),
@@ -661,6 +746,14 @@ multiclass sme_vector_v_to_tile<string mnemonic, bit is_col> {
     let Inst{3-0} = ZAd;
   }
 
+  // Pseudo instructions for lowering intrinsics, using immediates instead of
+  // tile registers.
+  def _PSEUDO_B : sme_mova_insert_pseudo;
+  def _PSEUDO_H : sme_mova_insert_pseudo;
+  def _PSEUDO_S : sme_mova_insert_pseudo;
+  def _PSEUDO_D : sme_mova_insert_pseudo;
+  def _PSEUDO_Q : sme_mova_insert_pseudo;
+
   defm : sme_vector_to_tile_aliases<!cast<Instruction>(NAME # _B),
                                     !if(is_col, TileVectorOpV8,
                                                 TileVectorOpH8),
@@ -681,6 +774,62 @@ multiclass sme_vector_v_to_tile<string mnemonic, bit is_col> {
                                     !if(is_col, TileVectorOpV128,
                                                 TileVectorOpH128),
                                     ZPR128, sme_elm_idx0_0>;
+
+  defvar op = !if(is_col, int_aarch64_sme_write_vert,
+                          int_aarch64_sme_write_horiz);
+
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_B),
+                                     nxv16i8, nxv16i1, sme_elm_idx0_0, imm0_15,
+                                     op, tileslice8>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_H),
+                                     nxv8i16, nxv8i1, sme_elm_idx0_1, imm0_7,
+                                     op, tileslice16>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_H),
+                                     nxv8f16, nxv8i1, sme_elm_idx0_1, imm0_7,
+                                     op, tileslice16>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_H),
+                                     nxv8bf16, nxv8i1, sme_elm_idx0_1, imm0_7,
+                                     op, tileslice16>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_S),
+                                     nxv4i32, nxv4i1, sme_elm_idx0_3, imm0_3,
+                                     op, tileslice32>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_S),
+                                     nxv4f32, nxv4i1, sme_elm_idx0_3, imm0_3,
+                                     op, tileslice32>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_D),
+                                     nxv2i64, nxv2i1, sme_elm_idx0_7, imm0_1,
+                                     op, tileslice64>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_D),
+                                     nxv2f64, nxv2i1, sme_elm_idx0_7, imm0_1,
+                                     op, tileslice64>;
+
+  defvar opq = !if(is_col, int_aarch64_sme_writeq_vert,
+                           int_aarch64_sme_writeq_horiz);
+
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv16i8, nxv16i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv8i16, nxv8i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv8f16, nxv8i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv8bf16, nxv8i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv4i32, nxv4i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv4f32, nxv4i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv2i64, nxv2i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
+  defm : sme_vector_to_tile_patterns<!cast<Instruction>(NAME # _PSEUDO_Q),
+                                     nxv2f64, nxv2i1, sme_elm_idx0_15,
+                                     sme_elm_idx0_0, opq, tileslice128>;
 }
 
 multiclass sme_vector_to_tile<string mnemonic> {
@@ -720,6 +869,23 @@ multiclass sme_tile_to_vector_aliases<Instruction inst, ZPRRegOp zpr_ty,
                                       Operand imm_ty > {
   def : InstAlias<"mov\t$Zd, $Pg/m, $ZAn[$Rv, $imm]",
                   (inst zpr_ty:$Zd, PPR3bAny:$Pg, tile_ty:$ZAn, MatrixIndexGPR32Op12_15:$Rv, imm_ty:$imm), 1>;
+}
+
+multiclass sme_tile_to_vector_patterns<Instruction inst, ValueType zpr_vt,
+                                       ValueType ppr_vt, Operand offset_ty,
+                                       ComplexPattern imm2tile,
+                                       ComplexPattern tileslice,
+                                       SDPatternOperator op> {
+  def : Pat<(zpr_vt (op (zpr_vt ZPRAny:$passthru), (ppr_vt PPR3bAny:$pg),
+                        (imm2tile untyped:$tile), MatrixIndexGPR32Op12_15:$idx)),
+            (inst $passthru, $pg, $tile, $idx, 0)>;
+  let AddedComplexity = 1 in {
+    def : Pat<(zpr_vt (op (zpr_vt ZPRAny:$passthru), (ppr_vt PPR3bAny:$pg),
+                          (imm2tile untyped:$tile),
+                          (i32 (tileslice MatrixIndexGPR32Op12_15:$idx,
+                                          offset_ty:$imm)))),
+              (inst $passthru, $pg, $tile, $idx, $imm)>;
+  }
 }
 
 multiclass sme_tile_to_vector_v<string mnemonic, bit is_col> {
@@ -775,6 +941,62 @@ multiclass sme_tile_to_vector_v<string mnemonic, bit is_col> {
   defm : sme_tile_to_vector_aliases<!cast<Instruction>(NAME # _Q), ZPR128,
                                     !if(is_col, TileVectorOpV128,
                                                 TileVectorOpH128), sme_elm_idx0_0>;
+
+  defvar op = !if(is_col, int_aarch64_sme_read_vert,
+                          int_aarch64_sme_read_horiz);
+
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _B),
+                                     nxv16i8, nxv16i1, imm0_15,
+                                     imm_to_tile8, tileslice8, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _H),
+                                     nxv8i16, nxv8i1, imm0_7,
+                                     imm_to_tile16, tileslice16, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _H),
+                                     nxv8f16, nxv8i1, imm0_7,
+                                     imm_to_tile16, tileslice16, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _H),
+                                     nxv8bf16, nxv8i1, imm0_7,
+                                     imm_to_tile16, tileslice16, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _S),
+                                     nxv4i32, nxv4i1, imm0_3,
+                                     imm_to_tile32, tileslice32, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _S),
+                                     nxv4f32, nxv4i1, imm0_3,
+                                     imm_to_tile32, tileslice32, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _D),
+                                     nxv2i64, nxv2i1, imm0_1,
+                                     imm_to_tile64, tileslice64, op>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _D),
+                                     nxv2f64, nxv2i1, imm0_1,
+                                     imm_to_tile64, tileslice64, op>;
+
+  defvar opq = !if(is_col, int_aarch64_sme_readq_vert,
+                           int_aarch64_sme_readq_horiz);
+
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv16i8, nxv16i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv8i16, nxv8i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv8f16, nxv8i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv8bf16, nxv8i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv4i32, nxv4i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv4f32, nxv4i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv2i64, nxv2i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
+  defm : sme_tile_to_vector_patterns<!cast<Instruction>(NAME # _Q),
+                                     nxv2f64, nxv2i1, sme_elm_idx0_0,
+                                     imm_to_tile128, tileslice128, opq>;
 }
 
 multiclass sme_tile_to_vector<string mnemonic> {
@@ -786,8 +1008,11 @@ multiclass sme_tile_to_vector<string mnemonic> {
 // SME Zero
 //===----------------------------------------------------------------------===//
 
+// NOTE: This definition isn't really correct because there are outputs, i.e.
+// the tile registers being zeroed. We fix this up in a custom inserter that
+// marks the appropriate registers as being implicitly defined.
 class sme_zero_inst<string mnemonic>
-    : I<(outs MatrixTileList:$imm), (ins),
+    : I<(outs), (ins MatrixTileList:$imm),
         mnemonic, "\t$imm", "", []>, Sched<[]> {
   bits<8> imm;
   let Inst{31-8} = 0b110000000000100000000000;
@@ -812,6 +1037,15 @@ multiclass sme_zero<string mnemonic> {
   def : InstAlias<"zero\t\\{za0.s,za1.s,za3.s\\}", (!cast<Instruction>(NAME) 0b10111011), 1>;
   def : InstAlias<"zero\t\\{za0.s,za2.s,za3.s\\}", (!cast<Instruction>(NAME) 0b11011101), 1>;
   def : InstAlias<"zero\t\\{za1.s,za2.s,za3.s\\}", (!cast<Instruction>(NAME) 0b11101110), 1>;
+
+  def NAME # _PSEUDO : Pseudo<(outs), (ins i64imm:$tilelist), []>,
+      Sched<[]> {
+    // Translated to the actual instructions in AArch64ISelLowering.cpp
+    let usesCustomInserter = 1;
+  }
+
+  def : Pat<(int_aarch64_sme_zero imm:$imm),
+            (!cast<Instruction>(NAME # _PSEUDO) imm:$imm)>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -837,6 +1071,15 @@ class sve2_int_perm_revd<string asm>
   let ElementSize = ZPR128.ElementSize;
 }
 
+multiclass sve2_int_perm_revd<string asm, SDPatternOperator op> {
+  def NAME : sve2_int_perm_revd<asm>;
+
+  def : SVE_1_Op_Passthru_Pat<nxv16i8, op, nxv16i1, nxv16i8, !cast<Instruction>(NAME)>;
+  def : SVE_1_Op_Passthru_Pat<nxv8i16, op, nxv8i1,  nxv8i16, !cast<Instruction>(NAME)>;
+  def : SVE_1_Op_Passthru_Pat<nxv4i32, op, nxv4i1,  nxv4i32, !cast<Instruction>(NAME)>;
+  def : SVE_1_Op_Passthru_Pat<nxv2i64, op, nxv2i1,  nxv2i64, !cast<Instruction>(NAME)>;
+}
+
 class sve2_clamp<string asm, bits<2> sz, bit U, ZPRRegOp zpr_ty>
     : I<(outs zpr_ty:$Zd), (ins zpr_ty:$Zn, zpr_ty:$Zm, zpr_ty:$_Zd),
         asm, "\t$Zd, $Zn, $Zm", "", []>,
@@ -858,11 +1101,16 @@ class sve2_clamp<string asm, bits<2> sz, bit U, ZPRRegOp zpr_ty>
   let ElementSize = zpr_ty.ElementSize;
 }
 
-multiclass sve2_clamp<string asm, bit U> {
+multiclass sve2_clamp<string asm, bit U, SDPatternOperator op> {
   def _B : sve2_clamp<asm, 0b00, U, ZPR8>;
   def _H : sve2_clamp<asm, 0b01, U, ZPR16>;
   def _S : sve2_clamp<asm, 0b10, U, ZPR32>;
   def _D : sve2_clamp<asm, 0b11, U, ZPR64>;
+
+  def : SVE_3_Op_Pat<nxv16i8, op, nxv16i8, nxv16i8, nxv16i8, !cast<Instruction>(NAME # _B)>;
+  def : SVE_3_Op_Pat<nxv8i16, op, nxv8i16, nxv8i16, nxv8i16, !cast<Instruction>(NAME # _H)>;
+  def : SVE_3_Op_Pat<nxv4i32, op, nxv4i32, nxv4i32, nxv4i32, !cast<Instruction>(NAME # _S)>;
+  def : SVE_3_Op_Pat<nxv2i64, op, nxv2i64, nxv2i64, nxv2i64, !cast<Instruction>(NAME # _D)>;
 }
 
 class sve2_int_perm_sel_p<string asm, PPRRegOp ppr_ty, Operand imm_ty>
@@ -885,7 +1133,7 @@ class sve2_int_perm_sel_p<string asm, PPRRegOp ppr_ty, Operand imm_ty>
   let Inst{3-0}   = Pd;
 }
 
-multiclass sve2_int_perm_sel_p<string asm> {
+multiclass sve2_int_perm_sel_p<string asm, SDPatternOperator op> {
   def _B : sve2_int_perm_sel_p<asm, PPR8, sme_elm_idx0_15> {
     bits<4> imm;
     let Inst{23-22} = imm{3-2};
@@ -908,5 +1156,33 @@ multiclass sve2_int_perm_sel_p<string asm> {
     let Inst{23}    = imm;
     let Inst{22}    = 0b1;
     let Inst{20-18} = 0b000;
+  }
+
+  def : Pat<(nxv16i1 (op (nxv16i1 PPRAny:$Pn), (nxv16i1 PPRAny:$Pm),
+             MatrixIndexGPR32Op12_15:$idx)),
+            (!cast<Instruction>(NAME # _B) $Pn, $Pm, $idx, 0)>;
+  def : Pat<(nxv8i1 (op (nxv8i1 PPRAny:$Pn), (nxv8i1 PPRAny:$Pm),
+             MatrixIndexGPR32Op12_15:$idx)),
+            (!cast<Instruction>(NAME # _H) $Pn, $Pm, $idx, 0)>;
+  def : Pat<(nxv4i1 (op (nxv4i1 PPRAny:$Pn), (nxv4i1 PPRAny:$Pm),
+             MatrixIndexGPR32Op12_15:$idx)),
+            (!cast<Instruction>(NAME # _S) $Pn, $Pm, $idx, 0)>;
+  def : Pat<(nxv2i1 (op (nxv2i1 PPRAny:$Pn), (nxv2i1 PPRAny:$Pm),
+             MatrixIndexGPR32Op12_15:$idx)),
+            (!cast<Instruction>(NAME # _D) $Pn, $Pm, $idx, 0)>;
+
+  let AddedComplexity = 1 in {
+    def : Pat<(nxv16i1 (op (nxv16i1 PPRAny:$Pn), (nxv16i1 PPRAny:$Pm),
+               (i32 (tileslice8 MatrixIndexGPR32Op12_15:$idx, sme_elm_idx0_15:$imm)))),
+              (!cast<Instruction>(NAME # _B) $Pn, $Pm, $idx, $imm)>;
+    def : Pat<(nxv8i1 (op (nxv8i1 PPRAny:$Pn), (nxv8i1 PPRAny:$Pm),
+               (i32 (tileslice16 MatrixIndexGPR32Op12_15:$idx, sme_elm_idx0_7:$imm)))),
+              (!cast<Instruction>(NAME # _H) $Pn, $Pm, $idx, $imm)>;
+    def : Pat<(nxv4i1 (op (nxv4i1 PPRAny:$Pn), (nxv4i1 PPRAny:$Pm),
+               (i32 (tileslice32 MatrixIndexGPR32Op12_15:$idx, sme_elm_idx0_3:$imm)))),
+              (!cast<Instruction>(NAME # _S) $Pn, $Pm, $idx, $imm)>;
+    def : Pat<(nxv2i1 (op (nxv2i1 PPRAny:$Pn), (nxv2i1 PPRAny:$Pm),
+               (i32 (tileslice64 MatrixIndexGPR32Op12_15:$idx, sme_elm_idx0_1:$imm)))),
+              (!cast<Instruction>(NAME # _D) $Pn, $Pm, $idx, $imm)>;
   }
 }

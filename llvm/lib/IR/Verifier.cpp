@@ -1624,8 +1624,10 @@ Verifier::visitModuleFlag(const MDNode *Op,
     break;
 
   case Module::Min: {
-    Check(mdconst::dyn_extract_or_null<ConstantInt>(Op->getOperand(2)),
-          "invalid value for 'min' module flag (expected constant integer)",
+    auto *V = mdconst::dyn_extract_or_null<ConstantInt>(Op->getOperand(2));
+    Check(V && V->getValue().isNonNegative(),
+          "invalid value for 'min' module flag (expected constant non-negative "
+          "integer)",
           Op->getOperand(2));
     break;
   }
@@ -2200,7 +2202,13 @@ bool Verifier::verifyAttributeCount(AttributeList Attrs, unsigned Params) {
 void Verifier::verifyInlineAsmCall(const CallBase &Call) {
   const InlineAsm *IA = cast<InlineAsm>(Call.getCalledOperand());
   unsigned ArgNo = 0;
+  unsigned LabelNo = 0;
   for (const InlineAsm::ConstraintInfo &CI : IA->ParseConstraints()) {
+    if (CI.Type == InlineAsm::isLabel) {
+      ++LabelNo;
+      continue;
+    }
+
     // Only deal with constraints that correspond to call arguments.
     if (!CI.hasArg())
       continue;
@@ -2221,6 +2229,15 @@ void Verifier::verifyInlineAsmCall(const CallBase &Call) {
     }
 
     ArgNo++;
+  }
+
+  if (auto *CallBr = dyn_cast<CallBrInst>(&Call)) {
+    Check(LabelNo == CallBr->getNumIndirectDests(),
+          "Number of label constraints does not match number of callbr dests",
+          &Call);
+  } else {
+    Check(LabelNo == 0, "Label constraints can only be used with callbr",
+          &Call);
   }
 }
 
@@ -2839,25 +2856,6 @@ void Verifier::visitCallBrInst(CallBrInst &CBI) {
   Check(CBI.isInlineAsm(), "Callbr is currently only used for asm-goto!", &CBI);
   const InlineAsm *IA = cast<InlineAsm>(CBI.getCalledOperand());
   Check(!IA->canThrow(), "Unwinding from Callbr is not allowed");
-  for (unsigned i = 0, e = CBI.getNumSuccessors(); i != e; ++i)
-    Check(CBI.getSuccessor(i)->getType()->isLabelTy(),
-          "Callbr successors must all have pointer type!", &CBI);
-  for (unsigned i = 0, e = CBI.getNumOperands(); i != e; ++i) {
-    Check(i >= CBI.arg_size() || !isa<BasicBlock>(CBI.getOperand(i)),
-          "Using an unescaped label as a callbr argument!", &CBI);
-    if (isa<BasicBlock>(CBI.getOperand(i)))
-      for (unsigned j = i + 1; j != e; ++j)
-        Check(CBI.getOperand(i) != CBI.getOperand(j),
-              "Duplicate callbr destination!", &CBI);
-  }
-  {
-    SmallPtrSet<BasicBlock *, 4> ArgBBs;
-    for (Value *V : CBI.args())
-      if (auto *BA = dyn_cast<BlockAddress>(V))
-        ArgBBs.insert(BA->getBasicBlock());
-    for (BasicBlock *BB : CBI.getIndirectDests())
-      Check(ArgBBs.count(BB), "Indirect label missing from arglist.", &CBI);
-  }
 
   verifyInlineAsmCall(CBI);
   visitTerminator(CBI);
@@ -4887,7 +4885,7 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
 
     Optional<RoundingMode> RoundMode =
         convertStrToRoundingMode(cast<MDString>(MD)->getString());
-    Check(RoundMode.hasValue() && RoundMode.getValue() != RoundingMode::Dynamic,
+    Check(RoundMode && *RoundMode != RoundingMode::Dynamic,
           "unsupported rounding mode argument", Call);
     break;
   }
@@ -5160,14 +5158,13 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
       // In all other cases relocate should be tied to the statepoint directly.
       // This covers relocates on a normal return path of invoke statepoint and
       // relocates of a call statepoint.
-      auto Token = Call.getArgOperand(0);
-      Check(isa<GCStatepointInst>(Token),
+      auto *Token = Call.getArgOperand(0);
+      Check(isa<GCStatepointInst>(Token) || isa<UndefValue>(Token),
             "gc relocate is incorrectly tied to the statepoint", Call, Token);
     }
 
     // Verify rest of the relocate arguments.
-    const CallBase &StatepointCall =
-      *cast<GCRelocateInst>(Call).getStatepoint();
+    const Value &StatepointCall = *cast<GCRelocateInst>(Call).getStatepoint();
 
     // Both the base and derived must be piped through the safepoint.
     Value *Base = Call.getArgOperand(1);
@@ -5182,7 +5179,10 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
     const uint64_t DerivedIndex = cast<ConstantInt>(Derived)->getZExtValue();
 
     // Check the bounds
-    if (auto Opt = StatepointCall.getOperandBundle(LLVMContext::OB_gc_live)) {
+    if (isa<UndefValue>(StatepointCall))
+      break;
+    if (auto Opt = cast<GCStatepointInst>(StatepointCall)
+                       .getOperandBundle(LLVMContext::OB_gc_live)) {
       Check(BaseIndex < Opt->Inputs.size(),
             "gc.relocate: statepoint base index out of bounds", Call);
       Check(DerivedIndex < Opt->Inputs.size(),
@@ -5512,7 +5512,7 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
           &Call);
     break;
   }
-  case Intrinsic::experimental_vector_insert: {
+  case Intrinsic::vector_insert: {
     Value *Vec = Call.getArgOperand(0);
     Value *SubVec = Call.getArgOperand(1);
     Value *Idx = Call.getArgOperand(2);
@@ -5524,11 +5524,11 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
     ElementCount VecEC = VecTy->getElementCount();
     ElementCount SubVecEC = SubVecTy->getElementCount();
     Check(VecTy->getElementType() == SubVecTy->getElementType(),
-          "experimental_vector_insert parameters must have the same element "
+          "vector_insert parameters must have the same element "
           "type.",
           &Call);
     Check(IdxN % SubVecEC.getKnownMinValue() == 0,
-          "experimental_vector_insert index must be a constant multiple of "
+          "vector_insert index must be a constant multiple of "
           "the subvector's known minimum vector length.");
 
     // If this insertion is not the 'mixed' case where a fixed vector is
@@ -5537,12 +5537,12 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
     if (VecEC.isScalable() == SubVecEC.isScalable()) {
       Check(IdxN < VecEC.getKnownMinValue() &&
                 IdxN + SubVecEC.getKnownMinValue() <= VecEC.getKnownMinValue(),
-            "subvector operand of experimental_vector_insert would overrun the "
+            "subvector operand of vector_insert would overrun the "
             "vector being inserted into.");
     }
     break;
   }
-  case Intrinsic::experimental_vector_extract: {
+  case Intrinsic::vector_extract: {
     Value *Vec = Call.getArgOperand(0);
     Value *Idx = Call.getArgOperand(1);
     unsigned IdxN = cast<ConstantInt>(Idx)->getZExtValue();
@@ -5554,11 +5554,11 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
     ElementCount ResultEC = ResultTy->getElementCount();
 
     Check(ResultTy->getElementType() == VecTy->getElementType(),
-          "experimental_vector_extract result must have the same element "
+          "vector_extract result must have the same element "
           "type as the input vector.",
           &Call);
     Check(IdxN % ResultEC.getKnownMinValue() == 0,
-          "experimental_vector_extract index must be a constant multiple of "
+          "vector_extract index must be a constant multiple of "
           "the result type's known minimum vector length.");
 
     // If this extraction is not the 'mixed' case where a fixed vector is is
@@ -5567,7 +5567,7 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
     if (VecEC.isScalable() == ResultEC.isScalable()) {
       Check(IdxN < VecEC.getKnownMinValue() &&
                 IdxN + ResultEC.getKnownMinValue() <= VecEC.getKnownMinValue(),
-            "experimental_vector_extract would overrun.");
+            "vector_extract would overrun.");
     }
     break;
   }
@@ -5844,10 +5844,10 @@ void Verifier::visitConstrainedFPIntrinsic(ConstrainedFPIntrinsic &FPI) {
   // match the specification in the intrinsic call table. Thus, no
   // argument type check is needed here.
 
-  Check(FPI.getExceptionBehavior().hasValue(),
+  Check(FPI.getExceptionBehavior().has_value(),
         "invalid exception behavior argument", &FPI);
   if (HasRoundingMD) {
-    Check(FPI.getRoundingMode().hasValue(), "invalid rounding mode argument",
+    Check(FPI.getRoundingMode().has_value(), "invalid rounding mode argument",
           &FPI);
   }
 }
@@ -6067,7 +6067,7 @@ void Verifier::verifyAttachedCallBundle(const CallBase &Call,
 }
 
 void Verifier::verifySourceDebugInfo(const DICompileUnit &U, const DIFile &F) {
-  bool HasSource = F.getSource().hasValue();
+  bool HasSource = F.getSource().has_value();
   if (!HasSourceDebugInfo.count(&U))
     HasSourceDebugInfo[&U] = HasSource;
   CheckDI(HasSource == HasSourceDebugInfo[&U],

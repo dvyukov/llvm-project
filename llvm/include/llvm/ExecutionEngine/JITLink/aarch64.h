@@ -33,7 +33,9 @@ enum EdgeKind_aarch64 : Edge::Kind {
   GOTPageOffset12,
   TLVPage21,
   TLVPageOffset12,
-  PointerToGOT,
+  TLSDescPage21,
+  TLSDescPageOffset12,
+  Delta32ToGOT,
   PairedAddend,
   LDRLiteral19,
   Delta32,
@@ -223,10 +225,12 @@ inline Error applyFixup(LinkGraph &G, Block &B, const Edge &E) {
     break;
   }
   case TLVPage21:
-  case GOTPage21:
   case TLVPageOffset12:
+  case TLSDescPage21:
+  case TLSDescPageOffset12:
+  case GOTPage21:
   case GOTPageOffset12:
-  case PointerToGOT: {
+  case Delta32ToGOT: {
     return make_error<JITLinkError>(
         "In graph " + G.getName() + ", section " + B.getSection().getName() +
         "GOT/TLV edge kinds not lowered: " + getEdgeKindName(E.getKind()));
@@ -266,14 +270,15 @@ public:
     case aarch64::TLVPageOffset12: {
       KindToSet = aarch64::PageOffset12;
       uint32_t RawInstr = *(const support::ulittle32_t *)FixupPtr;
+      (void)RawInstr;
       assert(E.getAddend() == 0 &&
              "GOTPageOffset12/TLVPageOffset12 with non-zero addend");
       assert((RawInstr & 0xfffffc00) == 0xf9400000 &&
              "RawInstr isn't a 64-bit LDR immediate");
       break;
     }
-    case aarch64::PointerToGOT: {
-      KindToSet = aarch64::Delta64;
+    case aarch64::Delta32ToGOT: {
+      KindToSet = aarch64::Delta32;
       break;
     }
     default:

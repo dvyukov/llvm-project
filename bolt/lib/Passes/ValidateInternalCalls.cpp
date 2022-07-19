@@ -105,7 +105,8 @@ bool ValidateInternalCalls::fixCFGForPIC(BinaryFunction &Function) const {
         // Split this block at the call instruction. Create an unreachable
         // block.
         std::vector<std::unique_ptr<BinaryBasicBlock>> NewBBs;
-        NewBBs.emplace_back(Function.createBasicBlock(0));
+        NewBBs.emplace_back(Function.createBasicBlock());
+        NewBBs.back()->setOffset(0);
         NewBBs.back()->addInstructions(MovedInsts.begin(), MovedInsts.end());
         BB.moveAllSuccessorsTo(NewBBs.back().get());
         Function.insertBasicBlocks(&BB, std::move(NewBBs));
@@ -160,7 +161,7 @@ bool ValidateInternalCalls::fixCFGForIC(BinaryFunction &Function) const {
       // Connect this block with the returning block of the caller
       BinaryBasicBlock *CallerBlock = Info.getInsnToBBMap()[&ReachingInst];
       BinaryBasicBlock *ReturnDestBlock =
-          Function.getBasicBlockAfter(CallerBlock);
+          Function.getLayout().getBasicBlockAfter(CallerBlock);
       BB.addSuccessor(ReturnDestBlock, BB.getExecutionCount(), 0);
     }
   };

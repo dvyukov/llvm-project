@@ -74,6 +74,12 @@ public:
 
     /// Does DIE transitively refer an incomplete decl?
     bool Incomplete : 1;
+
+    /// Is DIE in the clang module scope?
+    bool InModuleScope : 1;
+
+    /// Is ODR marking done?
+    bool ODRMarkingDone : 1;
   };
 
   CompileUnit(DWARFUnit &OrigUnit, unsigned ID, bool CanUseODR,
@@ -175,6 +181,10 @@ public:
   /// Add a function range [\p LowPC, \p HighPC) that is relocated by applying
   /// offset \p PCOffset.
   void addFunctionRange(uint64_t LowPC, uint64_t HighPC, int64_t PCOffset);
+
+  /// Check whether specified address range \p LowPC \p HighPC
+  /// overlaps with existing function ranges.
+  bool overlapsWithFunctionRanges(uint64_t LowPC, uint64_t HighPC);
 
   /// Keep track of a DW_AT_range attribute that we will need to patch up later.
   void noteRangeAttribute(const DIE &Die, PatchLocation Attr);

@@ -795,7 +795,7 @@ static CallInst *canonicalizeConstantArg0ToArg1(CallInst &Call) {
 /// \p Result and a constant \p Overflow value.
 static Instruction *createOverflowTuple(IntrinsicInst *II, Value *Result,
                                         Constant *Overflow) {
-  Constant *V[] = {UndefValue::get(Result->getType()), Overflow};
+  Constant *V[] = {PoisonValue::get(Result->getType()), Overflow};
   StructType *ST = cast<StructType>(II->getType());
   Constant *Struct = ConstantStruct::get(ST, V);
   return InsertValueInst::Create(Struct, Result, 0);
@@ -1543,7 +1543,10 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
         !ShAmtC->containsConstantExpression()) {
       // Canonicalize a shift amount constant operand to modulo the bit-width.
       Constant *WidthC = ConstantInt::get(Ty, BitWidth);
-      Constant *ModuloC = ConstantExpr::getURem(ShAmtC, WidthC);
+      Constant *ModuloC =
+          ConstantFoldBinaryOpOperands(Instruction::URem, ShAmtC, WidthC, DL);
+      if (!ModuloC)
+        return nullptr;
       if (ModuloC != ShAmtC)
         return replaceOperand(*II, 2, ModuloC);
 
@@ -2357,7 +2360,7 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
     }
     break;
   }
-  case Intrinsic::experimental_vector_insert: {
+  case Intrinsic::vector_insert: {
     Value *Vec = II->getArgOperand(0);
     Value *SubVec = II->getArgOperand(1);
     Value *Idx = II->getArgOperand(2);
@@ -2403,7 +2406,7 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
     }
     break;
   }
-  case Intrinsic::experimental_vector_extract: {
+  case Intrinsic::vector_extract: {
     Value *Vec = II->getArgOperand(0);
     Value *Idx = II->getArgOperand(1);
 
@@ -2678,8 +2681,8 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
   default: {
     // Handle target specific intrinsics
     Optional<Instruction *> V = targetInstCombineIntrinsic(*II);
-    if (V.hasValue())
-      return V.getValue();
+    if (V)
+      return V.value();
     break;
   }
   }
@@ -3142,7 +3145,7 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
     Optional<OperandBundleUse> Bundle =
         GCSP.getOperandBundle(LLVMContext::OB_gc_live);
     unsigned NumOfGCLives = LiveGcValues.size();
-    if (!Bundle.hasValue() || NumOfGCLives == Bundle->Inputs.size())
+    if (!Bundle || NumOfGCLives == Bundle->Inputs.size())
       break;
     // We can reduce the size of gc live bundle.
     DenseMap<Value *, unsigned> Val2Idx;
@@ -3239,15 +3242,16 @@ bool InstCombinerImpl::transformConstExprCastCall(CallBase &Call) {
     // the call because there is no place to put the cast instruction (without
     // breaking the critical edge).  Bail out in this case.
     if (!Caller->use_empty()) {
-      if (InvokeInst *II = dyn_cast<InvokeInst>(Caller))
-        for (User *U : II->users())
+      BasicBlock *PhisNotSupportedBlock = nullptr;
+      if (auto *II = dyn_cast<InvokeInst>(Caller))
+        PhisNotSupportedBlock = II->getNormalDest();
+      if (auto *CB = dyn_cast<CallBrInst>(Caller))
+        PhisNotSupportedBlock = CB->getDefaultDest();
+      if (PhisNotSupportedBlock)
+        for (User *U : Caller->users())
           if (PHINode *PN = dyn_cast<PHINode>(U))
-            if (PN->getParent() == II->getNormalDest() ||
-                PN->getParent() == II->getUnwindDest())
+            if (PN->getParent() == PhisNotSupportedBlock)
               return false;
-      // FIXME: Be conservative for callbr to avoid a quadratic search.
-      if (isa<CallBrInst>(Caller))
-        return false;
     }
   }
 

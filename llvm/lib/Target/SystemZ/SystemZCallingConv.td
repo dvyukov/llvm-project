@@ -162,11 +162,7 @@ def CSR_SystemZ_NoRegs : CalleeSavedRegs<(add)>;
 //===----------------------------------------------------------------------===//
 // z/OS XPLINK64 callee-saved registers
 //===----------------------------------------------------------------------===//
-// %R7D is volatile by the spec, but it must be saved in the prologue by
-// any non-leaf function and restored in the epilogue for use by the
-// return instruction so it functions exactly like a callee-saved register.
-def CSR_SystemZ_XPLINK64 : CalleeSavedRegs<(add (sequence "R%dD", 7, 15),
-                                                (sequence "R%dD", 4, 4),
+def CSR_SystemZ_XPLINK64 : CalleeSavedRegs<(add (sequence "R%dD", 8, 15),
                                                 (sequence "F%dD", 15, 8))>;
 
 def CSR_SystemZ_XPLINK64_Vector : CalleeSavedRegs<(add CSR_SystemZ_XPLINK64,
@@ -225,9 +221,10 @@ def CC_SystemZ_XPLINK64 : CallingConv<[
   // XPLINK64 ABI compliant code widens integral types smaller than i64
   // to i64 before placing the parameters either on the stack or in registers.
   CCIfType<[i32], CCIfExtend<CCPromoteToType<i64>>>,
-  // Promote f32 to f64 and bitcast to i64, if it needs to be passed in GPRS.
-  CCIfType<[f32], CCIfNotFixed<CCPromoteToType<f64>>>,
-  CCIfType<[f64], CCIfNotFixed<CCBitConvertToType<i64>>>,
+  // Promote f32 to f64 and bitcast to i64, if it needs to be passed in GPRs.
+  // Although we assign the f32 vararg to be bitcast, it will first be promoted
+  // to an f64 within convertValVTToLocVT().
+  CCIfType<[f32, f64], CCIfNotFixed<CCBitConvertToType<i64>>>,
   // long double, can only be passed in GPR2 and GPR3, if available,
   // hence R2Q
   CCIfType<[f128], CCIfNotFixed<CCCustom<"CC_XPLINK64_Allocate128BitVararg">>>,

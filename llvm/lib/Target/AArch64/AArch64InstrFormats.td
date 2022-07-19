@@ -1234,6 +1234,10 @@ def fpimm0 : FPImmLeaf<fAny, [{
   return Imm.isExactlyValue(+0.0);
 }]>;
 
+def fpimm_minus0 : FPImmLeaf<fAny, [{
+  return Imm.isExactlyValue(-0.0);
+}]>;
+
 def fpimm_half : FPImmLeaf<fAny, [{
   return Imm.isExactlyValue(+0.5);
 }]>;
@@ -1505,7 +1509,7 @@ class CRmSystemI<Operand crmtype, bits<3> opc, string asm,
 
 class SystemNoOperands<bits<3> op2, string asm, list<dag> pattern = []>
     : SimpleSystemI<0, (ins), asm, "", pattern>,
-      Sched<[]> {
+      Sched<[WriteHint]> {
   bits<4> CRm;
   let CRm = 0b0011;
   let Inst{31-12} = 0b11010101000000110010;

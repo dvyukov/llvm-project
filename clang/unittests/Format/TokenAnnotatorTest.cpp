@@ -85,6 +85,35 @@ TEST_F(TokenAnnotatorTest, UnderstandsUsesOfStarAndAmp) {
   Tokens = annotate("case &x:");
   EXPECT_EQ(Tokens.size(), 5u) << Tokens;
   EXPECT_TOKEN(Tokens[1], tok::amp, TT_UnaryOperator);
+
+  Tokens = annotate("struct {\n"
+                    "} *ptr;");
+  EXPECT_EQ(Tokens.size(), 7u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::star, TT_PointerOrReference);
+  Tokens = annotate("union {\n"
+                    "} *ptr;");
+  EXPECT_EQ(Tokens.size(), 7u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::star, TT_PointerOrReference);
+  Tokens = annotate("class {\n"
+                    "} *ptr;");
+  EXPECT_EQ(Tokens.size(), 7u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::star, TT_PointerOrReference);
+
+  Tokens = annotate("struct {\n"
+                    "} &&ptr = {};");
+  EXPECT_EQ(Tokens.size(), 10u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::ampamp, TT_PointerOrReference);
+  Tokens = annotate("union {\n"
+                    "} &&ptr = {};");
+  EXPECT_EQ(Tokens.size(), 10u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::ampamp, TT_PointerOrReference);
+  Tokens = annotate("class {\n"
+                    "} &&ptr = {};");
+  EXPECT_EQ(Tokens.size(), 10u) << Tokens;
+  EXPECT_TOKEN(Tokens[3], tok::ampamp, TT_PointerOrReference);
+  Tokens = annotate("int i = int{42} * 2;");
+  EXPECT_EQ(Tokens.size(), 11u) << Tokens;
+  EXPECT_TOKEN(Tokens[7], tok::star, TT_BinaryOperator);
 }
 
 TEST_F(TokenAnnotatorTest, UnderstandsUsesOfPlusAndMinus) {
@@ -402,6 +431,33 @@ TEST_F(TokenAnnotatorTest, UnderstandsRequiresClausesAndConcepts) {
   EXPECT_TOKEN(Tokens[25], tok::less, TT_TemplateOpener);
   EXPECT_TOKEN(Tokens[27], tok::greater, TT_TemplateCloser);
   EXPECT_TOKEN(Tokens[28], tok::greater, TT_TemplateCloser);
+
+  Tokens = annotate("auto bar() -> int requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 16u) << Tokens;
+  EXPECT_TOKEN(Tokens[6], tok::kw_requires, TT_RequiresClause);
+
+  Tokens = annotate("auto bar() -> void requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 16u) << Tokens;
+  EXPECT_TOKEN(Tokens[6], tok::kw_requires, TT_RequiresClause);
+
+  Tokens = annotate("auto bar() -> MyType requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 16u) << Tokens;
+  EXPECT_TOKEN(Tokens[6], tok::kw_requires, TT_RequiresClause);
+
+  Tokens =
+      annotate("auto bar() -> SOME_MACRO_TYPE requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 16u) << Tokens;
+  EXPECT_TOKEN(Tokens[6], tok::kw_requires, TT_RequiresClause);
+
+  Tokens =
+      annotate("auto bar() -> qualified::type requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 18u) << Tokens;
+  EXPECT_TOKEN(Tokens[8], tok::kw_requires, TT_RequiresClause);
+
+  Tokens =
+      annotate("auto bar() -> Template<type> requires(is_integral_v<T>) {}");
+  ASSERT_EQ(Tokens.size(), 19u) << Tokens;
+  EXPECT_TOKEN(Tokens[9], tok::kw_requires, TT_RequiresClause);
 }
 
 TEST_F(TokenAnnotatorTest, UnderstandsRequiresExpressions) {
@@ -746,6 +802,70 @@ TEST_F(TokenAnnotatorTest, RequiresDoesNotChangeParsingOfTheRest) {
           << I;
     }
   }
+
+  BaseTokens = annotate("constexpr Foo(Foo const &other)\n"
+                        "    : value{other.value} {\n"
+                        "  do_magic();\n"
+                        "  do_more_magic();\n"
+                        "}");
+
+  ConstrainedTokens = annotate("constexpr Foo(Foo const &other)\n"
+                               "  requires std::is_copy_constructible<T>\n"
+                               "    : value{other.value} {\n"
+                               "  do_magic();\n"
+                               "  do_more_magic();\n"
+                               "}");
+
+  NumberOfBaseTokens = 26u;
+  NumberOfAdditionalRequiresClauseTokens = 7u;
+  NumberOfTokensBeforeRequires = 8u;
+
+  ASSERT_EQ(BaseTokens.size(), NumberOfBaseTokens) << BaseTokens;
+  ASSERT_EQ(ConstrainedTokens.size(),
+            NumberOfBaseTokens + NumberOfAdditionalRequiresClauseTokens)
+      << ConstrainedTokens;
+
+  for (auto I = 0u; I < NumberOfBaseTokens; ++I) {
+    if (I < NumberOfTokensBeforeRequires) {
+      EXPECT_EQ(*BaseTokens[I], *ConstrainedTokens[I]) << I;
+    } else {
+      EXPECT_EQ(*BaseTokens[I],
+                *ConstrainedTokens[I + NumberOfAdditionalRequiresClauseTokens])
+          << I;
+    }
+  }
+
+  BaseTokens = annotate("constexpr Foo(Foo const &other)\n"
+                        "    : value{other.value} {\n"
+                        "  do_magic();\n"
+                        "  do_more_magic();\n"
+                        "}");
+
+  ConstrainedTokens = annotate("constexpr Foo(Foo const &other)\n"
+                               "  requires (std::is_copy_constructible<T>)\n"
+                               "    : value{other.value} {\n"
+                               "  do_magic();\n"
+                               "  do_more_magic();\n"
+                               "}");
+
+  NumberOfBaseTokens = 26u;
+  NumberOfAdditionalRequiresClauseTokens = 9u;
+  NumberOfTokensBeforeRequires = 8u;
+
+  ASSERT_EQ(BaseTokens.size(), NumberOfBaseTokens) << BaseTokens;
+  ASSERT_EQ(ConstrainedTokens.size(),
+            NumberOfBaseTokens + NumberOfAdditionalRequiresClauseTokens)
+      << ConstrainedTokens;
+
+  for (auto I = 0u; I < NumberOfBaseTokens; ++I) {
+    if (I < NumberOfTokensBeforeRequires) {
+      EXPECT_EQ(*BaseTokens[I], *ConstrainedTokens[I]) << I;
+    } else {
+      EXPECT_EQ(*BaseTokens[I],
+                *ConstrainedTokens[I + NumberOfAdditionalRequiresClauseTokens])
+          << I;
+    }
+  }
 }
 
 TEST_F(TokenAnnotatorTest, UnderstandsAsm) {
@@ -772,6 +892,13 @@ TEST_F(TokenAnnotatorTest, UnderstandsObjCBlock) {
                     "}();");
   ASSERT_EQ(Tokens.size(), 19u) << Tokens;
   EXPECT_TOKEN(Tokens[9], tok::l_brace, TT_ObjCBlockLBrace);
+}
+
+TEST_F(TokenAnnotatorTest, UnderstandsLambdas) {
+  auto Tokens = annotate("[]() constexpr {}");
+  ASSERT_EQ(Tokens.size(), 8u) << Tokens;
+  EXPECT_TOKEN(Tokens[0], tok::l_square, TT_LambdaLSquare);
+  EXPECT_TOKEN(Tokens[5], tok::l_brace, TT_LambdaLBrace);
 }
 
 } // namespace
