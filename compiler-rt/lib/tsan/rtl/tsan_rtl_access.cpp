@@ -145,15 +145,6 @@ void TraceTime(ThreadState* thr) {
   TraceEvent(thr, ev);
 }
 
-ALWAYS_INLINE RawShadow LoadShadow(RawShadow* p) {
-  return static_cast<RawShadow>(
-      atomic_load((atomic_uint32_t*)p, memory_order_relaxed));
-}
-
-ALWAYS_INLINE void StoreShadow(RawShadow* sp, RawShadow s) {
-  atomic_store((atomic_uint32_t*)sp, static_cast<u32>(s), memory_order_relaxed);
-}
-
 NOINLINE void DoReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                            Shadow old,
                            AccessType typ) SANITIZER_NO_THREAD_SAFETY_ANALYSIS {
@@ -170,11 +161,13 @@ NOINLINE void DoReportRace(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   // the slot locked because of the fork. But MemoryRangeFreed is not
   // called during fork because fork sets ignore_reads_and_writes,
   // so simply unlocking the slot should be fine.
+  //u64 start = NanoTime();
   if (typ & kAccessSlotLocked)
     SlotUnlock(thr);
   ReportRace(thr, shadow_mem, cur, Shadow(old), typ);
   if (typ & kAccessSlotLocked)
     SlotLock(thr);
+  //Printf("#%03d: ReportRace %p took %llu us\n", thr->tid, (void *)ShadowToMem(shadow_mem), (NanoTime() - start) / 1000);
 }
 
 #if !TSAN_VECTORIZE
@@ -357,6 +350,8 @@ STORE : {
     if (UNLIKELY(index == 0))
       index = (atomic_load_relaxed(&thr->trace_pos) / 2) % 16;
   }
+  if (1 && !(typ & kAccessAtomic) && !(typ & kAccessRead) && ((atomic_load_relaxed(&thr->trace_pos) / 8) % 47) == 0)
+    internal_usleep(5);
   StoreShadow(&shadow_mem[index / 4], cur.raw());
   // We could zero other slots determined by rewrite_mask.
   // That would help other threads to evict better slots,
