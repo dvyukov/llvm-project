@@ -3374,9 +3374,9 @@ static bool InitializationHasSideEffects(const FieldDecl &FD) {
   const Type *T = FD.getType()->getBaseElementTypeUnsafe();
   // FIXME: Destruction of ObjC lifetime types has side-effects.
   if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
-    return !RD->isCompleteDefinition() ||
-           !RD->hasTrivialDefaultConstructor() ||
-           !RD->hasTrivialDestructor();
+    return !RD->hasAttr<WarnUnusedAttr>() &&
+           (!RD->isCompleteDefinition() ||
+            !RD->hasTrivialDefaultConstructor() || !RD->hasTrivialDestructor());
   return false;
 }
 
@@ -5216,8 +5216,13 @@ struct BaseAndFieldInfo {
     AllToInit.push_back(Init);
 
     // Check whether this initializer makes the field "used".
-    if (Init->getInit()->HasSideEffects(S.Context))
-      S.UnusedPrivateFields.remove(Init->getAnyMember());
+    if (Init->getInit()->HasSideEffects(S.Context)) {
+      const FieldDecl *FD = Init->getAnyMember();
+      const Type *T = FD->getType()->getBaseElementTypeUnsafe();
+      const CXXRecordDecl *RD = T->getAsCXXRecordDecl();
+      if (!RD || !RD->hasAttr<WarnUnusedAttr>())
+        S.UnusedPrivateFields.remove(FD);
+    }
 
     return false;
   }
